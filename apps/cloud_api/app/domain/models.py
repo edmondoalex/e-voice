@@ -1,4 +1,4 @@
-"""SQLAlchemy models for the M1 multi-tenant core."""
+"""SQLAlchemy models for the multi-tenant core and secure pairing."""
 
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +12,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -21,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
-from .enums import InstallationStatus, RecordStatus, TenantRole
+from .enums import InstallationStatus, PairingStatus, RecordStatus, TenantRole
 
 
 def utc_now() -> datetime:
@@ -146,6 +147,9 @@ class Installation(TimestampMixin, Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="installations")
     entities: Mapped[list["Entity"]] = relationship(back_populates="installation")
+    connector_credentials: Mapped[list["ConnectorCredential"]] = relationship(
+        back_populates="installation", foreign_keys="ConnectorCredential.installation_id"
+    )
 
 
 class Entity(TimestampMixin, Base):
@@ -218,5 +222,86 @@ class AuditEvent(Base):
     payload_redacted_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     result: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
+class ConnectorCredential(Base):
+    __tablename__ = "connector_credentials"
+    __table_args__ = (Index("ix_connector_credentials_installation", "installation_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    secret_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    rotated_from_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("connector_credentials.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    installation: Mapped[Installation] = relationship(
+        back_populates="connector_credentials", foreign_keys=[installation_id]
+    )
+
+
+class PairingSession(Base):
+    __tablename__ = "pairing_sessions"
+    __table_args__ = (
+        Index("ix_pairing_sessions_expires_at", "expires_at"),
+        Index("ix_pairing_sessions_nonce_status", "installation_nonce", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    polling_secret_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    installation_nonce: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[PairingStatus] = mapped_column(
+        Enum(
+            PairingStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda values: [item.value for item in values],
+        ),
+        default=PairingStatus.PENDING,
+    )
+    claimed_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    claimed_tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL")
+    )
+    claimed_installation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("installations.id", ondelete="SET NULL")
+    )
+    connector_credential_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("connector_credentials.id", ondelete="SET NULL")
+    )
+    credential_envelope: Mapped[bytes | None] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    credential_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PairingClaimAttempt(Base):
+    __tablename__ = "pairing_claim_attempts"
+    __table_args__ = (Index("ix_pairing_claim_attempts_user_time", "user_id", "attempted_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    pairing_session_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("pairing_sessions.id", ondelete="SET NULL")
+    )
+    successful: Mapped[bool] = mapped_column(Boolean, default=False)
+    result: Mapped[str] = mapped_column(String(50))
+    attempted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )

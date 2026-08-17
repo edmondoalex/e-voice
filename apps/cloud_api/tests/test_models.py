@@ -3,13 +3,16 @@ from sqlalchemy import UniqueConstraint
 from apps.cloud_api.app.database import Base
 
 
-def test_m1_tables_are_registered() -> None:
+def test_domain_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "alexa_publications",
         "audit_events",
+        "connector_credentials",
         "dealers",
         "entities",
         "installations",
+        "pairing_claim_attempts",
+        "pairing_sessions",
         "tenant_memberships",
         "tenants",
         "users",

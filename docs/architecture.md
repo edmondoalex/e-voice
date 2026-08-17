@@ -34,7 +34,19 @@ entities join their installation, and Alexa publications join their entity and
 installation. A foreign resource therefore produces the same not-found result as
 an absent resource; callers never receive an unscoped object to validate later.
 
-M1 provides persistence and authorization scaffolding only. It does not expose
-session endpoints, Alexa directives, pairing, or connector transport.
+M1 established persistence and authorization scaffolding without session
+endpoints, Alexa directives, pairing, or connector transport.
+
+## Pairing boundary
+
+M2 adds a provider-neutral pairing service above the tenant-scoped core. Pairing
+creates an HAOS installation only after an active membership selects the tenant.
+Temporary human codes, polling authorization, and durable Connector credentials
+remain separate security values with independent hashes and lifecycles.
+
+The one-time Connector credential is encrypted only for deferred delivery and is
+removed after the first authenticated poll. Credential revocation and rotation
+remain tenant-scoped. See [pairing.md](pairing.md) for the threat controls and
+storage rules.
 
 See [SPEC_V1.md](SPEC_V1.md) for the complete product architecture.

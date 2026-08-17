@@ -4,6 +4,47 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-17 — M2 secure pairing
+
+Status: Ready for review
+
+### Scope
+
+- Added short-lived, one-time pairing sessions with `ABCD-1234` style codes.
+- Separated the human code, connector polling secret, and durable Connector
+  credential into independent security values.
+- Added HMAC/SHA-256 hashing, encrypted one-time credential delivery, expiry,
+  replay protection, and persistent per-user brute-force limits.
+- Added tenant-safe claim, installation creation, credential revocation and
+  rotation, and redacted audit events.
+- Added an Alembic migration for pairing sessions, claim attempts, and Connector
+  credentials.
+- Added tests for expiry, replay, brute force, cross-tenant attempts, one-time
+  delivery, polling authorization, audit redaction, revocation, and rotation.
+- Made successful claims atomic and added a transaction-durability regression
+  test covering the installation, credential, pairing state, and audit event.
+
+### Validation
+
+- `ruff format --check .`: passed
+- `ruff check .`: passed
+- `mypy apps`: passed
+- `pytest`: passed
+- Alembic upgrade and model metadata parity: passed
+- PostgreSQL migration SQL generation: passed
+- Secret pattern scan: no findings
+
+### Commit
+
+- `M2: secure installation pairing`
+
+### Deviations
+
+- Pairing is implemented as a transport-independent core service. HTTP routes
+  and the HAOS config flow remain outside M2 because authenticated portal
+  transport and the Home Assistant Connector belong to later milestones.
+- No Alexa, Amazon OAuth, entity synchronization, or M3 behavior was added.
+
 ## 2026-08-17 — M1 core multi-tenant backend
 
 Status: Complete
