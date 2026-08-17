@@ -4,6 +4,44 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-17 — Pre-M3 Home Assistant standard
+
+Status: Ready for review
+
+### Scope
+
+- Inventoried eight accessible Ekonex Home Assistant components at pinned
+  revisions and recorded their applicable technical evidence.
+- Defined the Ekonex Home Assistant Integration Standard for HAOS, ConfigEntry
+  lifecycle, config flows, identity, registry, diagnostics, reconnect, logging,
+  localization, errors, updates and recovery.
+- Classified previous conventions as reusable, requiring normalization, or to be
+  discarded where current Home Assistant practices take precedence.
+- Defined the minimum automated and HAOS acceptance test gate for the future M3
+  Connector without creating or implementing it.
+
+### Validation
+
+- `pytest`: 23 passed
+- `ruff format --check .`: passed
+- `ruff check .`: passed
+- `mypy apps`: passed
+- `git diff --check`: passed
+
+### Commit
+
+- `docs: complete pre-M3 Home Assistant standard`
+
+### ADR assessment
+
+- No ADR was added: the analysis applies existing specification and ADR
+  decisions and introduces no new architectural departure.
+
+### Deviations
+
+- None. M3, entity synchronization, WebSocket implementation and Alexa remain
+  out of scope.
+
 ## 2026-08-17 — M2 secure pairing
 
 Status: Ready for review
