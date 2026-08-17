@@ -21,6 +21,7 @@ from apps.cloud_api.app.domain.models import (
 @dataclass(frozen=True, slots=True)
 class SeededDomain:
     user_a_id: UUID
+    user_b_id: UUID
     user_readonly_id: UUID
     tenant_a_id: UUID
     tenant_b_id: UUID
@@ -50,10 +51,11 @@ async def session() -> AsyncIterator[AsyncSession]:
 async def seeded_domain(session: AsyncSession) -> SeededDomain:
     dealer = Dealer(name="Ekonex", slug="ekonex")
     user_a = User(email="owner@example.test", password_hash="not-a-real-password-hash")
+    user_b = User(email="owner-b@example.test", password_hash="not-a-real-password-hash")
     user_readonly = User(email="readonly@example.test", password_hash="not-a-real-password-hash")
     tenant_a = Tenant(name="Tenant A", slug="tenant-a", dealer=dealer)
     tenant_b = Tenant(name="Tenant B", slug="tenant-b", dealer=dealer)
-    session.add_all([dealer, user_a, user_readonly, tenant_a, tenant_b])
+    session.add_all([dealer, user_a, user_b, user_readonly, tenant_a, tenant_b])
     await session.flush()
 
     session.add_all(
@@ -64,6 +66,7 @@ async def seeded_domain(session: AsyncSession) -> SeededDomain:
                 user_id=user_readonly.id,
                 role=TenantRole.SUPPORT_READONLY,
             ),
+            TenantMembership(tenant_id=tenant_b.id, user_id=user_b.id, role=TenantRole.OWNER),
         ]
     )
     installation_a = Installation(tenant_id=tenant_a.id, name="Home A", public_id="installation-a")
@@ -103,6 +106,7 @@ async def seeded_domain(session: AsyncSession) -> SeededDomain:
 
     return SeededDomain(
         user_a_id=user_a.id,
+        user_b_id=user_b.id,
         user_readonly_id=user_readonly.id,
         tenant_a_id=tenant_a.id,
         tenant_b_id=tenant_b.id,

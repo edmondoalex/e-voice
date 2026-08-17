@@ -1,9 +1,9 @@
 # Ekonex Voice
 
 Ekonex Voice is the planned multi-tenant cloud control layer between Amazon
-Alexa and Home Assistant. The repository currently contains Milestone M1: the
-core multi-tenant persistence and authorization foundation. Alexa, pairing, and
-the Home Assistant connector are not implemented yet.
+Alexa and Home Assistant. The repository currently contains Milestone M2: the
+core multi-tenant foundation and provider-neutral secure installation pairing.
+Alexa and the Home Assistant connector are not implemented yet.
 
 ## Requirements
 

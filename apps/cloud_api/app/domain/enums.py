@@ -21,3 +21,10 @@ class TenantRole(StrEnum):
     CUSTOMER_ADMIN = "customer_admin"
     CUSTOMER_USER = "customer_user"
     SUPPORT_READONLY = "support_readonly"
+
+
+class PairingStatus(StrEnum):
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    EXPIRED = "expired"
+    LOCKED = "locked"
