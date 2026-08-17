@@ -4,6 +4,33 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-17 — Branch and Pull Request governance
+
+Status: Proposed in Pull Request
+
+### Scope
+
+- Added permanent repository instructions in `AGENTS.md`.
+- Required one authorized milestone per `codex/*` branch and Pull Request.
+- Prohibited autonomous merge and automatic progression to the next milestone.
+- Added CODEOWNERS, an expanded PR checklist, and a PR policy workflow.
+- Documented GitHub-based development and review in
+  `docs/DEVELOPMENT_WORKFLOW.md`.
+
+### Validation
+
+- Documentation and workflow whitespace checks: passed
+- Existing application implementation: unchanged
+
+### Commit
+
+- `docs: enforce branch and PR workflow`
+
+### Deviations
+
+- M1 predates this policy and was committed directly to `main`; repository
+  history was not rewritten.
+
 ## 2026-08-17 — M1 core multi-tenant backend
 
 Status: Complete
