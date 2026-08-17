@@ -1,0 +1,43 @@
+name: PR policy
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  scope-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch and milestone boundary acknowledgement
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          base = os.environ["PR_BASE"]
+          head = os.environ["PR_HEAD"]
+          body = os.environ.get("PR_BODY", "")
+
+          errors = []
+          if base != "main":
+              errors.append("Pull Requests must target main.")
+          if not head.startswith(("codex/", "dependabot/")):
+              errors.append("Branch must use the codex/ prefix.")
+          if "## Milestone and scope" not in body:
+              errors.append("PR body must include the milestone and scope section.")
+          if "- [x] No work from the next milestone is included" not in body:
+              errors.append("Confirm that no next-milestone work is included.")
+          if "- [x] I will not merge, approve, close, or start the next milestone autonomously" not in body:
+              errors.append("Confirm the agent handoff rule.")
+
+          if errors:
+              print("\n".join(f"::error::{error}" for error in errors))
+              sys.exit(1)
+          PY
