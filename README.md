@@ -43,5 +43,5 @@ docker compose config --quiet
 ```
 
 See [docs/SPEC_V1.md](docs/SPEC_V1.md) for the product baseline and
-[docs/adr](docs/adr) for architectural decisions.
-
+[docs/adr](docs/adr) for architectural decisions. Completed changes are tracked
+in [CHANGELOG.md](CHANGELOG.md).
