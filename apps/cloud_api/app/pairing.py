@@ -212,7 +212,7 @@ class PairingService:
             ha_installation_type="haos",
         )
         self._session.add(installation)
-        await self._session.commit()
+        await self._session.flush()
 
         connector_secret = self._new_connector_secret()
         credential = ConnectorCredential(
@@ -237,7 +237,7 @@ class PairingService:
             successful=True,
             installation_id=installation.id,
         )
-        await self._session.flush()
+        await self._session.commit()
         return PairingClaim(
             session_id=pairing.id,
             installation_id=installation.id,

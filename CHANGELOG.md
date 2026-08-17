@@ -21,6 +21,8 @@ Status: Ready for review
   credentials.
 - Added tests for expiry, replay, brute force, cross-tenant attempts, one-time
   delivery, polling authorization, audit redaction, revocation, and rotation.
+- Made successful claims atomic and added a transaction-durability regression
+  test covering the installation, credential, pairing state, and audit event.
 
 ### Validation
 

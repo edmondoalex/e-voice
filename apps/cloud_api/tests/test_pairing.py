@@ -117,6 +117,43 @@ async def test_claim_issues_connector_credential_for_one_time_delivery(
     assert first_poll.connector_credential != credential.secret_hash
 
 
+async def test_successful_claim_is_committed_as_one_atomic_transaction(
+    session: AsyncSession,
+    seeded_domain: SeededDomain,
+    pairing_service: PairingService,
+) -> None:
+    context = await owner_context(session, seeded_domain)
+    started = await pairing_service.create_session(installation_nonce="haos-installation-atomic")
+
+    claimed = await pairing_service.claim(
+        context, code=started.code, installation_name="Atomic installation"
+    )
+    await session.rollback()
+    session.expire_all()
+
+    pairing = await session.get(PairingSession, started.session_id)
+    installation = await session.get(Installation, claimed.installation_id)
+    credential = await session.scalar(
+        select(ConnectorCredential).where(
+            ConnectorCredential.installation_id == claimed.installation_id
+        )
+    )
+    audit = await session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.installation_id == claimed.installation_id,
+            AuditEvent.event_type == "pairing.claim",
+        )
+    )
+
+    assert pairing is not None
+    assert pairing.status is PairingStatus.CLAIMED
+    assert pairing.claimed_installation_id == claimed.installation_id
+    assert installation is not None
+    assert installation.tenant_id == seeded_domain.tenant_a_id
+    assert credential is not None
+    assert audit is not None
+
+
 async def test_expired_code_cannot_be_claimed(
     session: AsyncSession,
     seeded_domain: SeededDomain,
