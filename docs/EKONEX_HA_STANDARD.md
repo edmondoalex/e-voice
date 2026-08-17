@@ -1,8 +1,10 @@
 # Ekonex Home Assistant Integration Standard
 
-Status: Pre-M3 baseline, ready for review  
-Scope: future `Ekonex Voice` custom integration (`ekonex_voice`)  
-Primary platform: Home Assistant OS (HAOS, formerly Hassio)  
+Status: Pre-M3 baseline, ready for review
+
+Scope: future `Ekonex Voice` custom integration (`ekonex_voice`)
+
+Primary platform: Home Assistant OS (HAOS, formerly Hassio)
 Last reviewed: 2026-08-17
 
 ## 1. Purpose and precedence
