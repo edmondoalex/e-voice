@@ -147,6 +147,8 @@ Amazon:
 - endpoint additions/removals/updates must use supported Alexa discovery/event mechanisms.
 
 Home Assistant:
+- HAOS/Home Assistant OS (historically also called Hassio) is the primary and
+  reference deployment platform for the Ekonex integration;
 - setup must be UI based through a config flow.
 - runtime state must use current config-entry patterns.
 - integration must support unload/reload.
@@ -515,7 +517,48 @@ Display name:
 
 `Ekonex Voice`
 
-## 7.1 Installation
+## 7.1 Ekonex Home Assistant Integration Standard
+
+All Ekonex custom integrations for Home Assistant MUST follow a shared standard,
+called the **Ekonex Home Assistant Integration Standard**.
+
+HAOS/Home Assistant OS (historically also called Hassio) is the primary and
+reference platform for development, validation, installation instructions, and
+support. Other Home Assistant installation types may be supported when they do
+not weaken compatibility with current official Home Assistant APIs or the HAOS
+user experience.
+
+Before starting M3, Codex MUST locate and analyze the existing Ekonex Home
+Assistant components made available by Ekonex. This is a mandatory prerequisite,
+not an optional refactoring activity. The analysis MUST identify reusable
+conventions and compatibility requirements for:
+
+- integration lifecycle, including setup, unload, reload, and shutdown;
+- config flow, reauthentication, reconfiguration, and abort behavior;
+- diagnostics and secret/data redaction;
+- connection supervision, reconnect policy, backoff, and task cancellation;
+- structured logging, log levels, context fields, and secret filtering;
+- integration domain, class, module, service, event, and user-facing naming;
+- stable `unique_id` rules and duplicate-installation prevention;
+- `strings.json`, translations, placeholders, and Italian/English terminology;
+- exception taxonomy, user-visible errors, retryable failures, and recovery.
+
+Before M3 implementation begins, create a documented compatibility analysis that:
+
+1. inventories the previous Ekonex Home Assistant components reviewed;
+2. records the conventions that Ekonex Voice will reuse or normalize;
+3. identifies conflicts with current official Home Assistant requirements;
+4. defines the resulting Ekonex standard for the areas listed above;
+5. records justified deviations in an ADR when they change architecture.
+
+Previous Ekonex code is a consistency input, not authority over current Home
+Assistant behavior. Current official Home Assistant documentation and accepted
+APIs take precedence when an older component is deprecated or incompatible.
+
+M3 MUST NOT begin until this analysis is complete and its conclusions are
+reflected in the implementation plan and tests.
+
+## 7.2 Installation
 
 First distribution:
 - custom integration in repository;
@@ -523,7 +566,7 @@ First distribution:
 
 Do NOT require editing `configuration.yaml`.
 
-## 7.2 manifest.json requirements
+## 7.3 manifest.json requirements
 
 Use current HA manifest schema.
 
@@ -539,7 +582,7 @@ Expected concepts:
 
 Codex must verify current accepted keys before commit.
 
-## 7.3 Config flow
+## 7.4 Config flow
 
 Desired setup:
 
@@ -594,7 +637,7 @@ HA stores only required credentials in ConfigEntry.
 Display:
 `Ekonex Voice collegato a Villa Rossi / Home`
 
-## 7.4 Reauthentication / reconfiguration
+## 7.5 Reauthentication / reconfiguration
 
 Must support:
 - expired/revoked credential;
@@ -604,13 +647,13 @@ Must support:
 
 Do not force user to delete/reinstall integration for routine credential recovery.
 
-## 7.5 Runtime data
+## 7.6 Runtime data
 
 Use current typed ConfigEntry runtime-data pattern.
 
 Avoid global mutable dictionaries when current HA patterns provide a better lifecycle mechanism.
 
-## 7.6 Unload/reload
+## 7.7 Unload/reload
 
 `async_unload_entry` must:
 - unsubscribe state listeners;
@@ -621,7 +664,7 @@ Avoid global mutable dictionaries when current HA patterns provide a better life
 
 Reload must work without restarting HA.
 
-## 7.7 Entity inventory
+## 7.8 Entity inventory
 
 Connector reads HA registry/state metadata.
 
@@ -650,7 +693,7 @@ Do NOT upload every raw attribute.
 
 Create an allowlist per HA domain.
 
-## 7.8 Entity inventory lifecycle
+## 7.9 Entity inventory lifecycle
 
 Full sync:
 - initial connection;
@@ -668,7 +711,7 @@ State update:
 - relevant property changed;
 - availability changed.
 
-## 7.9 State subscription
+## 7.10 State subscription
 
 Use Home Assistant internal event/lifecycle APIs appropriate to a custom integration.
 
@@ -676,7 +719,7 @@ Do not connect from the integration back into the local `/api/websocket` unless 
 
 The connector itself is already running inside HA and should use native Python APIs.
 
-## 7.10 State debounce/coalescing
+## 7.11 State debounce/coalescing
 
 Rapid changes may occur.
 
@@ -687,7 +730,7 @@ Rules:
 - preserve latest state;
 - avoid flooding cloud.
 
-## 7.11 Command execution
+## 7.12 Command execution
 
 Cloud sends an abstract command.
 
@@ -734,7 +777,7 @@ Good:
 
 The connector maps allowed operations locally.
 
-## 7.12 Allowed operation registry
+## 7.13 Allowed operation registry
 
 Example:
 
@@ -769,7 +812,7 @@ ALLOWED_OPERATIONS = {
 
 Each operation has strict Pydantic-style validation or equivalent.
 
-## 7.13 Diagnostics
+## 7.14 Diagnostics
 
 Provide downloadable HA diagnostics.
 
@@ -1899,6 +1942,8 @@ Codex MUST:
 18. prefer typed code;
 19. keep API schemas versioned;
 20. preserve backward compatibility of EVCP within a major protocol version.
+21. before M3, analyze previous Ekonex Home Assistant components and document
+    the Ekonex Home Assistant Integration Standard required by section 7.1.
 
 ---
 
@@ -1985,6 +2030,17 @@ Deliver:
 - tests.
 
 ## M3 — Home Assistant connector foundation
+
+Mandatory entry criterion:
+- complete the pre-M3 analysis of previous Ekonex Home Assistant components;
+- document the Ekonex Home Assistant Integration Standard for lifecycle, config
+  flow, diagnostics, reconnect, logging, naming, `unique_id`, translations, and
+  error handling;
+- confirm HAOS/Home Assistant OS (Hassio) as the primary validation platform;
+- resolve conflicts with current official Home Assistant requirements before
+  implementation, recording architectural deviations in an ADR.
+
+M3 implementation MUST NOT start until this entry criterion is satisfied.
 
 Deliver:
 - manifest;
