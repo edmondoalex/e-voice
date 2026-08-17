@@ -1,0 +1,222 @@
+"""SQLAlchemy models for the M1 multi-tenant core."""
+
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..database import Base
+from .enums import InstallationStatus, RecordStatus, TenantRole
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+
+
+class Dealer(TimestampMixin, Base):
+    __tablename__ = "dealers"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(100), unique=True)
+    status: Mapped[RecordStatus] = mapped_column(
+        Enum(
+            RecordStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda values: [item.value for item in values],
+        ),
+        default=RecordStatus.ACTIVE,
+    )
+
+    tenants: Mapped[list["Tenant"]] = relationship(back_populates="dealer")
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    status: Mapped[RecordStatus] = mapped_column(
+        Enum(
+            RecordStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda values: [item.value for item in values],
+        ),
+        default=RecordStatus.ACTIVE,
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    memberships: Mapped[list["TenantMembership"]] = relationship(back_populates="user")
+
+
+class Tenant(TimestampMixin, Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    dealer_id: Mapped[UUID] = mapped_column(ForeignKey("dealers.id", ondelete="RESTRICT"))
+    name: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(100), unique=True)
+    status: Mapped[RecordStatus] = mapped_column(
+        Enum(
+            RecordStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda values: [item.value for item in values],
+        ),
+        default=RecordStatus.ACTIVE,
+    )
+
+    dealer: Mapped[Dealer] = relationship(back_populates="tenants")
+    memberships: Mapped[list["TenantMembership"]] = relationship(back_populates="tenant")
+    installations: Mapped[list["Installation"]] = relationship(back_populates="tenant")
+
+
+class TenantMembership(Base):
+    __tablename__ = "tenant_memberships"
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    role: Mapped[TenantRole] = mapped_column(
+        Enum(
+            TenantRole,
+            native_enum=False,
+            length=30,
+            values_callable=lambda values: [item.value for item in values],
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(back_populates="memberships")
+
+
+class Installation(TimestampMixin, Base):
+    __tablename__ = "installations"
+    __table_args__ = (Index("ix_installations_tenant_id", "tenant_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    public_id: Mapped[str] = mapped_column(String(100), unique=True)
+    status: Mapped[InstallationStatus] = mapped_column(
+        Enum(
+            InstallationStatus,
+            native_enum=False,
+            length=20,
+            values_callable=lambda values: [item.value for item in values],
+        ),
+        default=InstallationStatus.PENDING,
+    )
+    connector_version: Mapped[str | None] = mapped_column(String(50))
+    ha_version: Mapped[str | None] = mapped_column(String(50))
+    ha_installation_type: Mapped[str | None] = mapped_column(String(50))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    tenant: Mapped[Tenant] = relationship(back_populates="installations")
+    entities: Mapped[list["Entity"]] = relationship(back_populates="installation")
+
+
+class Entity(TimestampMixin, Base):
+    __tablename__ = "entities"
+    __table_args__ = (
+        UniqueConstraint("installation_id", "ha_entity_id"),
+        Index("ix_entities_installation_id", "installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    ha_entity_id: Mapped[str] = mapped_column(String(255))
+    ha_domain: Mapped[str] = mapped_column(String(64))
+    friendly_name: Mapped[str | None] = mapped_column(String(255))
+    area_id: Mapped[str | None] = mapped_column(String(255))
+    area_name: Mapped[str | None] = mapped_column(String(255))
+    device_class: Mapped[str | None] = mapped_column(String(100))
+    supported_features: Mapped[int] = mapped_column(BigInteger, default=0)
+    state: Mapped[str | None] = mapped_column(String(255))
+    attributes_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    installation: Mapped[Installation] = relationship(back_populates="entities")
+    alexa_publication: Mapped["AlexaPublication | None"] = relationship(
+        back_populates="entity", uselist=False
+    )
+
+
+class AlexaPublication(TimestampMixin, Base):
+    __tablename__ = "alexa_publications"
+    __table_args__ = (Index("ix_alexa_publications_endpoint_id", "alexa_endpoint_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), unique=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    display_name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text)
+    display_category: Mapped[str | None] = mapped_column(String(100))
+    mapper_type: Mapped[str] = mapped_column(String(100))
+    control_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    state_read_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    alexa_endpoint_id: Mapped[str] = mapped_column(String(255), unique=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    entity: Mapped[Entity] = relationship(back_populates="alexa_publication")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("ix_audit_events_tenant_created", "tenant_id", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("installations.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    source: Mapped[str] = mapped_column(String(100))
+    event_type: Mapped[str] = mapped_column(String(100))
+    request_id: Mapped[str | None] = mapped_column(String(100))
+    payload_redacted_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )

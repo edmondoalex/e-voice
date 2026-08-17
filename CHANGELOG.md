@@ -4,6 +4,44 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-17 — M1 core multi-tenant backend
+
+Status: Complete
+
+### Scope
+
+- Added SQLAlchemy models for dealers, users, tenants, memberships,
+  installations, entities, Alexa publications, and audit events.
+- Added the initial Alembic schema migration with UUID keys, constraints,
+  foreign-key deletion behavior, and required lookup indexes.
+- Added active membership resolution as the basic authentication scaffold.
+- Added centralized tenant contexts and role-based publication write policy.
+- Added repository and service methods that scope tenant-owned queries in SQL,
+  including indirect entity and publication ownership.
+- Added unit, authorization, migration parity, and explicit cross-tenant tests.
+- Added `aiosqlite` as a development-only dependency for isolated database tests.
+
+### Validation
+
+- `ruff format --check .`: passed
+- `ruff check .`: passed
+- `mypy apps`: passed
+- `pytest`: passed
+- Alembic upgrade and model metadata parity: passed
+- PostgreSQL migration SQL generation: passed
+
+### Commit
+
+- `M1: core multi-tenant backend`
+
+### Deviations
+
+- Tests use in-memory SQLite for speed and isolation; production remains
+  PostgreSQL through the configured async database URL.
+- Basic authentication is intentionally limited to resolving active users and
+  tenant memberships. Login, token issuance, and OAuth are outside M1.
+- No M2 pairing behavior was implemented.
+
 ## 2026-08-17 — Ekonex Home Assistant Integration Standard
 
 Status: Documented; implementation not started

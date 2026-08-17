@@ -23,5 +23,18 @@ client -> cloud API -> PostgreSQL
 or Redis availability. A separate readiness check can be added when the API
 starts serving dependency-backed routes.
 
-See [SPEC_V1.md](SPEC_V1.md) for the complete product architecture.
+## Tenant isolation
 
+Tenant is the authorization and data isolation boundary. Authentication resolves
+an active user membership into a tenant context. Domain services accept that
+context, and repositories require `tenant_id` on every tenant-owned lookup.
+
+Resources that inherit ownership indirectly are scoped in the database query:
+entities join their installation, and Alexa publications join their entity and
+installation. A foreign resource therefore produces the same not-found result as
+an absent resource; callers never receive an unscoped object to validate later.
+
+M1 provides persistence and authorization scaffolding only. It does not expose
+session endpoints, Alexa directives, pairing, or connector transport.
+
+See [SPEC_V1.md](SPEC_V1.md) for the complete product architecture.
