@@ -1,0 +1,47 @@
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      EKONEX_DATABASE_URL: ${EKONEX_DATABASE_URL:-postgresql+asyncpg://ekonex:local-development-only@postgres:5432/ekonex_voice}
+      EKONEX_REDIS_URL: ${EKONEX_REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "${EKONEX_API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ekonex_voice}
+      POSTGRES_USER: ${POSTGRES_USER:-ekonex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ekonex} -d ${POSTGRES_DB:-ekonex_voice}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+
