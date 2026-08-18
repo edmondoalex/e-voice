@@ -51,7 +51,12 @@ async def async_get_config_entry_diagnostics(
                 "exposure": (
                     entry.runtime_data.inventory.exposure_summary
                     if entry.runtime_data.inventory is not None
-                    else {"ui_device_count": 0, "ui_entity_count": 0, "label_configured": False}
+                    else {
+                        "ui_device_count": 0,
+                        "ui_entity_count": 0,
+                        "label_configured": False,
+                        "label_id": None,
+                    }
                 ),
             }
         ),
