@@ -1,0 +1,147 @@
+"""M6 cloud command authorization, routing and correlation tests."""
+
+import asyncio
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.websockets import WebSocketState
+
+from apps.cloud_api.app.command_dispatch import (
+    CommandDispatchService,
+    PowerCommand,
+    command_adapter,
+)
+from apps.cloud_api.app.domain.models import AuditEvent, Entity
+from apps.cloud_api.app.evcp import (
+    CommandResultPayload,
+    ConnectorSessionRegistry,
+    SessionHandle,
+)
+
+
+async def test_dispatch_requires_active_installation_scoped_exposed_entity(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_registry_id = "stable-light"
+    router = AsyncMock()
+    command_id = uuid4()
+    router.dispatch.return_value = CommandResultPayload(
+        session_id=uuid4(), command_id=command_id, status="success"
+    )
+    await session.commit()
+
+    outcome = await CommandDispatchService(session, router).dispatch(
+        installation_id,
+        "stable-light",
+        PowerCommand(operation="power_on"),
+        command_id=command_id,
+    )
+    assert outcome.status == "success"
+    router.dispatch.assert_awaited_once()
+    audit = (await session.scalars(select(AuditEvent))).one()
+    assert audit.request_id == str(command_id)
+    assert audit.payload_redacted_json == {
+        "registry_id": "stable-light",
+        "operation": "power_on",
+    }
+
+
+async def test_tombstoned_and_cross_installation_targets_never_route(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity_a = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    entity_b = await session.get(Entity, seeded_domain.entity_b_id)  # type: ignore[attr-defined]
+    assert entity_a is not None and entity_b is not None
+    entity_a.ha_registry_id = "removed"
+    entity_a.deleted_at = entity_a.updated_at
+    entity_b.ha_registry_id = "other-tenant"
+    await session.commit()
+    router = AsyncMock()
+    service = CommandDispatchService(session, router)
+
+    removed = await service.dispatch(
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+        "removed",
+        PowerCommand(operation="power_on"),
+    )
+    cross_installation = await service.dispatch(
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+        "other-tenant",
+        PowerCommand(operation="power_on"),
+    )
+    assert removed.status == "target_not_exposed"
+    assert cross_installation.status == "target_not_found"
+    router.dispatch.assert_not_awaited()
+
+
+async def test_session_registry_correlates_result_and_deduplicates_command_id() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, session_id, command_id = uuid4(), uuid4(), uuid4()
+    websocket = AsyncMock()
+    websocket.client_state = WebSocketState.CONNECTED
+    await registry.replace(installation_id, SessionHandle(session_id, websocket))
+    command: dict[str, object] = {"operation": "power_on"}
+    pending = asyncio.create_task(
+        registry.dispatch(installation_id, command_id, "stable-light", command, 1.0)
+    )
+    await asyncio.sleep(0)
+    result = CommandResultPayload(session_id=session_id, command_id=command_id, status="success")
+    assert await registry.resolve(installation_id, session_id, result)
+    assert (await pending).status == "success"
+    replay = await registry.dispatch(installation_id, command_id, "stable-light", command, 1.0)
+    conflict = await registry.dispatch(installation_id, command_id, "different", command, 1.0)
+    assert replay.status == "success"
+    assert conflict.status == "duplicate"
+    websocket.send_json.assert_awaited_once()
+
+
+async def test_session_registry_has_bounded_cloud_timeout() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, session_id = uuid4(), uuid4()
+    websocket = AsyncMock()
+    websocket.client_state = WebSocketState.CONNECTED
+    await registry.replace(installation_id, SessionHandle(session_id, websocket))
+    outcome = await registry.dispatch(
+        installation_id, uuid4(), "stable-light", {"operation": "power_on"}, 0.001
+    )
+    assert outcome.status == "timeout"
+    assert outcome.error_code == "COMMAND_TIMEOUT"
+
+
+async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, command_id = uuid4(), uuid4()
+    first, second = AsyncMock(), AsyncMock()
+    first.client_state = second.client_state = WebSocketState.CONNECTED
+    await registry.replace(installation_id, SessionHandle(uuid4(), first))
+    pending = asyncio.create_task(
+        registry.dispatch(
+            installation_id,
+            command_id,
+            "stable-light",
+            {"operation": "power_on"},
+            1.0,
+        )
+    )
+    await asyncio.sleep(0)
+    await registry.replace(installation_id, SessionHandle(uuid4(), second))
+    assert (await pending).status == "stale_session"
+    assert not registry._pending
+
+
+def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> None:
+    for value in (
+        {"operation": "set_brightness", "brightness": "255"},
+        {"operation": "set_color", "rgb_color": [0, 0, 999]},
+        {"operation": "power_on", "service": "lock.unlock"},
+        {"operation": "call_service", "domain": "shell_command"},
+    ):
+        with pytest.raises(ValidationError):
+            command_adapter.validate_python(value)

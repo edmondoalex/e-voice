@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
@@ -131,8 +132,37 @@ class StateUpdate(StrictModel):
     payload: InventoryPayload
 
 
+CommandStatus = Literal[
+    "success",
+    "target_not_found",
+    "target_not_exposed",
+    "unsupported_command",
+    "invalid_argument",
+    "unavailable",
+    "timeout",
+    "execution_failed",
+    "stale_session",
+    "duplicate",
+]
+
+
+class CommandResultPayload(StrictModel):
+    session_id: UUID
+    command_id: UUID
+    status: CommandStatus
+    error_code: str | None = Field(default=None, max_length=64, pattern=r"^[A-Z0-9_]+$")
+
+
+class CommandResultMessage(StrictModel):
+    version: Literal[1]
+    type: Literal["command_result"]
+    id: UUID
+    timestamp: datetime
+    payload: CommandResultPayload
+
+
 InboundMessage = Annotated[
-    Hello | Heartbeat | InventoryFull | InventoryDelta | StateUpdate,
+    Hello | Heartbeat | InventoryFull | InventoryDelta | StateUpdate | CommandResultMessage,
     Field(discriminator="type"),
 ]
 inbound_adapter: TypeAdapter[InboundMessage] = TypeAdapter(InboundMessage)
@@ -150,12 +180,26 @@ class ConnectorSessionRegistry:
 
     def __init__(self) -> None:
         self._sessions: dict[UUID, SessionHandle] = {}
+        self._pending: dict[tuple[UUID, UUID], asyncio.Future[CommandResultPayload]] = {}
+        self._completed: dict[tuple[UUID, UUID], CommandResultPayload] = {}
+        self._command_fingerprints: dict[tuple[UUID, UUID], str] = {}
         self._lock = asyncio.Lock()
 
     async def replace(self, installation_id: UUID, handle: SessionHandle) -> None:
         async with self._lock:
             previous = self._sessions.get(installation_id)
             self._sessions[installation_id] = handle
+            if previous is not None and previous.session_id != handle.session_id:
+                for key, future in self._pending.items():
+                    if key[0] == installation_id and not future.done():
+                        future.set_result(
+                            CommandResultPayload(
+                                session_id=previous.session_id,
+                                command_id=key[1],
+                                status="stale_session",
+                                error_code="STALE_SESSION",
+                            )
+                        )
         if previous is not None and previous.session_id != handle.session_id:
             await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
 
@@ -164,6 +208,109 @@ class ConnectorSessionRegistry:
             current = self._sessions.get(installation_id)
             if current is not None and current.session_id == session_id:
                 self._sessions.pop(installation_id, None)
+                for key, future in list(self._pending.items()):
+                    if key[0] == installation_id and not future.done():
+                        future.set_result(
+                            CommandResultPayload(
+                                session_id=session_id,
+                                command_id=key[1],
+                                status="stale_session",
+                                error_code="STALE_SESSION",
+                            )
+                        )
+
+    async def dispatch(
+        self,
+        installation_id: UUID,
+        command_id: UUID,
+        registry_id: str,
+        command: dict[str, object],
+        timeout_seconds: float,
+    ) -> CommandResultPayload:
+        """Send to the active session and correlate one bounded result."""
+        key = (installation_id, command_id)
+        fingerprint = json.dumps(
+            {"registry_id": registry_id, "command": command}, sort_keys=True, separators=(",", ":")
+        )
+        async with self._lock:
+            previous_fingerprint = self._command_fingerprints.get(key)
+            if previous_fingerprint is not None and previous_fingerprint != fingerprint:
+                current = self._sessions.get(installation_id)
+                return CommandResultPayload(
+                    session_id=current.session_id if current else uuid4(),
+                    command_id=command_id,
+                    status="duplicate",
+                    error_code="DUPLICATE_COMMAND",
+                )
+            if completed := self._completed.get(key):
+                return completed
+            handle = self._sessions.get(installation_id)
+            if handle is None:
+                return CommandResultPayload(
+                    session_id=uuid4(),
+                    command_id=command_id,
+                    status="unavailable",
+                    error_code="INSTALLATION_OFFLINE",
+                )
+            future = self._pending.get(key)
+            if future is None:
+                future = asyncio.get_running_loop().create_future()
+                self._pending[key] = future
+                self._command_fingerprints[key] = fingerprint
+                should_send = True
+            else:
+                should_send = False
+        if should_send:
+            await handle.websocket.send_json(
+                _response(
+                    "command",
+                    command_id,
+                    {
+                        "session_id": str(handle.session_id),
+                        "command_id": str(command_id),
+                        "registry_id": registry_id,
+                        "command": command,
+                    },
+                )
+            )
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                result = await asyncio.shield(future)
+        except TimeoutError:
+            result = CommandResultPayload(
+                session_id=handle.session_id,
+                command_id=command_id,
+                status="timeout",
+                error_code="COMMAND_TIMEOUT",
+            )
+        async with self._lock:
+            self._pending.pop(key, None)
+            self._completed[key] = result
+            if len(self._completed) > 1024:
+                oldest = next(iter(self._completed))
+                self._completed.pop(oldest)
+                self._command_fingerprints.pop(oldest, None)
+        return result
+
+    async def resolve(
+        self, installation_id: UUID, session_id: UUID, result: CommandResultPayload
+    ) -> bool:
+        """Resolve only a waiter owned by the current authenticated session."""
+        async with self._lock:
+            current = self._sessions.get(installation_id)
+            if (
+                current is None
+                or current.session_id != session_id
+                or result.session_id != session_id
+            ):
+                return False
+            future = self._pending.get((installation_id, result.command_id))
+            if future is None and (installation_id, result.command_id) in self._completed:
+                return True
+            if future is None or future.done():
+                return False
+            future.set_result(result)
+            return True
 
 
 sessions = ConnectorSessionRegistry()
@@ -335,6 +482,11 @@ async def connector_websocket(
                 await websocket.send_json(
                     _response("heartbeat_ack", message.id, {"session_id": str(session_id)})
                 )
+                continue
+            if isinstance(message, CommandResultMessage):
+                if not await sessions.resolve(installation_id, session_id, message.payload):
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
                 continue
             if (
                 not isinstance(message, (InventoryFull, InventoryDelta, StateUpdate))

@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 
 if TYPE_CHECKING:
     from .client import EkonexVoiceClient
+    from .command_executor import EkonexVoiceCommandExecutor
     from .connection import EkonexVoiceConnection
     from .entity_inventory import EntityInventorySynchronizer
 
@@ -63,6 +64,7 @@ class EkonexVoiceRuntimeData:
     client: EkonexVoiceClient
     connection: EkonexVoiceConnection
     inventory: EntityInventorySynchronizer | None = None
+    command_executor: EkonexVoiceCommandExecutor | None = None
 
     async def async_close(self) -> None:
         """Stop background work and close network resources."""

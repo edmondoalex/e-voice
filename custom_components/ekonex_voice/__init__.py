@@ -13,6 +13,7 @@ from .client import (
     EkonexVoiceClient,
     EkonexVoiceProtocolError,
 )
+from .command_executor import EkonexVoiceCommandExecutor
 from .connection import EkonexVoiceConnection
 from .const import (
     CONF_CLOUD_URL,
@@ -53,6 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         set(entry.options.get(CONF_EXPOSED_ENTITY_REGISTRY_IDS, [])),
         entry.options.get(CONF_EXPOSURE_LABEL_ID),
     )
+    command_executor = EkonexVoiceCommandExecutor(hass, inventory)
     connection = EkonexVoiceConnection(
         hass,
         client.async_connect_websocket,
@@ -60,9 +62,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         ha_version=ha_version,
         on_auth_failure=lambda: entry.async_start_reauth(hass),
         inventory=inventory,
+        command_executor=command_executor,
     )
     entry.runtime_data = EkonexVoiceRuntimeData(
-        client=client, connection=connection, inventory=inventory
+        client=client,
+        connection=connection,
+        inventory=inventory,
+        command_executor=command_executor,
     )
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     connection.async_start()

@@ -4,6 +4,28 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-18 — M6 cloud-to-Home Assistant command execution
+
+Status: Ready for review
+
+### Scope
+
+- Added typed EVCP command/results with session binding, bounded timeout,
+  correlation and replay protection.
+- Added installation-scoped cloud dispatch, active-inventory authorization and
+  redacted command audits.
+- Added fixed HA mappers for light, switch, cover, climate, fan, scene, script,
+  button, number and select with capability/range validation.
+- Kept Home Assistant state authoritative through M5 synchronization.
+
+### Scope guard
+
+- No arbitrary HA service passthrough, Alexa, OAuth, admin UI or later milestone.
+
+### Architecture
+
+- No new ADR: this implements ADR-0004, ADR-0005 and ADR-0007.
+
 ## 2026-08-18 — M5 entity inventory and state synchronization
 
 Status: Ready for review

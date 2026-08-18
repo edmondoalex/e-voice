@@ -21,6 +21,35 @@ label itself is not deleted from Home Assistant.
 
 Status: M5 entity synchronization, ready for review
 
+## M6 safe command mappers
+
+M6 controls only entities still authorized by the M5 UI/label union. The
+Connector resolves stable registry identity to the current entity ID and uses
+this fixed map:
+
+| Domain | Allowed operations and validation |
+| --- | --- |
+| `light` | power, brightness 0–255, RGB and Kelvin within advertised color capabilities |
+| `switch` | power on/off |
+| `cover` | open, close, stop and position 0–100 when feature flags allow |
+| `climate` | target temperature, HVAC mode and power within advertised bounds/modes/features |
+| `fan` | power and percentage 0–100 when feature flags allow |
+| `scene` / `script` | activate the resolved entity only; no variables or arbitrary data |
+| `button` | press |
+| `number` | value within advertised minimum/maximum |
+| `select` | one advertised option |
+
+Other exposed domains are read-only in M6. Missing, disabled, unavailable,
+unexposed, unsupported and invalid targets produce safe results without an HA
+action call. Calls have an eight-second ceiling. Success does not synthesize
+state; resulting HA events converge through M5.
+
+For HAOS acceptance, exercise valid and invalid boundaries for every mapper.
+Rename an entity ID, remove its final authorization, make it unavailable and
+reconnect during a command. Confirm stable resolution, no action for rejected
+targets, one execution for duplicates, M5 state convergence, clean unload and no
+command value, exception detail or secret in logs/diagnostics.
+
 The native integration lives in `custom_components/ekonex_voice` and follows
 [`EKONEX_HA_STANDARD.md`](EKONEX_HA_STANDARD.md). HAOS/Home Assistant OS is the
 primary platform.

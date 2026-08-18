@@ -13,9 +13,10 @@ from aiohttp import ClientWebSocketResponse, WSMsgType
 from homeassistant.core import HomeAssistant
 
 from .client import EkonexVoiceAuthError, EkonexVoiceCannotConnect, EkonexVoiceProtocolError
+from .command_executor import CommandResult, EkonexVoiceCommandExecutor
 from .const import BACKOFF_SCHEDULE, HEARTBEAT_TIMEOUT
 from .entity_inventory import EntityInventorySynchronizer
-from .evcp import envelope, parse_ack
+from .evcp import envelope, parse_command, parse_message
 from .models import ConnectionState
 
 type Sleep = Callable[[float], Coroutine[Any, Any, None]]
@@ -36,6 +37,7 @@ class EkonexVoiceConnection:
         ha_version: str = "unknown",
         on_auth_failure: Callable[[], None] | None = None,
         inventory: EntityInventorySynchronizer | None = None,
+        command_executor: EkonexVoiceCommandExecutor | None = None,
         sleep: Sleep = asyncio.sleep,
         random_value: RandomValue = random.random,
     ) -> None:
@@ -48,6 +50,7 @@ class EkonexVoiceConnection:
             random_value,
         )
         self._inventory = inventory
+        self._command_executor = command_executor
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self.state = ConnectionState.STOPPED
@@ -148,16 +151,54 @@ class EkonexVoiceConnection:
         if self._inventory is not None:
             await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
-            await self._sleep(float(interval))
+            sleeper = asyncio.create_task(self._sleep(float(interval)))
+            receiver = asyncio.create_task(self._receive_message(websocket))
+            try:
+                done, pending = await asyncio.wait(
+                    {sleeper, receiver}, return_when=asyncio.FIRST_COMPLETED
+                )
+            except asyncio.CancelledError:
+                sleeper.cancel()
+                receiver.cancel()
+                await asyncio.gather(sleeper, receiver, return_exceptions=True)
+                raise
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if receiver in done:
+                message_type, _, inbound = receiver.result()
+                if message_type != "command":
+                    raise EkonexVoiceProtocolError("unexpected_message")
+                await self._handle_command(websocket, session_id, inbound)
+                continue
             heartbeat = envelope("heartbeat", {"session_id": session_id})
             await websocket.send_json(heartbeat)
-            ack = await self._receive_ack(websocket, "heartbeat_ack", str(heartbeat["id"]))
+            ack = await self._receive_ack(
+                websocket, "heartbeat_ack", str(heartbeat["id"]), session_id=session_id
+            )
             if set(ack) != {"session_id"} or ack.get("session_id") != session_id:
                 raise EkonexVoiceProtocolError("invalid_heartbeat_ack")
 
     async def _receive_ack(
-        self, websocket: ClientWebSocketResponse, message_type: str, message_id: str
+        self,
+        websocket: ClientWebSocketResponse,
+        message_type: str,
+        message_id: str,
+        *,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
+        while True:
+            received_type, received_id, payload = await self._receive_message(websocket)
+            if received_type == "command" and session_id is not None:
+                await self._handle_command(websocket, session_id, payload)
+                continue
+            if received_type != message_type or received_id != message_id:
+                raise EkonexVoiceProtocolError("invalid_message")
+            return payload
+
+    async def _receive_message(
+        self, websocket: ClientWebSocketResponse
+    ) -> tuple[str, str, dict[str, Any]]:
         try:
             async with asyncio.timeout(HEARTBEAT_TIMEOUT):
                 message = await websocket.receive()
@@ -174,6 +215,21 @@ class EkonexVoiceConnection:
         if message.type is not WSMsgType.TEXT:
             raise EkonexVoiceProtocolError("invalid_message_type")
         try:
-            return parse_ack(message.data, expected_type=message_type, expected_id=message_id)
+            return parse_message(message.data)
         except (ValueError, TypeError, json.JSONDecodeError) as error:
             raise EkonexVoiceProtocolError("invalid_message") from error
+
+    async def _handle_command(
+        self, websocket: ClientWebSocketResponse, session_id: str, payload: dict[str, Any]
+    ) -> None:
+        try:
+            requested_session, command_id, registry_id, command = parse_command(payload)
+        except (ValueError, TypeError):
+            raise EkonexVoiceProtocolError("invalid_command") from None
+        if requested_session != session_id:
+            result = CommandResult(command_id, "stale_session", "STALE_SESSION")
+        elif self._command_executor is None:
+            result = CommandResult(command_id, "unsupported_command", "OPERATION_NOT_SUPPORTED")
+        else:
+            result = await self._command_executor.async_execute(command_id, registry_id, command)
+        await websocket.send_json(envelope("command_result", result.payload(session_id)))

@@ -69,6 +69,21 @@ class EntityInventorySynchronizer:
             "label_id": self._label_id,
         }
 
+    def is_exposed(self, entry: er.RegistryEntry) -> bool:
+        """Return whether the installer currently authorizes this registry entity."""
+        device = dr.async_get(self._hass).async_get(entry.device_id) if entry.device_id else None
+        return (
+            entry.id in self._registry_ids
+            or entry.device_id in self._device_ids
+            or (
+                self._label_id is not None
+                and (
+                    self._label_id in entry.labels
+                    or (device is not None and self._label_id in device.labels)
+                )
+            )
+        )
+
     async def async_start(
         self, websocket: ClientWebSocketResponse, session_id: str, cloud_revision: int
     ) -> None:
@@ -168,16 +183,7 @@ class EntityInventorySynchronizer:
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:
             return None
-        device = dr.async_get(self._hass).async_get(entry.device_id) if entry.device_id else None
-        label_authorized = self._label_id is not None and (
-            self._label_id in entry.labels
-            or (device is not None and self._label_id in device.labels)
-        )
-        if (
-            entry.id not in self._registry_ids
-            and entry.device_id not in self._device_ids
-            and not label_authorized
-        ):
+        if not self.is_exposed(entry):
             return None
         return _serialize(self._hass, entry)
 
