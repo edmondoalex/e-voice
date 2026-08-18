@@ -1,0 +1,29 @@
+{
+  "title": "Ekonex Voice",
+  "config": {
+    "step": {
+      "pairing": {
+        "title": "Connect Ekonex Voice",
+        "description": "Enter code **{code}** in the Ekonex portal, then select Submit. The code expires at {expires_at}."
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Ekonex Voice",
+        "description": "The Connector credential is no longer valid. Select Submit to generate a new one-time pairing code."
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to Ekonex Cloud. Try again.",
+      "pairing_pending": "The code has not been claimed yet. Claim it in the portal, then try again."
+    },
+    "abort": {
+      "already_configured": "This Ekonex installation is already configured.",
+      "cannot_connect": "Cannot connect to Ekonex Cloud.",
+      "invalid_auth": "The pairing credential was rejected.",
+      "pairing_denied": "Pairing was denied.",
+      "pairing_expired": "The pairing code expired. Start setup again.",
+      "reauth_successful": "Ekonex Voice was reconnected successfully.",
+      "unknown": "An unexpected safe-to-retry error occurred.",
+      "wrong_installation": "The credential belongs to a different Ekonex installation."
+    }
+  }
+}

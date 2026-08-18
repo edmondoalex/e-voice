@@ -4,6 +4,48 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-18 — M3 Home Assistant Connector foundation
+
+Status: Ready for review
+
+### Scope
+
+- Added the HAOS-first native `ekonex_voice` manifest, ConfigEntry lifecycle and
+  typed runtime data.
+- Added an async, secret-safe HTTP boundary for M2 pairing and final credential
+  validation.
+- Added UI pairing, stable installation identity, duplicate prevention and
+  ConfigEntry-linked reauthentication.
+- Added a single cancellation-safe connection supervisor with capped full-jitter
+  backoff, ready for later EVCP WebSocket transport.
+- Added recursively redacted diagnostics and matching English/Italian runtime
+  translation catalogs.
+- Added HA config-flow, lifecycle, reconnect, security, diagnostics, metadata and
+  localization tests plus an exact HAOS acceptance procedure.
+
+### Validation
+
+- Backend pytest on Windows: 23 passed
+- `ruff format --check .`: passed
+- `ruff check .`: passed
+- `mypy apps custom_components`: passed
+- Full HA/Linux pytest and `git diff --check`: pending final validation
+
+### Scope guard
+
+- No Alexa, entity synchronization, EVCP WebSocket wire implementation, command
+  mapper, portal UI or production infrastructure was added.
+
+### Deviations
+
+- `strings.json` is intentionally absent. Current official Home Assistant custom
+  integration documentation (reviewed 2026-08-18) requires full runtime text in
+  `translations/*.json` and says not to use Core's build-time `strings.json`
+  pipeline. This current rule takes precedence over the older M3 requirement.
+- A real HAOS acceptance run was not possible on the Windows development host;
+  `docs/home-assistant.md` records the exact manual procedure. Linux CI executes
+  the complete automated Home Assistant suite.
+
 ## 2026-08-17 — Pre-M3 Home Assistant standard
 
 Status: Ready for review

@@ -1,9 +1,10 @@
 # Ekonex Voice
 
 Ekonex Voice is the planned multi-tenant cloud control layer between Amazon
-Alexa and Home Assistant. The repository currently contains Milestone M2: the
-core multi-tenant foundation and provider-neutral secure installation pairing.
-Alexa and the Home Assistant connector are not implemented yet.
+Alexa and Home Assistant. The repository currently contains Milestone M3: the
+core multi-tenant backend, secure pairing and native HA Connector foundation.
+Alexa is not implemented. Milestone M3 adds the native Home Assistant Connector
+foundation without entity synchronization or command handling.
 
 ## Requirements
 
@@ -38,7 +39,7 @@ uvicorn apps.cloud_api.app.main:app --reload
 ```bash
 ruff format --check .
 ruff check .
-mypy apps
+mypy apps custom_components
 pytest
 docker compose config --quiet
 ```
@@ -49,3 +50,14 @@ checks that the resulting schema matches the SQLAlchemy metadata.
 See [docs/SPEC_V1.md](docs/SPEC_V1.md) for the product baseline and
 [docs/adr](docs/adr) for architectural decisions. Completed changes are tracked
 in [CHANGELOG.md](CHANGELOG.md).
+
+## Home Assistant Connector foundation
+
+M3 adds `custom_components/ekonex_voice` for HAOS. It is configured only from
+**Settings → Devices & services → Add integration** and requires no YAML,
+inbound port, add-on, or connection back into Home Assistant's local WebSocket.
+
+The foundation implements secure M2 pairing, ConfigEntry lifecycle,
+reauthentication, connection supervision and redacted diagnostics. Entity
+inventory, EVCP WebSocket messages, commands and Alexa remain deferred. See
+[docs/home-assistant.md](docs/home-assistant.md) for scope and HAOS acceptance.

@@ -25,8 +25,9 @@ dev = [
   "aiosqlite>=0.21,<1",
   "httpx>=0.28,<1",
   "mypy>=1.14,<2",
-  "pytest>=8.3,<9",
+  "pytest>=9,<10",
   "pytest-asyncio>=0.25,<2",
+  "pytest-homeassistant-custom-component==0.13.316",
   "ruff>=0.9,<1",
 ]
 
@@ -50,3 +51,4 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
+mypy_path = "."
