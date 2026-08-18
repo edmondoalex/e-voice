@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from cryptography.fernet import Fernet
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,8 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://ekonex:local-development-only@localhost:5432/ekonex_voice"
     )
     redis_url: str = "redis://localhost:6379/0"
+    pairing_code_pepper: str = "development-only-pairing-pepper-32-bytes-minimum"
+    pairing_delivery_key: str = Fernet.generate_key().decode()
     alexa_oauth_client_id: str = "ekonex-alexa-development"
     alexa_oauth_client_secret: str = "change-me"
     alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"
