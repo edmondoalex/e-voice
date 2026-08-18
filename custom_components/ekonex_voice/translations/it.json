@@ -1,0 +1,29 @@
+{
+  "title": "Ekonex Voice",
+  "config": {
+    "step": {
+      "pairing": {
+        "title": "Collega Ekonex Voice",
+        "description": "Inserisci il codice **{code}** nel portale Ekonex, quindi seleziona Invia. Il codice scade alle {expires_at}."
+      },
+      "reauth_confirm": {
+        "title": "Ricollega Ekonex Voice",
+        "description": "La credenziale del Connector non è più valida. Seleziona Invia per generare un nuovo codice di associazione monouso."
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi a Ekonex Cloud. Riprova.",
+      "pairing_pending": "Il codice non è ancora stato utilizzato. Inseriscilo nel portale, quindi riprova."
+    },
+    "abort": {
+      "already_configured": "Questa installazione Ekonex è già configurata.",
+      "cannot_connect": "Impossibile connettersi a Ekonex Cloud.",
+      "invalid_auth": "La credenziale di associazione è stata rifiutata.",
+      "pairing_denied": "L'associazione è stata negata.",
+      "pairing_expired": "Il codice di associazione è scaduto. Avvia nuovamente la configurazione.",
+      "reauth_successful": "Ekonex Voice è stato ricollegato correttamente.",
+      "unknown": "Si è verificato un errore imprevisto. Puoi riprovare.",
+      "wrong_installation": "La credenziale appartiene a un'altra installazione Ekonex."
+    }
+  }
+}
