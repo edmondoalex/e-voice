@@ -1,5 +1,8 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -108,6 +111,29 @@ async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssist
     assert item is not None
     assert item["registry_id"] == entry.id
     assert item["friendly_name"] == "User configured name"
+
+
+async def test_removing_final_ui_and_label_authorization_emits_empty_reconciliation(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    registry = er.async_get(hass)
+    registry.async_update_entity(entry.entity_id, labels={"stable-label-id"})
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, "stable-label-id")
+    websocket = AsyncMock()
+    sync._websocket = websocket
+    sync._session_id = str(uuid4())
+
+    await sync._send_full()
+    authorized = websocket.send_json.await_args_list[-1].args[0]["payload"]["entities"]
+    assert len(authorized) == 1
+    assert authorized[0]["registry_id"] == entry.id
+
+    sync._registry_ids.clear()
+    registry.async_update_entity(entry.entity_id, labels=set())
+    await sync._send_full()
+    reconciled = websocket.send_json.await_args_list[-1].args[0]["payload"]["entities"]
+    assert reconciled == []
 
 
 def test_large_inventory_chunking_is_deterministic_and_bounded() -> None:

@@ -32,7 +32,7 @@ def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, 
     }
 
 
-async def test_full_inventory_upserts_and_deselection_tombstones(
+async def test_final_authorization_removal_snapshot_tombstones_entity(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
@@ -129,3 +129,57 @@ def test_inventory_batches_reject_missing_or_out_of_order_batch() -> None:
     )
     with pytest.raises(ValueError, match="out-of-order"):
         accumulator.add(uuid4(), payload)
+
+
+async def test_multibatch_full_inventory_is_applied_atomically_after_final_batch(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    first_item = item("registry-light-1")
+    second_item = {
+        **item("registry-switch-2", state="off"),
+        "entity_id": "switch.second",
+        "domain": "switch",
+    }
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [first_item, second_item])
+
+    accumulator = InventoryAccumulator()
+    session_id = uuid4()
+    first_batch = InventoryPayload.model_validate(
+        {
+            "session_id": session_id,
+            "revision": 2,
+            "batch_index": 0,
+            "batch_count": 2,
+            "entities": [{**first_item, "last_changed_at": datetime.now(UTC)}],
+        }
+    )
+    second_batch = InventoryPayload.model_validate(
+        {
+            "session_id": session_id,
+            "revision": 2,
+            "batch_index": 1,
+            "batch_count": 2,
+            "entities": [{**second_item, "last_changed_at": datetime.now(UTC)}],
+        }
+    )
+
+    assert accumulator.add(installation.id, first_batch) is None
+    before_complete = (
+        await session.scalars(select(Entity).where(Entity.installation_id == installation.id))
+    ).all()
+    assert len(before_complete) == 2
+    assert all(entity.deleted_at is None for entity in before_complete)
+    assert installation.sync_revision == 1
+
+    complete_snapshot = accumulator.add(installation.id, second_batch)
+    assert complete_snapshot is not None
+    await service.apply_full(2, complete_snapshot)
+    after_complete = (
+        await session.scalars(select(Entity).where(Entity.installation_id == installation.id))
+    ).all()
+    assert len(after_complete) == 2
+    assert all(entity.deleted_at is None for entity in after_complete)
+    assert installation.sync_revision == 2
