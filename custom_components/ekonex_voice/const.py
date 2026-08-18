@@ -16,7 +16,7 @@ CONF_EXPOSURE_LABEL_ID = "exposure_label_id"
 
 # M3 keeps the production endpoint out of the UI. The path contract is isolated
 # in client.py so deployment can change the origin without touching flow logic.
-DEFAULT_CLOUD_URL = "https://api.ekonex.it"
+DEFAULT_CLOUD_URL = "https://voice.e-control.tech"
 
 PAIRING_POLL_INTERVAL = timedelta(seconds=2)
 PAIRING_REQUEST_TIMEOUT = 10.0
