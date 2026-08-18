@@ -252,6 +252,31 @@ class AlexaOAuthToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AlexaEventAuthorization(TimestampMixin, Base):
+    __tablename__ = "alexa_event_authorizations"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    link_id: Mapped[UUID] = mapped_column(
+        ForeignKey("alexa_account_links.id", ondelete="CASCADE"), unique=True
+    )
+    access_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    refresh_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlexaReportedState(Base):
+    __tablename__ = "alexa_reported_states"
+    __table_args__ = (UniqueConstraint("link_id", "entity_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    link_id: Mapped[UUID] = mapped_column(ForeignKey("alexa_account_links.id", ondelete="CASCADE"))
+    entity_id: Mapped[UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+    property_fingerprint: Mapped[str] = mapped_column(String(64))
+    properties_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (Index("ix_audit_events_tenant_created", "tenant_id", "created_at"),)

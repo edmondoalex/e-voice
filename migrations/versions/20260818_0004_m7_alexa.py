@@ -64,9 +64,45 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(timezone=True)),
     )
     op.create_index("ix_alexa_tokens_link", "alexa_oauth_tokens", ["link_id"])
+    op.create_table(
+        "alexa_event_authorizations",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column(
+            "link_id",
+            sa.Uuid(),
+            sa.ForeignKey("alexa_account_links.id", ondelete="CASCADE"),
+            nullable=False,
+            unique=True,
+        ),
+        sa.Column("access_token_encrypted", sa.LargeBinary(), nullable=False),
+        sa.Column("refresh_token_encrypted", sa.LargeBinary(), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("revoked_at", sa.DateTime(timezone=True)),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_table(
+        "alexa_reported_states",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column(
+            "link_id",
+            sa.Uuid(),
+            sa.ForeignKey("alexa_account_links.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "entity_id", sa.Uuid(), sa.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
+        ),
+        sa.Column("property_fingerprint", sa.String(64), nullable=False),
+        sa.Column("properties_json", sa.JSON(), nullable=False),
+        sa.Column("reported_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("link_id", "entity_id"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("alexa_reported_states")
+    op.drop_table("alexa_event_authorizations")
     op.drop_table("alexa_oauth_tokens")
     op.drop_table("alexa_oauth_grants")
     op.drop_table("alexa_account_links")

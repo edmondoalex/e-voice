@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -251,3 +252,97 @@ def test_supported_directives_map_only_to_closed_m6_vocabulary() -> None:
     }
     assert _command("Alexa.SceneController", "Activate", {}) == {"operation": "activate"}
     assert _command("Alexa.SecurityPanelController", "Disarm", {}) is None
+
+
+def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> None:
+    positioned = Entity(
+        installation_id=__import__("uuid").uuid4(),
+        ha_entity_id="cover.blind",
+        ha_domain="cover",
+        attributes_json={"current_position": 45},
+    )
+    capability = next(
+        item for item in capabilities(positioned) if item["interface"] == "Alexa.RangeController"
+    )
+    assert capability["instance"] == "Blind.Lift"
+    directives = {
+        mapping["directive"]["payload"]["rangeValue"]
+        for mapping in capability["semantics"]["actionMappings"]
+        if mapping["directive"]["name"] == "SetRangeValue"
+    }
+    assert directives == {0, 100}
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, positioned) == {
+        "operation": "set_position",
+        "position": 100,
+    }
+    assert _command(
+        "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": -10}, positioned
+    ) == {"operation": "set_position", "position": 35}
+
+    binary = Entity(
+        installation_id=positioned.installation_id,
+        ha_entity_id="cover.awning",
+        ha_domain="cover",
+        state="closed",
+    )
+    assert any(item["interface"] == "Alexa.ModeController" for item in capabilities(binary))
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, binary) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, binary) == {
+        "operation": "close"
+    }
+
+
+def test_every_advertised_reportable_property_is_proactive_and_retrievable() -> None:
+    entity = Entity(
+        installation_id=__import__("uuid").uuid4(),
+        ha_entity_id="light.kitchen",
+        ha_domain="light",
+        attributes_json={"brightness": 100},
+    )
+    reportable = [item for item in capabilities(entity) if "properties" in item]
+    assert reportable
+    assert all(
+        item["properties"]["proactivelyReported"] and item["properties"]["retrievable"]
+        for item in reportable
+    )
+
+
+async def test_discovered_cover_executes_advertised_range_directives(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-cover"
+    entity.attributes_json = {"current_position": 45}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_cover")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    client = await _client(session)
+
+    discovered = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    cover = discovered.json()["event"]["payload"]["endpoints"][0]
+    advertised = {item["interface"] for item in cover["capabilities"]}
+    assert "Alexa.RangeController" in advertised
+    assert "Alexa.CoverController" not in advertised
+
+    directive_body = _directive(
+        token, "Alexa.RangeController", "SetRangeValue", endpoint_id(entity)
+    )
+    directive_body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    directive_body["directive"]["payload"] = {"rangeValue": 100}  # type: ignore[index]
+    response = await client.post("/alexa/v1/directive", json=directive_body)
+    assert response.status_code == 200
+    await_args = dispatched.await_args
+    assert await_args is not None
+    assert await_args.args[3] == {"operation": "set_position", "position": 100}
+    await client.aclose()

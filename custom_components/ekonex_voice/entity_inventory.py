@@ -33,6 +33,9 @@ ATTRIBUTE_ALLOWLIST = {
             "effect",
         }
     ),
+    "cover": frozenset({"current_position"}),
+    "climate": frozenset({"temperature", "hvac_modes", "min_temp", "max_temp"}),
+    "fan": frozenset({"percentage"}),
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25

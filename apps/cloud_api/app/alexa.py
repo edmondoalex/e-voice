@@ -245,32 +245,132 @@ def _capability(interface: str, properties: list[str] | None = None) -> dict[str
 
 
 def capabilities(entity: Entity) -> list[dict[str, Any]]:
+    attributes = entity.attributes_json or {}
     result = [_capability("Alexa"), _capability("Alexa.EndpointHealth", ["connectivity"])]
     if entity.ha_domain in {"light", "switch", "fan"}:
         result.append(_capability("Alexa.PowerController", ["powerState"]))
     if entity.ha_domain == "light":
         result.append(_capability("Alexa.BrightnessController", ["brightness"]))
-        if "rgb_color" in entity.attributes_json:
+        if "rgb_color" in attributes:
             result.append(_capability("Alexa.ColorController", ["color"]))
-        if "color_temp_kelvin" in entity.attributes_json:
+        if "color_temp_kelvin" in attributes:
             result.append(
                 _capability("Alexa.ColorTemperatureController", ["colorTemperatureInKelvin"])
             )
     elif entity.ha_domain == "cover":
-        result.append(
-            _capability("Alexa.RangeController", ["rangeValue"])
-            | {
-                "instance": "Cover.Position",
-                "capabilityResources": {
-                    "friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
-                    ]
-                },
-                "configuration": {
-                    "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
-                },
-            }
-        )
+        if "current_position" in attributes:
+            result.append(
+                _capability("Alexa.RangeController", ["rangeValue"])
+                | {
+                    "instance": "Blind.Lift",
+                    "capabilityResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                        ]
+                    },
+                    "configuration": {
+                        "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
+                    },
+                    "semantics": {
+                        "actionMappings": [
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Open"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 100},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Close"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 0},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Raise"],
+                                "directive": {
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": 10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Lower"],
+                                "directive": {
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": -10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
+                                },
+                            },
+                        ]
+                    },
+                }
+            )
+        else:
+            result.append(
+                _capability("Alexa.ModeController", ["mode"])
+                | {
+                    "instance": "Blinds.Position",
+                    "capabilityResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                        ]
+                    },
+                    "configuration": {
+                        "ordered": False,
+                        "supportedModes": [
+                            {
+                                "value": "Position.Up",
+                                "modeResources": {
+                                    "friendlyNames": [
+                                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                                    ]
+                                },
+                            },
+                            {
+                                "value": "Position.Down",
+                                "modeResources": {
+                                    "friendlyNames": [
+                                        {
+                                            "@type": "asset",
+                                            "value": {"assetId": "Alexa.Value.Close"},
+                                        }
+                                    ]
+                                },
+                            },
+                        ],
+                    },
+                    "semantics": {
+                        "actionMappings": [
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                                "directive": {
+                                    "name": "SetMode",
+                                    "payload": {"mode": "Position.Up"},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                                "directive": {
+                                    "name": "SetMode",
+                                    "payload": {"mode": "Position.Down"},
+                                },
+                            },
+                        ]
+                    },
+                }
+            )
     elif entity.ha_domain == "climate":
         result.append(
             _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
@@ -331,6 +431,7 @@ def _property(
 
 
 def state_properties(entity: Entity) -> list[dict[str, Any]]:
+    attributes = entity.attributes_json or {}
     props = [
         _property(
             "Alexa.EndpointHealth",
@@ -344,33 +445,70 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    if entity.ha_domain == "light" and "brightness" in entity.attributes_json:
+    if entity.ha_domain == "light" and "brightness" in attributes:
         props.append(
             _property(
                 "Alexa.BrightnessController",
                 "brightness",
-                round(int(entity.attributes_json["brightness"]) * 100 / 255),
+                round(int(attributes["brightness"]) * 100 / 255),
+            )
+        )
+    if entity.ha_domain == "light" and "rgb_color" in attributes:
+        rgb = attributes["rgb_color"]
+        if isinstance(rgb, list) and len(rgb) == 3:
+            import colorsys
+
+            hue, saturation, brightness = colorsys.rgb_to_hsv(
+                float(rgb[0]) / 255, float(rgb[1]) / 255, float(rgb[2]) / 255
+            )
+            props.append(
+                _property(
+                    "Alexa.ColorController",
+                    "color",
+                    {
+                        "hue": round(hue * 360, 3),
+                        "saturation": round(saturation, 4),
+                        "brightness": round(brightness, 4),
+                    },
+                )
+            )
+    if entity.ha_domain == "light" and "color_temp_kelvin" in attributes:
+        props.append(
+            _property(
+                "Alexa.ColorTemperatureController",
+                "colorTemperatureInKelvin",
+                attributes["color_temp_kelvin"],
             )
         )
     if entity.ha_domain == "cover":
-        props.append(
-            _property(
-                "Alexa.RangeController",
-                "rangeValue",
-                entity.attributes_json.get("current_position", 0),
-                instance="Cover.Position",
+        if "current_position" in attributes:
+            props.append(
+                _property(
+                    "Alexa.RangeController",
+                    "rangeValue",
+                    attributes["current_position"],
+                    instance="Blind.Lift",
+                )
             )
-        )
+        else:
+            props.append(
+                _property(
+                    "Alexa.ModeController",
+                    "mode",
+                    "Position.Up" if entity.state == "open" else "Position.Down",
+                    instance="Blinds.Position",
+                )
+            )
     if entity.ha_domain == "fan":
         props.append(
             _property(
                 "Alexa.PercentageController",
                 "percentage",
-                entity.attributes_json.get("percentage", 0),
+                attributes.get("percentage", 0),
             )
         )
     if entity.ha_domain == "climate":
-        if value := entity.attributes_json.get("temperature"):
+        if value := attributes.get("temperature"):
             props.append(
                 _property(
                     "Alexa.ThermostatController",
@@ -384,12 +522,12 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
     return props
 
 
-def _command(namespace: str, name: str, payload: dict[str, Any]) -> dict[str, object] | None:
+def _command(
+    namespace: str, name: str, payload: dict[str, Any], entity: Entity | None = None
+) -> dict[str, object] | None:
     mapping: dict[tuple[str, str], dict[str, object]] = {
         ("Alexa.PowerController", "TurnOn"): {"operation": "power_on"},
         ("Alexa.PowerController", "TurnOff"): {"operation": "power_off"},
-        ("Alexa.CoverController", "Open"): {"operation": "open"},
-        ("Alexa.CoverController", "Close"): {"operation": "close"},
         ("Alexa.SceneController", "Activate"): {"operation": "activate"},
     }
     if (namespace, name) in mapping:
@@ -414,6 +552,18 @@ def _command(namespace: str, name: str, payload: dict[str, Any]) -> dict[str, ob
         }
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
+    if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
+        current = float((entity.attributes_json or {}).get("current_position", 0))
+        return {
+            "operation": "set_position",
+            "position": round(min(100, max(0, current + float(payload["rangeValueDelta"])))),
+        }
+    if namespace == "Alexa.ModeController" and name == "SetMode":
+        return (
+            {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
+            if payload.get("mode") in {"Position.Up", "Position.Down"}
+            else None
+        )
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
@@ -465,6 +615,27 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(400, "INVALID_DIRECTIVE") from exc
     message_id = header["messageId"]
+    if header["namespace"] == "Alexa.Authorization" and header["name"] == "AcceptGrant":
+        payload = directive.get("payload", {})
+        link = await _authenticate(payload.get("grantee", {}).get("token", ""), database)
+        from .alexa_events import AlexaEventGateway
+
+        gateway = AlexaEventGateway(database)
+        try:
+            await gateway.accept_grant(link, str(payload.get("grant", {}).get("code", "")))
+        finally:
+            await gateway.close()
+        return JSONResponse(
+            _event(
+                {
+                    "namespace": "Alexa.Authorization",
+                    "name": "AcceptGrant.Response",
+                    "payloadVersion": "3",
+                    "messageId": str(uuid4()),
+                },
+                {},
+            )
+        )
     scope = directive.get("endpoint", {}).get("scope") or directive.get("payload", {}).get(
         "scope", {}
     )
@@ -532,7 +703,9 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 state_properties(entity),
             )
         else:
-            spec = _command(header["namespace"], header["name"], directive.get("payload", {}))
+            spec = _command(
+                header["namespace"], header["name"], directive.get("payload", {}), entity
+            )
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
                 raise HTTPException(400, "INVALID_DIRECTIVE")

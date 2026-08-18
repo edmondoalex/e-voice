@@ -15,11 +15,14 @@ tokens expire after one hour by default; refresh tokens rotate on every use.
 PKCE S256 is accepted when Amazon supplies a challenge. All regional redirect
 URLs displayed by the developer console must be registered exactly.
 
-The synchronous adapter supports Discovery, control responses, Alexa
-`ReportState`/`StateReport`, EndpointHealth and error responses. Properties are
-retrievable. Proactive event-gateway authorization and ChangeReport publication
-are not advertised by this M7 adapter; they remain outside this synchronous
-contract and must not be enabled in the developer console until implemented.
+The adapter supports Discovery, control responses, Alexa
+`ReportState`/`StateReport`, EndpointHealth, error responses and proactive
+`Alexa.ChangeReport`. All reportable properties are retrievable and proactively
+reported. `Alexa.Authorization.AcceptGrant` exchanges the short Amazon grant at
+LWA, encrypts the resulting customer tokens at rest, refreshes them before
+expiry/on HTTP 401, and sends to the configured regional Event Gateway. M5 state
+deltas trigger reports; identical property snapshots are durably suppressed and
+HTTP 401/429/503 responses receive three bounded attempts.
 
 ## Developer console
 
@@ -35,7 +38,8 @@ contract and must not be enabled in the developer console until implemented.
    - client authentication: HTTP Basic or request body
 4. Copy every Amazon-provided regional redirect URL into
    `EKONEX_ALEXA_REDIRECT_URIS` as an exact comma-separated allowlist.
-5. Keep “Send Alexa Events” disabled for this synchronous M7 release.
+5. Enable “Send Alexa Events” so Alexa issues `AcceptGrant`, and configure the
+   LWA client credentials and region-matched Event Gateway URL.
 
 `GET /oauth/authorize` is behind the existing Ekonex authentication boundary.
 The current authenticated user is conveyed internally as `X-Ekonex-User-ID`;
@@ -51,7 +55,7 @@ Alexa independently of HA pairing.
 | --- | --- | --- |
 | light | Power, Brightness; Color/ColorTemperature only when M5 attributes support them | on/off, brightness, RGB, Kelvin |
 | switch | PowerController | on/off |
-| cover | RangeController position | position; open/close remain accepted only when advertised by a future cover interface revision |
+| cover | RangeController `Blind.Lift` with open/close/raise/lower semantics when position exists; otherwise ModeController `Blinds.Position` | absolute/relative position or typed open/close |
 | climate | ThermostatController | target temperature, thermostat mode |
 | fan | PowerController, PercentageController | on/off, percentage |
 | scene | SceneController | activate |
@@ -75,6 +79,10 @@ name/entity_id changes update presentation without duplicating identity.
    and commands no longer expose it.
 7. Unlink/revoke Alexa and verify directives fail while the Connector remains
    paired and connected.
+8. Change state physically/in HA and verify a ChangeReport arrives within three
+   seconds in Amazon's Smart Home State Reporter; repeat the same state and
+   verify it is not duplicated. Exercise a temporary 401/429/503 in staging to
+   verify refresh and bounded retry.
 
 Amazon developer-console configuration, Lambda/HTTPS reachability, real Alexa
 account linking, voice utterances and certification cannot run in repository CI.

@@ -18,6 +18,10 @@ Status: Ready for review
   excluding unsupported and security-sensitive Home Assistant domains.
 - Added persistence migration, automated tests and Amazon console/acceptance
   documentation.
+- Added encrypted Alexa Event Gateway authorization plus M5-driven, deduplicated
+  ChangeReport delivery with token refresh and bounded retry.
+- Corrected blinds discovery/control to use Amazon's current RangeController or
+  ModeController semantics consistently for open, close and position.
 
 ### Scope guard
 
