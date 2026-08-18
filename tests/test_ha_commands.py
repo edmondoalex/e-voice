@@ -1,6 +1,5 @@
 """M6 explicit Home Assistant command mapper tests."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -231,7 +230,7 @@ async def test_command_state_change_converges_through_m5_state_sync(
         new=AsyncMock(side_effect=apply_state),
     ):
         result = await executor.async_execute("state-command", entry.id, {"operation": "power_off"})
-    await asyncio.sleep(0.3)
+    await hass.async_block_till_done()
     messages = [call.args[0] for call in websocket.send_json.await_args_list]
     assert result.status == "success"
     assert any(
