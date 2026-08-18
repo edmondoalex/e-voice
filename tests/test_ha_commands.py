@@ -3,7 +3,8 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.ekonex_voice.command_executor import EkonexVoiceCommandExecutor
@@ -224,13 +225,15 @@ async def test_command_state_change_converges_through_m5_state_sync(
 
     async def apply_state(*args: object, **kwargs: object) -> None:
         hass.states.async_set(entry.entity_id, "off")
+        inventory._state_changed(Event(EVENT_STATE_CHANGED, {"entity_id": entry.entity_id}))
 
     with patch(
         "homeassistant.core.ServiceRegistry.async_call",
         new=AsyncMock(side_effect=apply_state),
     ):
         result = await executor.async_execute("state-command", entry.id, {"operation": "power_off"})
-    await hass.async_block_till_done()
+    assert inventory._flush_task is not None
+    await inventory._flush_task
     messages = [call.args[0] for call in websocket.send_json.await_args_list]
     assert result.status == "success"
     assert any(
