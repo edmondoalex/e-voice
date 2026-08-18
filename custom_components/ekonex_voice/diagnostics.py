@@ -82,7 +82,8 @@ def _redact_url(value: str) -> str:
         [
             (key, REDACTED if _is_sensitive_key(key) else item)
             for key, item in parse_qsl(parts.query, keep_blank_values=True)
-        ]
+        ],
+        safe="*",
     )
     hostname = parts.hostname or ""
     if parts.port is not None:
