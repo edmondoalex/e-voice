@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from homeassistant.const import __version__ as ha_version
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -42,7 +43,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         await client.async_close()
         raise ConfigEntryAuthFailed("installation_identity_mismatch")
 
-    connection = EkonexVoiceConnection(hass, client.async_authenticate, expected_installation)
+    connection = EkonexVoiceConnection(
+        hass,
+        client.async_connect_websocket,
+        expected_installation,
+        ha_version=ha_version,
+        on_auth_failure=lambda: entry.async_start_reauth(hass),
+    )
     entry.runtime_data = EkonexVoiceRuntimeData(client=client, connection=connection)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     connection.async_start()
