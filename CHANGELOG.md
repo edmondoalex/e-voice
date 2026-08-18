@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-18 — M7 Alexa Smart Home
+
+Status: Ready for review
+
+### Scope
+
+- Added an Alexa Smart Home v3 cloud adapter with tenant-scoped discovery,
+  state reports, typed M6 command routing and bounded account-scoped replay.
+- Added OAuth 2.0 authorization-code account linking, optional PKCE S256,
+  one-use grants, short access tokens, refresh rotation and revocation.
+- Added safe mappings for light, switch, cover, climate, fan and scene, while
+  excluding unsupported and security-sensitive Home Assistant domains.
+- Added persistence migration, automated tests and Amazon console/acceptance
+  documentation.
+
+### Scope guard
+
+- No conversational skill, lock/alarm/camera control, billing, portal work or
+  later milestone functionality.
+
 ## 2026-08-18 — M6 cloud-to-Home Assistant command execution
 
 Status: Ready for review

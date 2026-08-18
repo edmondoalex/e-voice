@@ -25,6 +25,10 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://ekonex:local-development-only@localhost:5432/ekonex_voice"
     )
     redis_url: str = "redis://localhost:6379/0"
+    alexa_oauth_client_id: str = "ekonex-alexa-development"
+    alexa_oauth_client_secret: str = "change-me"
+    alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"
+    alexa_access_token_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
 
 
 @lru_cache
