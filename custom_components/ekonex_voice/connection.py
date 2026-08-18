@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 
 from .client import EkonexVoiceAuthError, EkonexVoiceCannotConnect, EkonexVoiceProtocolError
 from .const import BACKOFF_SCHEDULE, HEARTBEAT_TIMEOUT
+from .entity_inventory import EntityInventorySynchronizer
 from .evcp import envelope, parse_ack
 from .models import ConnectionState
 
@@ -34,6 +35,7 @@ class EkonexVoiceConnection:
         connector_version: str = "0.1.0",
         ha_version: str = "unknown",
         on_auth_failure: Callable[[], None] | None = None,
+        inventory: EntityInventorySynchronizer | None = None,
         sleep: Sleep = asyncio.sleep,
         random_value: RandomValue = random.random,
     ) -> None:
@@ -45,6 +47,7 @@ class EkonexVoiceConnection:
             sleep,
             random_value,
         )
+        self._inventory = inventory
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self.state = ConnectionState.STOPPED
@@ -105,6 +108,8 @@ class EkonexVoiceConnection:
                 await self._sleep(delay)
                 backoff_index = min(backoff_index + 1, len(BACKOFF_SCHEDULE) - 1)
             finally:
+                if self._inventory is not None:
+                    await self._inventory.async_stop()
                 if websocket is not None and not websocket.closed:
                     await websocket.close()
 
@@ -120,15 +125,28 @@ class EkonexVoiceConnection:
         )
         await websocket.send_json(hello)
         payload = await self._receive_ack(websocket, "hello_ack", str(hello["id"]))
-        if set(payload) != {"installation_id", "session_id", "heartbeat_interval_seconds"}:
+        if set(payload) != {
+            "installation_id",
+            "session_id",
+            "heartbeat_interval_seconds",
+            "sync_revision",
+        }:
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         if payload.get("installation_id") != self._installation_id:
             raise EkonexVoiceProtocolError("installation_identity_mismatch")
         session_id, interval = payload.get("session_id"), payload.get("heartbeat_interval_seconds")
-        if not isinstance(session_id, str) or not isinstance(interval, int) or interval < 1:
+        sync_revision = payload.get("sync_revision")
+        if (
+            not isinstance(session_id, str)
+            or not isinstance(interval, int)
+            or interval < 1
+            or not isinstance(sync_revision, int)
+        ):
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         self.state, self.retry_count, self.next_retry_delay = ConnectionState.ONLINE, 0, None
         self.last_error_code, self.last_connected_at = None, datetime.now(UTC)
+        if self._inventory is not None:
+            await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
             await self._sleep(float(interval))
             heartbeat = envelope("heartbeat", {"session_id": session_id})

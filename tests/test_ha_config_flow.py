@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import label_registry as lr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ekonex_voice.client import (
@@ -18,6 +20,8 @@ from custom_components.ekonex_voice.client import (
 from custom_components.ekonex_voice.const import (
     CONF_CLOUD_URL,
     CONF_CONNECTOR_CREDENTIAL,
+    CONF_EXPOSED_ENTITY_REGISTRY_IDS,
+    CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
     CONF_INSTALLATION_NAME,
     CONF_TENANT_NAME,
@@ -221,3 +225,33 @@ async def test_reauth_rejects_different_installation(hass: HomeAssistant) -> Non
 
     assert result["type"] is data_entry_flow.FlowResultType.ABORT
     assert result["reason"] == "wrong_installation"
+
+
+async def test_options_store_stable_entity_and_label_registry_ids(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entity = er.async_get(hass).async_get_or_create("light", "test", "stable-light")
+    label = lr.async_get(hass).async_create("Voice sharing")
+    with patch.object(hass.config_entries, "async_reload", new=AsyncMock()):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"entities": [entity.entity_id], "label": label.label_id},
+        )
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_EXPOSED_ENTITY_REGISTRY_IDS] == [entity.id]
+    assert entry.options[CONF_EXPOSURE_LABEL_ID] == label.label_id
+
+
+async def test_options_never_hijack_same_name_label(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    unrelated = lr.async_get(hass).async_create("Ekonex Voice")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"create_label": True}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.FORM
+    assert result["errors"] == {"base": "label_name_in_use"}
+    assert CONF_EXPOSURE_LABEL_ID not in entry.options
+    assert lr.async_get(hass).async_get_label(unrelated.label_id) is unrelated

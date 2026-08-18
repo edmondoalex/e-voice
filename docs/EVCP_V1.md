@@ -29,3 +29,32 @@ adapter is required before running multiple WebSocket workers.
 The Connector uses capped full-jitter reconnect delays. Authentication and
 installation-binding failures stop the loop and initiate Home Assistant reauth;
 protocol errors stop without retry; network loss and liveness timeouts reconnect.
+
+## M5 inventory and state vocabulary
+
+After every `hello_ack`, the Connector sends an authoritative `inventory_full`.
+The acknowledgement includes the cloud's current `sync_revision`; the Connector
+uses the next monotonic revision. Full inventories are deterministically split
+into batches with one shared revision, zero-based `batch_index`, `batch_count`
+and a maximum 65,536-byte envelope. The cloud applies a full revision only after
+all batches arrive and tombstones every previously active entity absent from it.
+
+`inventory_delta` represents registry additions, metadata changes and removals;
+`state_update` carries coalesced current state changes. Both require exactly the
+next revision and the authenticated `session_id`. Duplicate, stale, missing,
+out-of-order or cross-session messages fail closed. State updates may only target
+an entity authorized by the latest full inventory.
+
+Entity records contain stable `registry_id`, current `entity_id`, domain,
+friendly name, area/device references and names, device class, supported
+features, normalized state, availability, last-change time and allowlisted
+attributes. Only `light` and `switch` are accepted in M5. Light attributes are
+limited to brightness, color mode/temperature, RGB/HS/XY color and effect;
+switch attributes are empty. `unknown` is represented as null state and
+`unavailable` as null state with `available: false`.
+
+Exposure is opt-in before serialization. The effective set is the union of UI
+selected device IDs, UI selected stable entity-registry IDs, entities carrying
+the configured label ID, and supported entities whose device carries that label.
+An empty selection and no configured label produces an empty authoritative full
+inventory.

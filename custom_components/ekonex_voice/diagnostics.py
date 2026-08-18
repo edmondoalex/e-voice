@@ -48,6 +48,11 @@ async def async_get_config_entry_diagnostics(
                     "last_error_code": connection.last_error_code,
                     "last_connected_at": connection.last_connected_at,
                 },
+                "exposure": (
+                    entry.runtime_data.inventory.exposure_summary
+                    if entry.runtime_data.inventory is not None
+                    else {"ui_device_count": 0, "ui_entity_count": 0, "label_configured": False}
+                ),
             }
         ),
     )

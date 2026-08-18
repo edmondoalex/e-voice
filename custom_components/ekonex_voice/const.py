@@ -10,6 +10,9 @@ CONF_CONNECTOR_CREDENTIAL = "connector_credential"
 CONF_INSTALLATION_ID = "installation_id"
 CONF_INSTALLATION_NAME = "installation_name"
 CONF_TENANT_NAME = "tenant_name"
+CONF_EXPOSED_DEVICE_IDS = "exposed_device_ids"
+CONF_EXPOSED_ENTITY_REGISTRY_IDS = "exposed_entity_registry_ids"
+CONF_EXPOSURE_LABEL_ID = "exposure_label_id"
 
 # M3 keeps the production endpoint out of the UI. The path contract is isolated
 # in client.py so deployment can change the origin without touching flow logic.

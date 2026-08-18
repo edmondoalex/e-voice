@@ -30,6 +30,7 @@ class FakeWebSocket:
                 "installation_id": payload["installation_id"],
                 "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
                 "heartbeat_interval_seconds": 30,
+                "sync_revision": 0,
             }
             response_type = "hello_ack"
         else:

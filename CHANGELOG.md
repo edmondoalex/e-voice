@@ -4,6 +4,27 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-18 — M5 entity inventory and state synchronization
+
+Status: Ready for review
+
+### Scope
+
+- Added strictly opt-in exposure through the Ekonex Voice options UI and a
+  dedicated Home Assistant label stored by stable registry ID.
+- Added union semantics for UI-selected devices/entities and label-selected
+  devices/entities, with automatic reconciliation on registry changes.
+- Added deterministic bounded EVCP inventory batches, monotonic revisions,
+  coalesced state updates, reconnect full sync and strict attribute allowlists.
+- Added installation-scoped cloud upsert, state authorization, synchronization
+  metadata and tombstones for removed or deselected entities.
+- Added database migration, tests, diagnostics counters and HAOS acceptance steps.
+
+### Scope guard
+
+- No command execution, Alexa/provider behavior, arbitrary services, admin UI or
+  later milestone work was implemented.
+
 ## 2026-08-18 — M4 EVCP WebSocket transport and cloud connection
 
 Status: Ready for review

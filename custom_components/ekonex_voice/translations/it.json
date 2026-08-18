@@ -25,5 +25,22 @@
       "unknown": "Si è verificato un errore imprevisto. Puoi riprovare.",
       "wrong_installation": "La credenziale appartiene a un'altra installazione Ekonex."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Scegli cosa condividere",
+        "description": "Ekonex Voice è opt-in. Sono condivisi solo dispositivi o entità selezionati oppure gli elementi con l'etichetta configurata.",
+        "data": {
+          "devices": "Dispositivi",
+          "entities": "Singole entità",
+          "label": "Etichetta Ekonex Voice dedicata",
+          "create_label": "Crea l'etichetta dedicata ‘Ekonex Voice’"
+        }
+      }
+    },
+    "error": {
+      "label_name_in_use": "Esiste già un'etichetta chiamata Ekonex Voice. Selezionala esplicitamente oppure rinominala prima di creare quella dedicata."
+    }
   }
 }

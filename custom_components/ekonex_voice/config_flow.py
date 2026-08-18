@@ -8,7 +8,17 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    DeviceSelector,
+    DeviceSelectorConfig,
+    EntitySelector,
+    EntitySelectorConfig,
+    LabelSelector,
+    LabelSelectorConfig,
+)
 
 from .client import (
     EkonexVoiceAuthError,
@@ -21,12 +31,16 @@ from .client import (
 from .const import (
     CONF_CLOUD_URL,
     CONF_CONNECTOR_CREDENTIAL,
+    CONF_EXPOSED_DEVICE_IDS,
+    CONF_EXPOSED_ENTITY_REGISTRY_IDS,
+    CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
     CONF_INSTALLATION_NAME,
     CONF_TENANT_NAME,
     DEFAULT_CLOUD_URL,
     DOMAIN,
 )
+from .entity_inventory import SUPPORTED_DOMAINS
 from .models import PairingResult, PairingSession, PairingState
 
 
@@ -38,6 +52,12 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._client: EkonexVoiceClient | None = None
         self._pairing: PairingSession | None = None
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> EkonexVoiceOptionsFlow:
+        return EkonexVoiceOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Start pairing immediately from Add Integration."""
@@ -111,6 +131,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"{data[CONF_TENANT_NAME]} / {data[CONF_INSTALLATION_NAME]}",
             data=data,
+            options={CONF_EXPOSED_DEVICE_IDS: [], CONF_EXPOSED_ENTITY_REGISTRY_IDS: []},
         )
 
     def _get_client(self) -> EkonexVoiceClient:
@@ -130,3 +151,61 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "expires_at": self._pairing.expires_at.isoformat(timespec="minutes"),
             },
         )
+
+
+class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Manage the explicit opt-in exposure set and reload immediately."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        registry = er.async_get(self.hass)
+        if user_input is not None:
+            label_id = user_input.get("label")
+            if user_input.get("create_label") and not label_id:
+                labels = lr.async_get(self.hass)
+                if labels.async_get_label_by_name("Ekonex Voice") is not None:
+                    return self._show_form(registry, {"base": "label_name_in_use"})
+                label_id = labels.async_create("Ekonex Voice").label_id
+            registry_ids = [
+                entry.id
+                for entity_id in user_input.get("entities", [])
+                if (entry := registry.async_get(entity_id)) is not None
+            ]
+            data: dict[str, Any] = {
+                CONF_EXPOSED_DEVICE_IDS: sorted(user_input.get("devices", [])),
+                CONF_EXPOSED_ENTITY_REGISTRY_IDS: sorted(registry_ids),
+            }
+            if label_id:
+                data[CONF_EXPOSURE_LABEL_ID] = label_id
+            return self.async_create_entry(data=data)
+        return self._show_form(registry)
+
+    def _show_form(
+        self, registry: er.EntityRegistry, errors: dict[str, str] | None = None
+    ) -> ConfigFlowResult:
+        selected = set(self.config_entry.options.get(CONF_EXPOSED_ENTITY_REGISTRY_IDS, []))
+        entity_ids = sorted(
+            entry.entity_id for entry in registry.entities.values() if entry.id in selected
+        )
+        current_label = self.config_entry.options.get(CONF_EXPOSURE_LABEL_ID)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    "devices",
+                    description={
+                        "suggested_value": list(
+                            self.config_entry.options.get(CONF_EXPOSED_DEVICE_IDS, [])
+                        )
+                    },
+                ): DeviceSelector(DeviceSelectorConfig(multiple=True)),
+                vol.Optional(
+                    "entities", description={"suggested_value": entity_ids}
+                ): EntitySelector(
+                    EntitySelectorConfig(domain=list(SUPPORTED_DOMAINS), multiple=True)
+                ),
+                vol.Optional(
+                    "label", description={"suggested_value": current_label}
+                ): LabelSelector(LabelSelectorConfig(multiple=False)),
+                vol.Optional("create_label", default=False): bool,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors or {})
