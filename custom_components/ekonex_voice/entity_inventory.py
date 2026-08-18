@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aiohttp import ClientWebSocketResponse
-from homeassistant.const import MATCH_ALL, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import EVENT_STATE_CHANGED, MATCH_ALL, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -17,7 +17,6 @@ from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.event import (
     async_track_device_registry_updated_event,
     async_track_entity_registry_updated_event,
-    async_track_state_change_event,
 )
 
 from .evcp import MAX_MESSAGE_BYTES, envelope
@@ -90,7 +89,7 @@ class EntityInventorySynchronizer:
         await self.async_stop()
         self._websocket, self._session_id, self._revision = websocket, session_id, cloud_revision
         self._unsubscribers.append(
-            async_track_state_change_event(self._hass, MATCH_ALL, self._state_changed)
+            self._hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed)
         )
         self._unsubscribers.append(
             async_track_device_registry_updated_event(self._hass, MATCH_ALL, self._registry_changed)
