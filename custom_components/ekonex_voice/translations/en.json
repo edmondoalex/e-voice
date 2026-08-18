@@ -25,5 +25,18 @@
       "unknown": "An unexpected safe-to-retry error occurred.",
       "wrong_installation": "The credential belongs to a different Ekonex installation."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose what to share",
+        "description": "Ekonex Voice is opt-in. Only selected devices/entities or items carrying the configured label are shared.",
+        "data": {
+          "devices": "Devices",
+          "entities": "Individual entities",
+          "label": "Installer-created Ekonex Voice label"
+        }
+      }
+    }
   }
 }

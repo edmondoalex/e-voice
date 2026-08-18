@@ -51,7 +51,13 @@ async def test_diagnostics_are_bounded_and_redact_entry_credential(
     assert CANARY not in repr(diagnostics)
     assert diagnostics["entry"][CONF_CONNECTOR_CREDENTIAL] == REDACTED
     assert diagnostics["connection"]["state"] is ConnectionState.ONLINE
-    assert set(diagnostics) == {"entry", "entry_version", "connection"}
+    assert set(diagnostics) == {"entry", "entry_version", "connection", "exposure"}
+    assert diagnostics["exposure"] == {
+        "ui_device_count": 0,
+        "ui_entity_count": 0,
+        "label_configured": False,
+        "label_id": None,
+    }
 
 
 def test_recursive_redaction_handles_nested_values_and_url_queries() -> None:

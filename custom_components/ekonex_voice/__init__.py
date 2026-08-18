@@ -17,8 +17,12 @@ from .connection import EkonexVoiceConnection
 from .const import (
     CONF_CLOUD_URL,
     CONF_CONNECTOR_CREDENTIAL,
+    CONF_EXPOSED_DEVICE_IDS,
+    CONF_EXPOSED_ENTITY_REGISTRY_IDS,
+    CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
 )
+from .entity_inventory import EntityInventorySynchronizer
 from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
 
 
@@ -43,14 +47,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         await client.async_close()
         raise ConfigEntryAuthFailed("installation_identity_mismatch")
 
+    inventory = EntityInventorySynchronizer(
+        hass,
+        set(entry.options.get(CONF_EXPOSED_DEVICE_IDS, [])),
+        set(entry.options.get(CONF_EXPOSED_ENTITY_REGISTRY_IDS, [])),
+        entry.options.get(CONF_EXPOSURE_LABEL_ID),
+    )
     connection = EkonexVoiceConnection(
         hass,
         client.async_connect_websocket,
         expected_installation,
         ha_version=ha_version,
         on_auth_failure=lambda: entry.async_start_reauth(hass),
+        inventory=inventory,
     )
-    entry.runtime_data = EkonexVoiceRuntimeData(client=client, connection=connection)
+    entry.runtime_data = EkonexVoiceRuntimeData(
+        client=client, connection=connection, inventory=inventory
+    )
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     connection.async_start()
     return True

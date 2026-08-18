@@ -143,6 +143,8 @@ class Installation(TimestampMixin, Base):
     ha_version: Mapped[str | None] = mapped_column(String(50))
     ha_installation_type: Mapped[str | None] = mapped_column(String(50))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sync_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    inventory_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     tenant: Mapped[Tenant] = relationship(back_populates="installations")
@@ -156,6 +158,9 @@ class Entity(TimestampMixin, Base):
     __tablename__ = "entities"
     __table_args__ = (
         UniqueConstraint("installation_id", "ha_entity_id"),
+        UniqueConstraint(
+            "installation_id", "ha_registry_id", name="uq_entities_installation_registry"
+        ),
         Index("ix_entities_installation_id", "installation_id"),
     )
 
@@ -164,10 +169,13 @@ class Entity(TimestampMixin, Base):
         ForeignKey("installations.id", ondelete="CASCADE")
     )
     ha_entity_id: Mapped[str] = mapped_column(String(255))
+    ha_registry_id: Mapped[str | None] = mapped_column(String(64))
     ha_domain: Mapped[str] = mapped_column(String(64))
     friendly_name: Mapped[str | None] = mapped_column(String(255))
     area_id: Mapped[str | None] = mapped_column(String(255))
     area_name: Mapped[str | None] = mapped_column(String(255))
+    device_id: Mapped[str | None] = mapped_column(String(64))
+    device_name: Mapped[str | None] = mapped_column(String(255))
     device_class: Mapped[str | None] = mapped_column(String(100))
     supported_features: Mapped[int] = mapped_column(BigInteger, default=0)
     state: Mapped[str | None] = mapped_column(String(255))

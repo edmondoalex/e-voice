@@ -1,6 +1,25 @@
 # Ekonex Voice Home Assistant Connector
 
-Status: M3 foundation, ready for review
+## M5 opt-in exposure acceptance
+
+On HAOS, open Ekonex Voice configuration options. A fresh entry must show no
+selected items and the cloud inventory must remain empty. Select devices and
+standalone entities from multiple domains, save, and verify immediate cloud reconciliation. Then
+deselect each and verify tombstones without restarting Home Assistant.
+
+The installer manually creates the dedicated `Ekonex Voice` label in Home
+Assistant, then explicitly selects it in the integration options. The integration
+never creates or discovers it by name. Its stable label registry ID is persisted.
+Assign/remove it on a device and an entity, rename the label, and verify
+reconciliation and union semantics with UI selection. Rename an exposed entity
+through its editable HA `Nome` field and verify the cloud name changes while the
+stable cloud identity does not. Also test a reconnect during a large inventory,
+restart/reload, bursty state changes, diagnostics download, and removal.
+No credential or unrestricted attribute may appear in logs or diagnostics. To
+disable label-based exposure, clear the selected label in the options flow; the
+label itself is not deleted from Home Assistant.
+
+Status: M5 entity synchronization, ready for review
 
 The native integration lives in `custom_components/ekonex_voice` and follows
 [`EKONEX_HA_STANDARD.md`](EKONEX_HA_STANDARD.md). HAOS/Home Assistant OS is the
