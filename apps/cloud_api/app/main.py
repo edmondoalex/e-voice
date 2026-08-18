@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 
+from .evcp import router as evcp_router
 from .schemas import HealthResponse
 
 try:
@@ -12,6 +13,7 @@ except PackageNotFoundError:
     application_version = "0.1.0"
 
 app = FastAPI(title="Ekonex Voice Cloud API", version=application_version)
+app.include_router(evcp_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

@@ -5,8 +5,9 @@ from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from .domain.enums import PairingStatus
+from .domain.enums import InstallationStatus, PairingStatus
 from .domain.models import (
     AlexaPublication,
     ConnectorCredential,
@@ -129,6 +130,22 @@ class PairingRepository:
 class ConnectorCredentialRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def authenticate(self, *, secret_hash: str) -> ConnectorCredential | None:
+        """Resolve one active credential bound to one active installation."""
+        statement = (
+            select(ConnectorCredential)
+            .join(Installation)
+            .options(selectinload(ConnectorCredential.installation))
+            .where(
+                ConnectorCredential.secret_hash == secret_hash,
+                ConnectorCredential.revoked_at.is_(None),
+                Installation.status == InstallationStatus.ACTIVE,
+                Installation.revoked_at.is_(None),
+            )
+        )
+        result = await self._session.scalars(statement)
+        return result.one_or_none()
 
     async def active_for_installation(
         self, *, tenant_id: UUID, installation_id: UUID

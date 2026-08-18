@@ -4,6 +4,24 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-18 — M4 EVCP WebSocket transport and cloud connection
+
+Status: Ready for review
+
+### Scope
+
+- Added the authenticated `/connector/v1/ws` backend and HA outbound WSS client.
+- Added strict EVCP v1 hello/ack, heartbeat/liveness, message bounds, close codes,
+  cancellation-safe cleanup and secret-safe credential binding.
+- Added latest-session-wins ownership behind a generation-safe registry and
+  recorded that durable choice in ADR-0007.
+- Added protocol, credential revocation, vocabulary and session replacement tests.
+
+### Scope guard
+
+- No entity inventory/state sync, command execution, Alexa/provider behavior or
+  milestone after M4 was implemented.
+
 ## 2026-08-18 — M3 Home Assistant Connector foundation
 
 Status: Ready for review

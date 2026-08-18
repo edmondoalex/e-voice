@@ -6,9 +6,9 @@ import asyncio
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientSession, ClientWebSocketResponse
 
 from .const import PAIRING_REQUEST_TIMEOUT
 from .models import PairingResult, PairingSession, PairingState
@@ -114,6 +114,30 @@ class EkonexVoiceClient:
         if not isinstance(installation_id, str) or not installation_id:
             raise EkonexVoiceProtocolError("invalid_auth_response")
         return installation_id
+
+    async def async_connect_websocket(self) -> ClientWebSocketResponse:
+        """Open the authenticated outbound EVCP transport."""
+        if not self._connector_credential:
+            raise EkonexVoiceAuthError("missing_connector_credential")
+        parts = urlsplit(self._cloud_url)
+        scheme = {"https": "wss", "http": "ws"}.get(parts.scheme)
+        if scheme is None:
+            raise EkonexVoiceProtocolError("invalid_cloud_url")
+        url = urlunsplit((scheme, parts.netloc, "/connector/v1/ws", "", ""))
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                return await self._session.ws_connect(
+                    url,
+                    headers={"Authorization": f"Bearer {self._connector_credential}"},
+                    max_msg_size=65_536,
+                    heartbeat=None,
+                )
+        except TimeoutError as error:
+            raise EkonexVoiceCannotConnect("cloud_unavailable") from error
+        except ClientError as error:
+            if getattr(error, "status", None) in {401, 403}:
+                raise EkonexVoiceAuthError("invalid_auth") from error
+            raise EkonexVoiceCannotConnect("cloud_unavailable") from error
 
     async def async_close(self) -> None:
         """Release client-owned state.
