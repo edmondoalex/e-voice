@@ -1,30 +1,63 @@
 # Ekonex Voice
 
-Ekonex Voice is the planned multi-tenant cloud control layer between Amazon
-Alexa and Home Assistant. The repository currently contains Milestone M3: the
-core multi-tenant backend, secure pairing and native HA Connector foundation.
-Alexa is not implemented. Milestone M3 adds the native Home Assistant Connector
-foundation without entity synchronization or command handling.
+Ekonex Voice is a multi-tenant cloud control layer between Home Assistant and Amazon Alexa.
 
-## Requirements
+The project currently includes:
 
-- Python 3.13
-- Docker with Docker Compose
+- native Home Assistant custom integration `ekonex_voice`;
+- secure pairing and installation identity;
+- persistent EVCP WebSocket connection to Ekonex Cloud;
+- opt-in entity exposure from Home Assistant;
+- inventory and live state synchronization;
+- typed Cloud → Home Assistant command execution;
+- Alexa Smart Home v3 discovery, state reporting and command routing;
+- OAuth account linking and Alexa proactive event reporting.
 
-## Run locally
+## Home Assistant installation with HACS
 
-Create the local environment file and start the stack:
+Ekonex Voice can be installed as a custom HACS integration.
+
+1. Open **HACS → Integrations** in Home Assistant.
+2. Open the menu and choose **Custom repositories**.
+3. Add `https://github.com/edmondoalex/e-voice`.
+4. Select category **Integration**.
+5. Install **Ekonex Voice**.
+6. Restart Home Assistant if HACS requests it.
+7. Open **Settings → Devices & services → Add integration → Ekonex Voice**.
+
+No YAML configuration and no inbound port on the Home Assistant installation are required.
+
+Entity exposure is opt-in. The installer decides which Home Assistant devices/entities are synchronized to Ekonex Cloud using the Ekonex Voice options UI and/or the dedicated Home Assistant label configured for Ekonex Voice.
+
+## Cloud service
+
+The cloud backend runs with Python 3.13, PostgreSQL and Redis. Docker Compose is provided for deployment.
+
+For local development:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-The API is available at `http://localhost:8000`. Its liveness endpoint returns:
+The API liveness endpoint is:
+
+```text
+GET /health
+```
+
+Example response:
 
 ```json
 {"status":"ok","version":"0.1.0"}
 ```
+
+## Development
+
+Requirements:
+
+- Python 3.13
+- Docker with Docker Compose
 
 For development outside Docker:
 
@@ -34,7 +67,7 @@ python -m pip install -e ".[dev]"
 uvicorn apps.cloud_api.app.main:app --reload
 ```
 
-## Quality checks
+Quality checks:
 
 ```bash
 ruff format --check .
@@ -44,20 +77,6 @@ pytest
 docker compose config --quiet
 ```
 
-The test suite also applies all Alembic migrations to a temporary database and
-checks that the resulting schema matches the SQLAlchemy metadata.
+The repository also runs HACS validation and Home Assistant Hassfest validation in GitHub Actions.
 
-See [docs/SPEC_V1.md](docs/SPEC_V1.md) for the product baseline and
-[docs/adr](docs/adr) for architectural decisions. Completed changes are tracked
-in [CHANGELOG.md](CHANGELOG.md).
-
-## Home Assistant Connector foundation
-
-M3 adds `custom_components/ekonex_voice` for HAOS. It is configured only from
-**Settings → Devices & services → Add integration** and requires no YAML,
-inbound port, add-on, or connection back into Home Assistant's local WebSocket.
-
-The foundation implements secure M2 pairing, ConfigEntry lifecycle,
-reauthentication, connection supervision and redacted diagnostics. Entity
-inventory, EVCP WebSocket messages, commands and Alexa remain deferred. See
-[docs/home-assistant.md](docs/home-assistant.md) for scope and HAOS acceptance.
+See [docs/SPEC_V1.md](docs/SPEC_V1.md) for the product baseline, [docs/EVCP_V1.md](docs/EVCP_V1.md) for the connector protocol, [docs/ALEXA_SMART_HOME.md](docs/ALEXA_SMART_HOME.md) for Alexa setup, and [docs/adr](docs/adr) for architectural decisions. Completed changes are tracked in [CHANGELOG.md](CHANGELOG.md).
