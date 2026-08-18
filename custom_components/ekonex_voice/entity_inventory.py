@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aiohttp import ClientWebSocketResponse
-from homeassistant.const import MATCH_ALL, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import EVENT_STATE_CHANGED, MATCH_ALL, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -17,7 +17,6 @@ from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.event import (
     async_track_device_registry_updated_event,
     async_track_entity_registry_updated_event,
-    async_track_state_change_event,
 )
 
 from .evcp import MAX_MESSAGE_BYTES, envelope
@@ -69,13 +68,28 @@ class EntityInventorySynchronizer:
             "label_id": self._label_id,
         }
 
+    def is_exposed(self, entry: er.RegistryEntry) -> bool:
+        """Return whether the installer currently authorizes this registry entity."""
+        device = dr.async_get(self._hass).async_get(entry.device_id) if entry.device_id else None
+        return (
+            entry.id in self._registry_ids
+            or entry.device_id in self._device_ids
+            or (
+                self._label_id is not None
+                and (
+                    self._label_id in entry.labels
+                    or (device is not None and self._label_id in device.labels)
+                )
+            )
+        )
+
     async def async_start(
         self, websocket: ClientWebSocketResponse, session_id: str, cloud_revision: int
     ) -> None:
         await self.async_stop()
         self._websocket, self._session_id, self._revision = websocket, session_id, cloud_revision
         self._unsubscribers.append(
-            async_track_state_change_event(self._hass, MATCH_ALL, self._state_changed)
+            self._hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed)
         )
         self._unsubscribers.append(
             async_track_device_registry_updated_event(self._hass, MATCH_ALL, self._registry_changed)
@@ -168,16 +182,7 @@ class EntityInventorySynchronizer:
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:
             return None
-        device = dr.async_get(self._hass).async_get(entry.device_id) if entry.device_id else None
-        label_authorized = self._label_id is not None and (
-            self._label_id in entry.labels
-            or (device is not None and self._label_id in device.labels)
-        )
-        if (
-            entry.id not in self._registry_ids
-            and entry.device_id not in self._device_ids
-            and not label_authorized
-        ):
+        if not self.is_exposed(entry):
             return None
         return _serialize(self._hass, entry)
 

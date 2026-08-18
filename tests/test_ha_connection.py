@@ -10,6 +10,7 @@ from aiohttp import WSMessage, WSMsgType
 from homeassistant.core import HomeAssistant
 
 from custom_components.ekonex_voice.client import EkonexVoiceAuthError, EkonexVoiceCannotConnect
+from custom_components.ekonex_voice.command_executor import CommandResult
 from custom_components.ekonex_voice.connection import EkonexVoiceConnection
 from custom_components.ekonex_voice.models import ConnectionState
 
@@ -106,3 +107,35 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
     assert connect.await_count == 1
     await connection.async_stop()
     assert not connection.running
+
+
+async def test_command_result_is_correlated_and_stale_session_is_rejected(
+    hass: HomeAssistant,
+) -> None:
+    executor = AsyncMock()
+    executor.async_execute.return_value = CommandResult("command-1", "success")
+    connection = EkonexVoiceConnection(
+        hass, AsyncMock(), "installation-1", command_executor=executor
+    )
+    websocket = AsyncMock()
+    payload = {
+        "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
+        "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
+        "registry_id": "stable-light",
+        "command": {"operation": "power_on"},
+    }
+    executor.async_execute.return_value = CommandResult(payload["command_id"], "success")
+    await connection._handle_command(websocket, payload["session_id"], payload)
+    executor.async_execute.assert_awaited_once_with(
+        payload["command_id"], "stable-light", {"operation": "power_on"}
+    )
+    sent = websocket.send_json.await_args.args[0]
+    assert sent["type"] == "command_result"
+    assert sent["payload"]["command_id"] == payload["command_id"]
+    assert sent["payload"]["status"] == "success"
+
+    websocket.reset_mock()
+    executor.reset_mock()
+    await connection._handle_command(websocket, "different-session", payload)
+    executor.async_execute.assert_not_awaited()
+    assert websocket.send_json.await_args.args[0]["payload"]["status"] == "stale_session"

@@ -61,3 +61,27 @@ Assistant's current user-configured entity name is mutable presentation metadata
 the registry ID remains cloud identity when the name or entity ID changes. The
 integration never creates the label. An empty selection and no configured label
 produces an empty authoritative full inventory.
+
+## M6 command vocabulary
+
+The cloud sends `command` only through the currently authenticated session. Its
+payload contains `session_id`, unique `command_id`, stable HA `registry_id` and
+one typed abstract `command`. It never contains an HA domain, action/service
+name, arbitrary target or unrestricted action data. The closed M6 operations are
+power on/off, brightness, RGB/color temperature, cover open/close/stop/position,
+climate temperature/HVAC mode, fan percentage, activate, press, number value and
+select option.
+
+The Connector answers with `command_result`, carrying the authenticated
+`session_id`, correlated `command_id`, status and optional stable error code.
+Statuses are `success`, `target_not_found`, `target_not_exposed`,
+`unsupported_command`, `invalid_argument`, `unavailable`, `timeout`,
+`execution_failed`, `stale_session` and `duplicate`. Error payloads never include
+exception text or credentials.
+
+Cloud and Connector cache bounded command IDs. An identical replay returns the
+prior result without repeating the HA action; conflicting reuse returns
+`duplicate`. Cloud waits at most eight seconds. Late known results are ignored;
+results from replaced sessions cannot resolve current waiters. Success means the
+blocking HA action completed, not that cloud state changed optimistically: M5
+state synchronization remains authoritative.
