@@ -65,11 +65,16 @@ async def test_label_id_authorizes_entity_independent_of_label_name(hass: HomeAs
     assert sync._serialize(updated) is not None
 
 
-async def test_device_selection_exposes_only_supported_entities(hass: HomeAssistant) -> None:
+async def test_device_selection_does_not_reject_an_installer_selected_domain(
+    hass: HomeAssistant,
+) -> None:
     device, light, sensor = registered_device_entities(hass)
     sync = EntityInventorySynchronizer(hass, {device.id}, set(), None)
     assert sync._serialize(light) is not None
-    assert sync._serialize(sensor) is None
+    sensor_item = sync._serialize(sensor)
+    assert sensor_item is not None
+    assert sensor_item["domain"] == "sensor"
+    assert sensor_item["attributes"] == {}
 
 
 async def test_ui_and_label_sources_have_union_semantics(hass: HomeAssistant) -> None:
@@ -92,6 +97,17 @@ async def test_registry_rename_preserves_stable_ui_selection(hass: HomeAssistant
     renamed = registry.async_get("light.renamed_kitchen")
     assert renamed is not None and renamed.id == entry.id
     assert EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(renamed)
+
+
+async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssistant) -> None:
+    entry = registered_light(hass)
+    registry = er.async_get(hass)
+    registry.async_update_entity(entry.entity_id, name="User configured name")
+    renamed = registry.async_get(entry.entity_id)
+    item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(renamed)
+    assert item is not None
+    assert item["registry_id"] == entry.id
+    assert item["friendly_name"] == "User configured name"
 
 
 def test_large_inventory_chunking_is_deterministic_and_bounded() -> None:

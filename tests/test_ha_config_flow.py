@@ -243,15 +243,11 @@ async def test_options_store_stable_entity_and_label_registry_ids(hass: HomeAssi
     assert entry.options[CONF_EXPOSURE_LABEL_ID] == label.label_id
 
 
-async def test_options_never_hijack_same_name_label(hass: HomeAssistant) -> None:
+async def test_options_never_create_or_discover_label_by_name(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     unrelated = lr.async_get(hass).async_create("Ekonex Voice")
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"create_label": True}
-    )
     assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["errors"] == {"base": "label_name_in_use"}
     assert CONF_EXPOSURE_LABEL_ID not in entry.options
     assert lr.async_get(hass).async_get_label(unrelated.label_id) is unrelated

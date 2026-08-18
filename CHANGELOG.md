@@ -11,11 +11,13 @@ Status: Ready for review
 ### Scope
 
 - Added strictly opt-in exposure through the Ekonex Voice options UI and a
-  dedicated Home Assistant label stored by stable registry ID.
+  manually installer-created Home Assistant label stored by stable registry ID.
 - Added union semantics for UI-selected devices/entities and label-selected
   devices/entities, with automatic reconciliation on registry changes.
 - Added deterministic bounded EVCP inventory batches, monotonic revisions,
-  coalesced state updates, reconnect full sync and strict attribute allowlists.
+  coalesced state updates, reconnect full sync and strict attribute redaction.
+- Preserved arbitrary installer-selected HA domains and current user-configured
+  HA entity names while keeping stable registry identity across renames.
 - Added installation-scoped cloud upsert, state authorization, synchronization
   metadata and tombstones for removed or deselected entities.
 - Added database migration, tests, diagnostics counters and HAOS acceptance steps.
@@ -24,6 +26,12 @@ Status: Ready for review
 
 - No command execution, Alexa/provider behavior, arbitrary services, admin UI or
   later milestone work was implemented.
+
+### Specification alignment
+
+- Issue #10's final installer-controlled policy supersedes SPEC_V1's earlier
+  M5 `light`/`switch` publication filter: explicitly exposed HA domains are
+  transported, while attributes remain deny-by-default and safely normalized.
 
 ## 2026-08-18 — M4 EVCP WebSocket transport and cloud connection
 

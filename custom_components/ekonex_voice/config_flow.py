@@ -9,7 +9,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     DeviceSelector,
@@ -40,7 +39,6 @@ from .const import (
     DEFAULT_CLOUD_URL,
     DOMAIN,
 )
-from .entity_inventory import SUPPORTED_DOMAINS
 from .models import PairingResult, PairingSession, PairingState
 
 
@@ -160,11 +158,6 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
         registry = er.async_get(self.hass)
         if user_input is not None:
             label_id = user_input.get("label")
-            if user_input.get("create_label") and not label_id:
-                labels = lr.async_get(self.hass)
-                if labels.async_get_label_by_name("Ekonex Voice") is not None:
-                    return self._show_form(registry, {"base": "label_name_in_use"})
-                label_id = labels.async_create("Ekonex Voice").label_id
             registry_ids = [
                 entry.id
                 for entity_id in user_input.get("entities", [])
@@ -199,13 +192,10 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
                 ): DeviceSelector(DeviceSelectorConfig(multiple=True)),
                 vol.Optional(
                     "entities", description={"suggested_value": entity_ids}
-                ): EntitySelector(
-                    EntitySelectorConfig(domain=list(SUPPORTED_DOMAINS), multiple=True)
-                ),
+                ): EntitySelector(EntitySelectorConfig(multiple=True)),
                 vol.Optional(
                     "label", description={"suggested_value": current_label}
                 ): LabelSelector(LabelSelectorConfig(multiple=False)),
-                vol.Optional("create_label", default=False): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors or {})

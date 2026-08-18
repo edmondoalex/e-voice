@@ -34,13 +34,9 @@
         "data": {
           "devices": "Devices",
           "entities": "Individual entities",
-          "label": "Dedicated Ekonex Voice label",
-          "create_label": "Create the dedicated ‘Ekonex Voice’ label"
+          "label": "Installer-created Ekonex Voice label"
         }
       }
-    },
-    "error": {
-      "label_name_in_use": "A label named Ekonex Voice already exists. Select it explicitly or rename it before creating a dedicated label."
     }
   }
 }

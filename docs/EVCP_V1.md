@@ -47,14 +47,17 @@ an entity authorized by the latest full inventory.
 
 Entity records contain stable `registry_id`, current `entity_id`, domain,
 friendly name, area/device references and names, device class, supported
-features, normalized state, availability, last-change time and allowlisted
-attributes. Only `light` and `switch` are accepted in M5. Light attributes are
-limited to brightness, color mode/temperature, RGB/HS/XY color and effect;
-switch attributes are empty. `unknown` is represented as null state and
-`unavailable` as null state with `available: false`.
+features, normalized state, availability, last-change time and explicitly safe
+attributes. An installer may expose any HA domain; domains are not an
+authorization filter. Attributes default to empty for domains without a defined
+safety allowlist. Light attributes are limited to brightness, color
+mode/temperature, RGB/HS/XY color and effect. `unknown` is represented as null
+state and `unavailable` as null state with `available: false`.
 
 Exposure is opt-in before serialization. The effective set is the union of UI
 selected device IDs, UI selected stable entity-registry IDs, entities carrying
-the configured label ID, and supported entities whose device carries that label.
-An empty selection and no configured label produces an empty authoritative full
-inventory.
+the configured label ID, and entities whose device carries that label. Home
+Assistant's current user-configured entity name is mutable presentation metadata;
+the registry ID remains cloud identity when the name or entity ID changes. The
+integration never creates the label. An empty selection and no configured label
+produces an empty authoritative full inventory.

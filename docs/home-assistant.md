@@ -3,16 +3,18 @@
 ## M5 opt-in exposure acceptance
 
 On HAOS, open Ekonex Voice configuration options. A fresh entry must show no
-selected items and the cloud inventory must remain empty. Select a light device
-and a standalone switch, save, and verify immediate cloud reconciliation. Then
+selected items and the cloud inventory must remain empty. Select devices and
+standalone entities from multiple domains, save, and verify immediate cloud reconciliation. Then
 deselect each and verify tombstones without restarting Home Assistant.
 
-The options flow can create the dedicated `Ekonex Voice` label only when that
-name is unused, or the installer can explicitly select an existing label. The
-stable label registry ID is persisted. Assign/remove it on a device and an
-entity, rename the label, and verify reconciliation and union semantics with UI
-selection. Also test unsupported domains, a reconnect during a large inventory,
-restart/reload, bursty light state changes, diagnostics download, and removal.
+The installer manually creates the dedicated `Ekonex Voice` label in Home
+Assistant, then explicitly selects it in the integration options. The integration
+never creates or discovers it by name. Its stable label registry ID is persisted.
+Assign/remove it on a device and an entity, rename the label, and verify
+reconciliation and union semantics with UI selection. Rename an exposed entity
+through its editable HA `Nome` field and verify the cloud name changes while the
+stable cloud identity does not. Also test a reconnect during a large inventory,
+restart/reload, bursty state changes, diagnostics download, and removal.
 No credential or unrestricted attribute may appear in logs or diagnostics. To
 disable label-based exposure, clear the selected label in the options flow; the
 label itself is not deleted from Home Assistant.

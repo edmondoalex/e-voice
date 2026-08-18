@@ -50,7 +50,7 @@ JsonScalar = str | int | float | bool | None
 class EntityItem(StrictModel):
     registry_id: str = Field(min_length=1, max_length=64)
     entity_id: str = Field(min_length=3, max_length=255)
-    domain: Literal["light", "switch"]
+    domain: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     friendly_name: str | None = Field(default=None, max_length=255)
     area_id: str | None = Field(default=None, max_length=255)
     area_name: str | None = Field(default=None, max_length=255)

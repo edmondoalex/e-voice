@@ -34,13 +34,9 @@
         "data": {
           "devices": "Dispositivi",
           "entities": "Singole entità",
-          "label": "Etichetta Ekonex Voice dedicata",
-          "create_label": "Crea l'etichetta dedicata ‘Ekonex Voice’"
+          "label": "Etichetta Ekonex Voice creata dall'installatore"
         }
       }
-    },
-    "error": {
-      "label_name_in_use": "Esiste già un'etichetta chiamata Ekonex Voice. Selezionala esplicitamente oppure rinominala prima di creare quella dedicata."
     }
   }
 }

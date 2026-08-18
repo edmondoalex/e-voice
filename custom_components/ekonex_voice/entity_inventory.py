@@ -22,7 +22,6 @@ from homeassistant.helpers.event import (
 
 from .evcp import MAX_MESSAGE_BYTES, envelope
 
-SUPPORTED_DOMAINS = frozenset({"light", "switch"})
 ATTRIBUTE_ALLOWLIST = {
     "light": frozenset(
         {
@@ -35,7 +34,6 @@ ATTRIBUTE_ALLOWLIST = {
             "effect",
         }
     ),
-    "switch": frozenset(),
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25
@@ -108,7 +106,7 @@ class EntityInventorySynchronizer:
     @callback
     def _state_changed(self, event: Event[Any]) -> None:
         entity_id = event.data.get("entity_id")
-        if isinstance(entity_id, str) and entity_id.partition(".")[0] in SUPPORTED_DOMAINS:
+        if isinstance(entity_id, str):
             self._pending.add(entity_id)
             if self._flush_task is None or self._flush_task.done():
                 self._flush_task = self._hass.async_create_background_task(
@@ -185,7 +183,7 @@ class EntityInventorySynchronizer:
 
 
 def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str, object] | None:
-    if entry is None or entry.disabled or entry.domain not in SUPPORTED_DOMAINS:
+    if entry is None or entry.disabled:
         return None
     state = hass.states.get(entry.entity_id)
     if state is None:
@@ -214,7 +212,9 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
 
 def _attributes(domain: str, state: State) -> dict[str, object]:
     result: dict[str, object] = {}
-    for key in ATTRIBUTE_ALLOWLIST[domain]:
+    for key in ATTRIBUTE_ALLOWLIST.get(domain, frozenset()):
+        if key not in state.attributes:
+            continue
         value = state.attributes.get(key)
         if isinstance(value, str):
             result[key] = value[:255]

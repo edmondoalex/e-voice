@@ -49,6 +49,27 @@ async def test_full_inventory_upserts_and_deselection_tombstones(
     assert not entity.available
 
 
+async def test_name_change_updates_metadata_without_duplicate_identity(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [item()])
+    renamed = {**item(), "friendly_name": "Current HA name"}
+    await service.apply_full(2, [renamed])
+    entities = (
+        await session.scalars(
+            select(Entity).where(
+                Entity.installation_id == installation.id,
+                Entity.ha_registry_id == "registry-light-1",
+            )
+        )
+    ).all()
+    assert len(entities) == 1
+    assert entities[0].friendly_name == "Current HA name"
+
+
 async def test_stale_and_unauthorized_state_are_rejected(
     session: AsyncSession, seeded_domain: object
 ) -> None:
