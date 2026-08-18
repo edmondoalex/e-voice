@@ -26,10 +26,12 @@ Status: Ready for review
 ### Validation
 
 - Backend pytest on Windows: 23 passed
+- Full Linux pytest with Home Assistant harness: 44 passed
 - `ruff format --check .`: passed
 - `ruff check .`: passed
 - `mypy apps custom_components`: passed
-- Full HA/Linux pytest and `git diff --check`: pending final validation
+- `docker compose config --quiet`: passed in CI
+- `git diff --check`: passed
 
 ### Scope guard
 
