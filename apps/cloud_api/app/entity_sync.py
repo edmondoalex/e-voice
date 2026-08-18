@@ -53,6 +53,7 @@ class EntitySyncService:
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
             raise StaleSyncError
+        changed_entities: list[Entity] = []
         for item in items:
             entity = await self._by_registry(str(item["registry_id"]))
             if entity is None or entity.deleted_at is not None:
@@ -62,8 +63,19 @@ class EntitySyncService:
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
             entity.last_seen_at = datetime.now(UTC)
+            changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
+        from .alexa import SUPPORTED_DOMAINS
+        from .alexa_events import AlexaEventGateway
+
+        gateway = AlexaEventGateway(self._session)
+        try:
+            for entity in changed_entities:
+                if entity.ha_domain in SUPPORTED_DOMAINS:
+                    await gateway.report_entity(entity)
+        finally:
+            await gateway.close()
 
     async def _by_registry(self, registry_id: str) -> Entity | None:
         result = await self._session.scalars(
