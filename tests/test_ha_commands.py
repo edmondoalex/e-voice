@@ -82,7 +82,7 @@ async def test_explicit_mapper_success(
 ) -> None:
     entry, executor = exposed_entity(hass, domain, attributes)
     call = AsyncMock()
-    with patch.object(hass.services, "async_call", call):
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
         result = await executor.async_execute(
             "00000000-0000-0000-0000-000000000001", entry.id, command
         )
@@ -124,7 +124,7 @@ async def test_invalid_or_unsupported_capability_has_no_side_effect(
 ) -> None:
     entry, executor = exposed_entity(hass, domain, attributes)
     call = AsyncMock()
-    with patch.object(hass.services, "async_call", call):
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
         result = await executor.async_execute(
             "00000000-0000-0000-0000-000000000002", entry.id, command
         )
@@ -137,7 +137,7 @@ async def test_arbitrary_service_injection_and_unexposed_target_are_rejected(
 ) -> None:
     entry, executor = exposed_entity(hass, "lock")
     call = AsyncMock()
-    with patch.object(hass.services, "async_call", call):
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
         result = await executor.async_execute(
             "00000000-0000-0000-0000-000000000003",
             entry.id,
@@ -163,7 +163,7 @@ async def test_missing_disabled_and_unavailable_entities_never_execute(
     entry, executor = exposed_entity(hass, "switch")
     call = AsyncMock()
     hass.states.async_set(entry.entity_id, "unavailable")
-    with patch.object(hass.services, "async_call", call):
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
         unavailable = await executor.async_execute(
             "unavailable-id", entry.id, {"operation": "power_on"}
         )
@@ -186,7 +186,7 @@ async def test_duplicate_id_rename_timeout_and_failure_mapping(hass: HomeAssista
     registry.async_update_entity(entry.entity_id, new_entity_id="switch.renamed")
     hass.states.async_set("switch.renamed", "on")
     call = AsyncMock()
-    with patch.object(hass.services, "async_call", call):
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
         first = await executor.async_execute("same-id", entry.id, {"operation": "power_off"})
         replay = await executor.async_execute("same-id", entry.id, {"operation": "power_off"})
         conflict = await executor.async_execute("same-id", entry.id, {"operation": "power_on"})
@@ -197,11 +197,17 @@ async def test_duplicate_id_rename_timeout_and_failure_mapping(hass: HomeAssista
     timeout_executor = EkonexVoiceCommandExecutor(
         hass, EntityInventorySynchronizer(hass, set(), {entry.id}, None), timeout=0.001
     )
-    with patch.object(hass.services, "async_call", AsyncMock(side_effect=TimeoutError)):
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call",
+        new=AsyncMock(side_effect=TimeoutError),
+    ):
         assert (
             await timeout_executor.async_execute("timeout", entry.id, {"operation": "power_off"})
         ).status == "timeout"
-    with patch.object(hass.services, "async_call", AsyncMock(side_effect=RuntimeError("secret"))):
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call",
+        new=AsyncMock(side_effect=RuntimeError("secret")),
+    ):
         assert (
             await executor.async_execute("failure", entry.id, {"operation": "power_off"})
         ).status == "execution_failed"
@@ -220,7 +226,10 @@ async def test_command_state_change_converges_through_m5_state_sync(
     async def apply_state(*args: object, **kwargs: object) -> None:
         hass.states.async_set(entry.entity_id, "off")
 
-    with patch.object(hass.services, "async_call", side_effect=apply_state):
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call",
+        new=AsyncMock(side_effect=apply_state),
+    ):
         result = await executor.async_execute("state-command", entry.id, {"operation": "power_off"})
     await asyncio.sleep(0.3)
     messages = [call.args[0] for call in websocket.send_json.await_args_list]
