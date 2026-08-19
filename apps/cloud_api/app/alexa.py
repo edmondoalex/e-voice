@@ -28,6 +28,7 @@ from .domain.models import (
     Installation,
     TenantMembership,
 )
+from .entity_names import effective_voice_name, unambiguous_voice_entities
 from .evcp import sessions
 
 router = APIRouter()
@@ -406,7 +407,7 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",
-        "friendlyName": entity.friendly_name or entity.ha_entity_id,
+        "friendlyName": effective_voice_name(entity),
         "description": "Home Assistant entity via Ekonex Voice",
         "displayCategories": [category],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
@@ -645,17 +646,20 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         return JSONResponse(_replay[replay_key])
     correlation = header.get("correlationToken")
     if header["namespace"] == "Alexa.Discovery" and header["name"] == "Discover":
-        entities = (
-            await database.scalars(
-                select(Entity)
-                .join(Installation)
-                .where(
-                    Installation.tenant_id == link.tenant_id,
-                    Entity.deleted_at.is_(None),
-                    Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+        entities = list(
+            (
+                await database.scalars(
+                    select(Entity)
+                    .join(Installation)
+                    .where(
+                        Installation.tenant_id == link.tenant_id,
+                        Entity.deleted_at.is_(None),
+                        Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+                    )
                 )
-            )
-        ).all()
+            ).all()
+        )
+        entities = unambiguous_voice_entities(entities)
         response = _event(
             {
                 "namespace": "Alexa.Discovery",

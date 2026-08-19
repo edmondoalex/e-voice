@@ -4,6 +4,24 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Entity custom display and voice names
+
+Status: Ready for review
+
+### Scope
+
+- Added persistent, tenant-scoped display-name, voice-name and voice-alias overrides while
+  retaining the Connector-synchronized e-Control name as immutable source metadata.
+- Added centralized fallback, normalization, deduplication and collision handling shared
+  by the administration console and Alexa discovery.
+- Added an authenticated CSRF-protected editor, reset action and redacted audit events.
+- Added migration `20260819_0008` and regression coverage for synchronization, isolation,
+  dashboard behavior, collisions and Alexa discovery.
+
+### Scope guard
+
+- No EVCP, Connector, entity identity, pairing or authentication contract changes.
+
 ## 2026-08-19 — Home Assistant visible-name synchronization 0.1.6
 
 Status: Ready for review

@@ -10,6 +10,8 @@ system. Open `/dashboard` after logging in at `/login`.
   online state from the EVCP liveness window.
 - `/installations/{id}` shows searchable, paginated exposed entities and their current
   availability. Tombstoned entities remain visible but cannot be controlled.
+- `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
+  for an entity belonging to the selected tenant and installation.
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound
   to the selected tenant; foreign installation and entity identifiers return 404.
 - `/system` reports tenant object counts, retained samples, the authoritative PostgreSQL
@@ -20,6 +22,30 @@ console and commands. Read-only and customer-user memberships cannot. Direct con
 reuse the closed M6 command vocabulary and dispatcher; arbitrary Home Assistant service
 calls are impossible. A result is displayed as successful only after the Connector
 returns that outcome. Pending and final outcomes are audited with the authenticated user.
+
+## Entity names and voice aliases
+
+The Connector-owned `friendly_name` is shown as **Nome e-Control** and remains read-only in
+the console. Every inventory synchronization may update it without changing these optional
+cloud-owned fields:
+
+- **Nome visualizzato** (`display_name`): dashboard label; falls back to Nome e-Control;
+- **Nome vocale** (`voice_name`): primary Alexa/voice label; falls back to Nome visualizzato,
+  then Nome e-Control;
+- **Alias vocali** (`voice_aliases`): up to 20 additional names, normalized and deduplicated
+  case-insensitively.
+
+Names are trimmed and limited to 120 characters. The form is HTML-escaped, CSRF-protected,
+role-protected and installation/tenant-scoped. Saving a voice name or alias that collides
+with another active entity in the same installation returns a conflict instead of choosing
+an entity arbitrarily. Alexa discovery also fails closed for pre-existing ambiguous data by
+omitting every endpoint involved in the collision. Alexa Smart Home discovery accepts one
+primary `friendlyName`; aliases are retained by the centralized voice-name resolver and
+participate in collision detection without changing the Alexa or EVCP protocol.
+
+Updates and resets create `entity_names.updated` or `entity_names.reset` audit events. Audit
+payloads contain only the entity identifier and changed field names, not the configured
+names or aliases. Apply Alembic migration `20260819_0008` before deploying this feature.
 
 ## State history and storage policy
 

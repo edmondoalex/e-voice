@@ -126,6 +126,9 @@ async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
     endpoints = response.json()["event"]["payload"]["endpoints"]
     assert [item["friendlyName"] for item in endpoints] == ["Kitchen"]
     stable = endpoints[0]["endpointId"]
+    entity.display_name = "Ufficio Alex"
+    entity.voice_name = "luce ufficio"
+    entity.voice_aliases = ["ufficio", "luce alex"]
     entity.friendly_name, entity.ha_entity_id = "New kitchen", "light.renamed"
     await session.commit()
     body = _directive(token, "Alexa.Discovery", "Discover")
@@ -134,7 +137,33 @@ async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
         "endpoints"
     ]
     assert updated[0]["endpointId"] == stable
-    assert updated[0]["friendlyName"] == "New kitchen"
+    assert updated[0]["friendlyName"] == "luce ufficio"
+    await client.aclose()
+
+
+async def test_discovery_excludes_every_entity_in_voice_name_collision(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    first = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert first is not None
+    first.voice_name = "ufficio"
+    second = Entity(
+        installation_id=first.installation_id,
+        ha_entity_id="light.office",
+        ha_registry_id="registry-office",
+        ha_domain="light",
+        friendly_name="Office",
+        voice_aliases=["UFFICIO"],
+    )
+    session.add(second)
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_voice_collision")
+    client = await _client(session)
+    response = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    assert response.status_code == 200
+    assert response.json()["event"]["payload"]["endpoints"] == []
     await client.aclose()
 
 

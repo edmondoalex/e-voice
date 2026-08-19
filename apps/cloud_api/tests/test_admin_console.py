@@ -164,6 +164,120 @@ async def test_command_rejects_cross_tenant_entity(
     await client.aclose()
 
 
+async def test_entity_names_dashboard_edit_reset_audit_and_tenant_isolation(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    edit_url = (
+        f"/installations/{seeded_domain.installation_a_id}/entities/"
+        f"{seeded_domain.entity_a_id}/edit"
+    )
+    page = await client.get(edit_url)
+    assert page.status_code == 200
+    assert "Nome e-Control" in page.text
+    assert "Kitchen" in page.text
+    assert 'name="friendly_name"' not in page.text
+    assert "Ripristina nomi personalizzati" in page.text
+    assert (
+        await client.post(
+            edit_url,
+            data={"csrf_token": "forged", "action": "save", "display_name": "Wrong"},
+        )
+    ).status_code == 403
+
+    response = await client.post(
+        edit_url,
+        data={
+            "csrf_token": _csrf(page),
+            "action": "save",
+            "display_name": "  Ufficio Alex  ",
+            "voice_name": " luce ufficio ",
+            "voice_aliases": "ufficio\nUFFICIO\nluce alex\n<script>alert(1)</script>",
+        },
+    )
+    assert response.status_code == 200
+    assert "Nomi salvati" in response.text
+    assert "<script>alert(1)</script>" not in response.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in response.text
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    assert entity.display_name == "Ufficio Alex"
+    assert entity.voice_name == "luce ufficio"
+    assert entity.voice_aliases == ["ufficio", "luce alex", "<script>alert(1)</script>"]
+    detail = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Ufficio Alex" in detail.text
+    assert "Nome e-Control: Kitchen" in detail.text
+
+    foreign = await client.get(
+        f"/installations/{seeded_domain.installation_b_id}/entities/"
+        f"{seeded_domain.entity_b_id}/edit"
+    )
+    assert foreign.status_code == 404
+    reset_page = await client.get(edit_url)
+    reset = await client.post(edit_url, data={"csrf_token": _csrf(reset_page), "action": "reset"})
+    assert reset.status_code == 200
+    await session.refresh(entity)
+    assert entity.display_name is None
+    assert entity.voice_name is None
+    assert entity.voice_aliases == []
+    audits = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.event_type.in_(["entity_names.updated", "entity_names.reset"]))
+                .order_by(AuditEvent.created_at)
+            )
+        ).all()
+    )
+    assert [event.event_type for event in audits] == [
+        "entity_names.updated",
+        "entity_names.reset",
+    ]
+    assert audits[0].payload_redacted_json == {
+        "entity_id": str(entity.id),
+        "changed_fields": ["display_name", "voice_name", "voice_aliases"],
+    }
+    await client.aclose()
+
+
+async def test_entity_name_edit_rejects_voice_collision(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    second = Entity(
+        installation_id=seeded_domain.installation_a_id,
+        ha_entity_id="light.office",
+        ha_registry_id="registry-office",
+        ha_domain="light",
+        friendly_name="Office",
+        voice_name="ufficio",
+    )
+    session.add(second)
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    edit_url = (
+        f"/installations/{seeded_domain.installation_a_id}/entities/"
+        f"{seeded_domain.entity_a_id}/edit"
+    )
+    page = await client.get(edit_url)
+    response = await client.post(
+        edit_url,
+        data={
+            "csrf_token": _csrf(page),
+            "action": "save",
+            "display_name": "",
+            "voice_name": "UFFICIO",
+            "voice_aliases": "",
+        },
+    )
+    assert response.status_code == 409
+    assert "già utilizzato" in response.text
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None and entity.voice_name is None
+    await client.aclose()
+
+
 async def test_activity_and_system_views_remain_tenant_scoped(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
