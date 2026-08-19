@@ -19,6 +19,24 @@ Status: Ready for review
 
 - No EVCP schema, cloud persistence, pairing, authentication or entity identity changes.
 
+## 2026-08-19 — Automatic database maintenance
+
+Status: Ready for review
+
+### Scope
+
+- Added an isolated daily Docker maintenance service that reuses the idempotent retention
+  cleanup and catches up missed scheduled runs after restart.
+- Persisted secret-free execution status, duration and per-category deletion counts.
+- Extended `/system` with real PostgreSQL size in MB, maintenance status/schedule and the
+  configured retention policy.
+- Added migration `20260819_0007`, scheduler/failure tests and deployment documentation.
+
+### Scope guard
+
+- No API, EVCP, Connector, entity synchronization or command behavior changes. A scheduler
+  failure cannot stop or restart application services.
+
 ## 2026-08-19 — Administration console navigation
 
 Status: Ready for review

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
+from .config import get_settings
 from .database import get_database_session
 from .domain.enums import TenantRole
 from .domain.models import (
@@ -25,9 +26,11 @@ from .domain.models import (
     Entity,
     EntityStateHistory,
     Installation,
+    MaintenanceRun,
     OperationalEvent,
 )
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
+from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
 
@@ -125,6 +128,16 @@ def _online(item: Installation) -> bool:
         item.last_seen_at
         and item.last_seen_at >= datetime.now(UTC) - timedelta(seconds=LIVENESS_TIMEOUT_SECONDS)
     )
+
+
+async def _database_size_mb(session: AsyncSession) -> float | None:
+    """Read PostgreSQL's authoritative database size and convert bytes to decimal MB."""
+    if session.get_bind().dialect.name != "postgresql":
+        return None
+    database_size_bytes = int(
+        await session.scalar(select(func.pg_database_size(func.current_database()))) or 0
+    )
+    return database_size_bytes / 1_000_000
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -454,13 +467,20 @@ async def system_stats(
         )
         or 0
     )
-    database_size: int | str = "n/d"
-    if session.get_bind().dialect.name == "postgresql":
-        database_size = int(
-            await session.scalar(select(func.pg_database_size(func.current_database()))) or 0
-        )
+    database_size_mb = await _database_size_mb(session)
+    settings = get_settings()
+    maintenance: MaintenanceRun | None = await latest_cleanup(session)
+    now = datetime.now(UTC)
+    next_run = next_cleanup_at(
+        now,
+        maintenance.started_at if maintenance else None,
+        schedule_hour_utc=settings.cleanup_schedule_hour_utc,
+    )
+    last_run = (maintenance.completed_at or maintenance.started_at) if maintenance else "Mai"
+    last_result = maintenance.status.upper() if maintenance else "NON ESEGUITA"
+    size_display = f"{database_size_mb:.2f} MB" if database_size_mb is not None else "n/d"
     csrf = _csrf(context)
-    body = f'<div class="cards"><div class="card"><b>{installations}</b><br>Installazioni</div><div class="card"><b>{entities}</b><br>Entità</div><div class="card"><b>{history}</b><br>Campioni storico</div><div class="card"><b>{audit}</b><br>Eventi audit</div><div class="card"><b>{_e(database_size)}</b><br>Dimensione DB (byte)</div></div><p>La pulizia retention è eseguita con <code>python -m apps.cloud_api.app.cleanup</code>.</p>'
+    body = f'<div class="cards"><div class="card"><b>{installations}</b><br>Installazioni</div><div class="card"><b>{entities}</b><br>Entità</div><div class="card"><b>{history}</b><br>Campioni storico</div><div class="card"><b>{audit}</b><br>Eventi audit</div><div class="card"><b>{_e(size_display)}</b><br>Dimensione reale DB</div></div><h2>Manutenzione automatica</h2><div class="cards"><div class="card"><b>{_e(last_run)}</b><br>Ultima pulizia</div><div class="card"><b>{_e(last_result)}</b><br>Esito ultima pulizia</div><div class="card"><b>{_e(next_run)}</b><br>Prossima pulizia prevista</div></div><h2>Retention configurata</h2><ul><li>Storico stati: {settings.state_history_retention_days} giorni</li><li>Eventi operativi: {settings.operational_event_retention_days} giorni</li><li>Audit amministrativo: {settings.admin_audit_retention_days} giorni</li><li>Tentativi login: {settings.portal_login_attempt_retention_days} giorni</li><li>Sessioni portale: eliminate dopo la scadenza</li></ul>'
     response = HTMLResponse(_layout("Sistema", body, context, csrf, "system"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
