@@ -26,6 +26,38 @@ a server-managed delivery key. A correct polling secret can retrieve it once;
 the envelope is deleted and committed before the plaintext is returned. The
 human pairing code is never reused or transformed into the credential.
 
+## Pairing portal
+
+The installer opens `https://voice.e-control.tech/pair`, signs in through the
+Ekonex authentication ingress, enters the `XXXX-XXXX` code and chooses an
+installation name. The same tenant-scoped claim is also available as
+`POST /connector/v1/pairing/claims`. Neither response contains the pairing
+session, polling secret, Connector credential or any other secret. Home
+Assistant remains the only recipient of the Connector credential through its
+existing authenticated polling request, and receives it once.
+
+The repository does not yet contain a customer-facing login/session UI. Until
+that is delivered, `/pair` and the claim API accept identity only from an
+authenticating reverse proxy that:
+
+- authenticates the Ekonex user;
+- removes every caller-supplied `X-Ekonex-*` header;
+- injects `X-Ekonex-User-ID`, the selected `X-Ekonex-Tenant-ID`, and the shared
+  `X-Ekonex-Ingress-Secret` over a private upstream connection;
+- never logs the ingress secret.
+
+The backend verifies the shared ingress secret and resolves the user/tenant with
+the existing `AuthenticationService`; membership and role remain authoritative.
+Direct public access to the application upstream must be blocked in production.
+This boundary is intentionally not a replacement login system. A future portal
+login should replace trusted identity headers with an authenticated server-side
+session while continuing to produce the same `TenantContext`.
+
+Browser submissions use a signed, tenant/user-bound, 30-minute CSRF token in a
+SameSite Strict HttpOnly cookie. Production must set independent high-entropy
+values for `EKONEX_PAIRING_PORTAL_CSRF_SECRET` and
+`EKONEX_PAIRING_PORTAL_INGRESS_SECRET` in the deployment secret manager.
+
 ## Abuse prevention
 
 - Failed claims are persisted per authenticated user in a rolling time window.

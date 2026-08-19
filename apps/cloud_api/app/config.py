@@ -1,9 +1,10 @@
 """Environment-backed application settings."""
 
 from functools import lru_cache
+from typing import Self
 
 from cryptography.fernet import Fernet
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     pairing_code_pepper: str = "development-only-pairing-pepper-32-bytes-minimum"
     pairing_delivery_key: str = Fernet.generate_key().decode()
+    pairing_portal_csrf_secret: str = "development-only-pairing-csrf-secret-change-me"
+    pairing_portal_ingress_secret: str = "development-only-trusted-ingress-secret"
     alexa_oauth_client_id: str = "ekonex-alexa-development"
     alexa_oauth_client_secret: str = "change-me"
     alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"
@@ -36,6 +39,17 @@ class Settings(BaseSettings):
     alexa_lwa_client_secret: str = "replace-with-lwa-secret"
     alexa_token_encryption_key: str = "development-only-change-me"
     alexa_event_gateway_url: str = "https://api.eu.amazonalexa.com/v3/events"
+
+    @model_validator(mode="after")
+    def production_pairing_secrets_are_explicit(self) -> Self:
+        if self.environment == "production" and (
+            self.pairing_portal_csrf_secret.startswith("development-only")
+            or self.pairing_portal_ingress_secret.startswith("development-only")
+            or len(self.pairing_portal_csrf_secret) < 32
+            or len(self.pairing_portal_ingress_secret) < 32
+        ):
+            raise ValueError("production pairing portal secrets must be explicitly configured")
+        return self
 
 
 @lru_cache

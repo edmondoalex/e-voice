@@ -4,6 +4,32 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Pairing portal completion
+
+Status: Ready for review
+
+### Scope
+
+- Added a tenant-authorized pairing claim endpoint backed by the existing
+  `PairingService.claim()` flow.
+- Added the mobile-friendly Italian `/pair` portal with signed CSRF protection,
+  safe error mapping and no credential disclosure.
+- Enforced existing write roles for pairing claims and retained one-shot
+  Connector credential delivery exclusively through Home Assistant polling.
+- Updated Home Assistant pairing help with the production portal URL and bumped
+  the HACS integration version to `0.1.2`.
+
+### Authentication boundary
+
+- No parallel login system was introduced. The current minimum deployment uses
+  trusted identity headers protected by a shared ingress secret and resolves
+  them through `AuthenticationService`; production ingress requirements and the
+  future server-side login/session replacement are documented in `docs/pairing.md`.
+
+### Scope guard
+
+- No changes to LICENSE, Alexa, EVCP, entity sync or command execution.
+
 ## 2026-08-18 — M7 Alexa Smart Home
 
 Status: Ready for review
