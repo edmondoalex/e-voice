@@ -260,6 +260,22 @@ class OperationalEvent(Base):
     )
 
 
+class MaintenanceRun(Base):
+    __tablename__ = "maintenance_runs"
+    __table_args__ = (Index("ix_maintenance_runs_kind_started", "kind", "started_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    deleted_counts_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+
+
 class AlexaPublication(TimestampMixin, Base):
     __tablename__ = "alexa_publications"
     __table_args__ = (Index("ix_alexa_publications_endpoint_id", "alexa_endpoint_id"),)

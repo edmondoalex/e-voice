@@ -2,14 +2,17 @@
 
 import re
 from datetime import UTC, datetime
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.cloud_api.app.admin_console import _database_size_mb
 from apps.cloud_api.app.database import get_database_session
-from apps.cloud_api.app.domain.models import AuditEvent, Entity, Installation
+from apps.cloud_api.app.domain.models import AuditEvent, Entity, Installation, MaintenanceRun
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.main import app
 from apps.cloud_api.tests.conftest import SeededDomain
@@ -175,6 +178,16 @@ async def test_activity_and_system_views_remain_tenant_scoped(
             result="success",
         )
     )
+    session.add(
+        MaintenanceRun(
+            kind="retention_cleanup",
+            status="ok",
+            started_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+            duration_ms=42,
+            deleted_counts_json={"state_history": 1},
+        )
+    )
     await session.commit()
     client = await _client(session)
     await _login(client, "owner@example.test", "owner-password-123")
@@ -189,4 +202,21 @@ async def test_activity_and_system_views_remain_tenant_scoped(
     assert 'href="/system" class="active" aria-current="page"' in system.text
     assert "Home Assistant" not in system.text
     assert "Campioni storico" in system.text
+    assert "Dimensione reale DB" in system.text
+    assert "Ultima pulizia" in system.text
+    assert "Esito ultima pulizia" in system.text
+    assert "Prossima pulizia prevista" in system.text
+    assert "Storico stati: 30 giorni" in system.text
+    assert "Audit amministrativo: 365 giorni" in system.text
     await client.aclose()
+
+
+async def test_database_size_uses_postgresql_authoritative_function_and_decimal_mb() -> None:
+    fake = MagicMock(spec=AsyncSession)
+    fake.get_bind.return_value.dialect.name = "postgresql"
+    fake.scalar = AsyncMock(return_value=12_500_000)
+    size = await _database_size_mb(cast(AsyncSession, fake))
+    assert size == 12.5
+    statement = str(fake.scalar.await_args.args[0])
+    assert "pg_database_size" in statement
+    assert "current_database" in statement

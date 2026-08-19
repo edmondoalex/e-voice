@@ -17,6 +17,7 @@ def test_domain_tables_are_registered() -> None:
         "entities",
         "entity_state_history",
         "installations",
+        "maintenance_runs",
         "operational_events",
         "pairing_claim_attempts",
         "pairing_sessions",
