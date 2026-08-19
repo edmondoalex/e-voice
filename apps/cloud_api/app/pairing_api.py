@@ -245,8 +245,13 @@ def _login_page(*, csrf: str, message: str = "") -> str:
     notice = f'<p role="alert">{html.escape(message)}</p>' if message else ""
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Accedi · Ekonex Voice</title></head><body><main>
-<strong>EKONEX VOICE</strong><h1>Accedi</h1>{notice}
+<title>Accedi · Ekonex Voice</title><style>
+.login-logo{{display:block;width:min(100%,280px);height:auto;aspect-ratio:1/1;
+object-fit:contain;margin:0 auto;border-radius:12px;background:#050505}}
+h1{{font-family:system-ui,sans-serif}}
+</style></head><body><main>
+<img class="login-logo" src="/static/icon.png" width="64" height="64"
+ alt="Ekonex Cloud Voice"><h1>Accedi</h1>{notice}
 <form method="post" action="/login">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">
 <label for="email">Email</label><input id="email" name="email" type="email"

@@ -139,6 +139,11 @@ async def test_login_rate_limit_cookie_and_logout(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     client = await _client(session)
+    login_page = await client.get("/login")
+    assert '<img class="login-logo" src="/static/icon.png"' in login_page.text
+    assert 'alt="Ekonex Cloud Voice"' in login_page.text
+    assert ">EKONEX VOICE<" not in login_page.text
+    assert "h1{font-family:system-ui,sans-serif}" in login_page.text
     for _ in range(5):
         assert (await _login(client, password="wrong-password-123")).status_code == 401
     assert (await _login(client, password="wrong-password-123")).status_code == 429
