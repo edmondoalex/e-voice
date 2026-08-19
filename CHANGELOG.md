@@ -4,6 +4,22 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Administration console navigation
+
+Status: Ready for review
+
+### Scope
+
+- Replaced the `/installations` redirect with a tenant-scoped server-rendered plant list
+  including connectivity, versions, exposed entity count and last contact.
+- Added accessible active-menu state and verified every console navigation target uses a
+  direct server-rendered link without JavaScript.
+- Added navigation, status and tenant-isolation regression tests.
+
+### Scope guard
+
+- No authentication, API, EVCP, persistence schema, Connector or command behavior changes.
+
 ## 2026-08-19 — Portal branding pass
 
 Status: Ready for review
