@@ -143,6 +143,7 @@ async def test_login_rate_limit_cookie_and_logout(
     assert '<img class="login-logo" src="/static/ekonex-cloud-voice.png"' in login_page.text
     assert 'alt="Ekonex Cloud Voice"' in login_page.text
     assert ">EKONEX VOICE<" not in login_page.text
+    assert "Home Assistant" not in login_page.text
     assert "font-family:system-ui,sans-serif" in login_page.text
     assert "width:min(100%,440px);background:white;border-radius:18px" in login_page.text
     assert "background:var(--brand);color:white" in login_page.text
@@ -187,6 +188,7 @@ async def test_tenant_selection_only_allows_memberships(
     assert "Scegli cliente/tenant" in page.text
     assert 'src="/static/ekonex-cloud-voice.png"' in page.text
     assert 'alt="Ekonex Cloud Voice"' in page.text
+    assert "Home Assistant" not in page.text
     denied = await client.post(
         "/pair/select-tenant",
         data={"csrf_token": _csrf(page), "tenant_id": str(uuid4())},
