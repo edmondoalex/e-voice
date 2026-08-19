@@ -98,6 +98,7 @@ async def test_pairing_form_displays_only_intended_human_code(hass: HomeAssistan
     assert result["type"] is data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "pairing"
     assert result["description_placeholders"]["code"] == PAIRING_CODE
+    assert result["description_placeholders"]["pairing_url"] == "https://voice.e-control.tech/pair"
     assert POLLING_SECRET not in repr(result)
 
 

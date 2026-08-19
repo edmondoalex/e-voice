@@ -4,7 +4,7 @@
     "step": {
       "pairing": {
         "title": "Connect Ekonex Voice",
-        "description": "Enter code **{code}** in the Ekonex portal, then select Submit. The code expires at {expires_at}."
+        "description": "Open **{pairing_url}**, sign in to the Ekonex portal and enter code **{code}**. Then return here and select Submit. The code expires at {expires_at}."
       },
       "reauth_confirm": {
         "title": "Reconnect Ekonex Voice",

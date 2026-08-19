@@ -4,7 +4,7 @@
     "step": {
       "pairing": {
         "title": "Collega Ekonex Voice",
-        "description": "Inserisci il codice **{code}** nel portale Ekonex, quindi seleziona Invia. Il codice scade alle {expires_at}."
+        "description": "Apri **{pairing_url}**, accedi al portale Ekonex e inserisci il codice **{code}**. Poi torna qui e seleziona Invia. Il codice scade alle {expires_at}."
       },
       "reauth_confirm": {
         "title": "Ricollega Ekonex Voice",

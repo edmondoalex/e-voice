@@ -4,6 +4,38 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Pairing portal completion
+
+Status: Ready for review
+
+### Scope
+
+- Added a tenant-authorized pairing claim endpoint backed by the existing
+  `PairingService.claim()` flow.
+- Added the mobile-friendly Italian `/pair` portal with signed CSRF protection,
+  safe error mapping and no credential disclosure.
+- Added Argon2 password login, opaque revocable server-side sessions, verified
+  membership-based tenant selection, login throttling and logout.
+- Added an interactive one-time bootstrap command with no default credential and
+  an Alembic migration for portal sessions and login-attempt metadata.
+- Enforced existing write roles for pairing claims and retained one-shot
+  Connector credential delivery exclusively through Home Assistant polling.
+- Updated Home Assistant pairing help with the production portal URL and bumped
+  the HACS integration version to `0.1.2`.
+
+### Authentication boundary
+
+- The portal now works directly behind the existing Cloudflare/Caddy deployment;
+  it does not depend on identity headers injected by an authenticating ingress.
+- Tenant authorization still uses the existing `AuthenticationService` and
+  `TenantMembership` roles. A future administration UI remains out of scope.
+- Removed the official HACS catalog validator workflow: this proprietary
+  integration is distributed only as a HACS Custom Repository; Hassfest remains.
+
+### Scope guard
+
+- No changes to LICENSE, Alexa, EVCP, entity sync or command execution.
+
 ## 2026-08-18 — M7 Alexa Smart Home
 
 Status: Ready for review

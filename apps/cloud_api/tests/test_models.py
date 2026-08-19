@@ -18,6 +18,8 @@ def test_domain_tables_are_registered() -> None:
         "installations",
         "pairing_claim_attempts",
         "pairing_sessions",
+        "portal_login_attempts",
+        "portal_sessions",
         "tenant_memberships",
         "tenants",
         "users",

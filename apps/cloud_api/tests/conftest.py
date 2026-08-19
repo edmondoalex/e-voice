@@ -16,6 +16,7 @@ from apps.cloud_api.app.domain.models import (
     TenantMembership,
     User,
 )
+from apps.cloud_api.app.portal_auth import hash_password
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,9 +51,11 @@ async def session() -> AsyncIterator[AsyncSession]:
 @pytest_asyncio.fixture
 async def seeded_domain(session: AsyncSession) -> SeededDomain:
     dealer = Dealer(name="Ekonex", slug="ekonex")
-    user_a = User(email="owner@example.test", password_hash="not-a-real-password-hash")
-    user_b = User(email="owner-b@example.test", password_hash="not-a-real-password-hash")
-    user_readonly = User(email="readonly@example.test", password_hash="not-a-real-password-hash")
+    user_a = User(email="owner@example.test", password_hash=hash_password("owner-password-123"))
+    user_b = User(email="owner-b@example.test", password_hash=hash_password("owner-b-password-123"))
+    user_readonly = User(
+        email="readonly@example.test", password_hash=hash_password("readonly-password-123")
+    )
     tenant_a = Tenant(name="Tenant A", slug="tenant-a", dealer=dealer)
     tenant_b = Tenant(name="Tenant B", slug="tenant-b", dealer=dealer)
     session.add_all([dealer, user_a, user_b, user_readonly, tenant_a, tenant_b])

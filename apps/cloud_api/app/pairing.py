@@ -173,6 +173,7 @@ class PairingService:
     async def claim(
         self, context: TenantContext, *, code: str, installation_name: str
     ) -> PairingClaim:
+        self._ensure_credential_write_allowed(context)
         now = self._now()
         await self._enforce_rate_limit(context, now)
         normalized_code = code.strip().upper()
