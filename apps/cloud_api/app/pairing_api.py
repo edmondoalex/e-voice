@@ -20,7 +20,7 @@ from .auth import AccessDeniedError, TenantContext
 from .config import get_settings
 from .database import get_database_session
 from .domain.enums import PairingStatus
-from .domain.models import Tenant
+from .domain.models import AuditEvent, Tenant
 from .pairing import (
     PairingAccessDeniedError,
     PairingExpiredError,
@@ -291,7 +291,19 @@ async def login_submit(
             _login_page(csrf=csrf_token, message="Credenziali non valide"),
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
-    token, _ = result
+    token, identity = result
+    if identity.context is not None:
+        session.add(
+            AuditEvent(
+                tenant_id=identity.context.tenant_id,
+                user_id=identity.user.id,
+                source="portal",
+                event_type="admin_login",
+                payload_redacted_json={},
+                result="success",
+            )
+        )
+        await session.commit()
     response = RedirectResponse("/pair", status_code=status.HTTP_303_SEE_OTHER)
     _cookie(
         response,
@@ -391,6 +403,17 @@ async def select_pair_tenant(
             await _tenant_page(session, identity, csrf_token, "Tenant non autorizzato"),
             status_code=status.HTTP_403_FORBIDDEN,
         )
+    session.add(
+        AuditEvent(
+            tenant_id=tenant_id,
+            user_id=identity.user.id,
+            source="portal",
+            event_type="tenant_selected",
+            payload_redacted_json={},
+            result="success",
+        )
+    )
+    await session.commit()
     return RedirectResponse("/pair", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -410,6 +433,17 @@ async def logout(
     )
     if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    if identity.context is not None:
+        session.add(
+            AuditEvent(
+                tenant_id=identity.context.tenant_id,
+                user_id=identity.user.id,
+                source="portal",
+                event_type="admin_logout",
+                payload_redacted_json={},
+                result="success",
+            )
+        )
     await PortalAuthenticationService(session).logout(identity)
     response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE, path="/")

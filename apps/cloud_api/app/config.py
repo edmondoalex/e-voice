@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     pairing_delivery_key: str = Fernet.generate_key().decode()
     pairing_portal_csrf_secret: str = "development-only-pairing-csrf-secret-change-me"
     pairing_portal_session_hours: int = Field(default=12, ge=1, le=168)
+    state_history_retention_days: int = Field(default=30, ge=1, le=3650)
+    operational_event_retention_days: int = Field(default=30, ge=1, le=3650)
+    admin_audit_retention_days: int = Field(default=365, ge=30, le=3650)
+    portal_login_attempt_retention_days: int = Field(default=30, ge=1, le=365)
+    state_history_excluded_domains: str = "sensor"
     alexa_oauth_client_id: str = "ekonex-alexa-development"
     alexa_oauth_client_secret: str = "change-me"
     alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"
@@ -48,6 +53,14 @@ class Settings(BaseSettings):
         ):
             raise ValueError("production pairing portal secrets must be explicitly configured")
         return self
+
+    @property
+    def excluded_history_domains(self) -> frozenset[str]:
+        return frozenset(
+            domain.strip().lower()
+            for domain in self.state_history_excluded_domains.split(",")
+            if domain.strip()
+        )
 
 
 @lru_cache

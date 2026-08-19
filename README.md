@@ -54,6 +54,9 @@ Example response:
 
 ## Development
 
+The authenticated multi-installation administration console and its retention operations
+are documented in [docs/ADMIN_CONSOLE.md](docs/ADMIN_CONSOLE.md).
+
 Requirements:
 
 - Python 3.13
