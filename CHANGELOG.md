@@ -18,6 +18,9 @@ Status: Ready for review
 - Added a production-shaped regression test proving that renaming
   `BusPro Luci Luce Ufficio Alex` to `Luce Ufficio Alex` automatically emits a
   new `inventory_full` with the new name.
+- Corrected the all-registry subscriptions: keyed Home Assistant helpers require
+  explicit IDs and treated `MATCH_ALL` as a literal key, so entity/device
+  metadata changes previously never reached the resync callback.
 - Bumped the custom integration version to `0.1.5`.
 
 ### Scope guard

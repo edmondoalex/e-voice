@@ -12,7 +12,6 @@ from aiohttp import ClientWebSocketResponse
 from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
     EVENT_STATE_CHANGED,
-    MATCH_ALL,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
@@ -21,10 +20,6 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import label_registry as lr
-from homeassistant.helpers.event import (
-    async_track_device_registry_updated_event,
-    async_track_entity_registry_updated_event,
-)
 
 from .evcp import MAX_MESSAGE_BYTES, envelope
 
@@ -114,13 +109,13 @@ class EntityInventorySynchronizer:
             self._hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed)
         )
         self._unsubscribers.append(
-            async_track_device_registry_updated_event(self._hass, MATCH_ALL, self._registry_changed)
+            self._hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._registry_changed)
         )
         self._unsubscribers.append(
             self._hass.bus.async_listen(lr.EVENT_LABEL_REGISTRY_UPDATED, self._registry_changed)
         )
         self._unsubscribers.append(
-            async_track_entity_registry_updated_event(self._hass, MATCH_ALL, self._registry_changed)
+            self._hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed)
         )
         await self._send_full()
 
