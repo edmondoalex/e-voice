@@ -143,7 +143,9 @@ async def test_login_rate_limit_cookie_and_logout(
     assert '<img class="login-logo" src="/static/icon.png"' in login_page.text
     assert 'alt="Ekonex Cloud Voice"' in login_page.text
     assert ">EKONEX VOICE<" not in login_page.text
-    assert "h1{font-family:system-ui,sans-serif}" in login_page.text
+    assert "font-family:system-ui,sans-serif" in login_page.text
+    assert "width:min(100%,440px);background:white;border-radius:18px" in login_page.text
+    assert "background:var(--brand);color:white" in login_page.text
     for _ in range(5):
         assert (await _login(client, password="wrong-password-123")).status_code == 401
     assert (await _login(client, password="wrong-password-123")).status_code == 429

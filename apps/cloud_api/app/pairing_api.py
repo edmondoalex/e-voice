@@ -246,9 +246,20 @@ def _login_page(*, csrf: str, message: str = "") -> str:
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Accedi · Ekonex Voice</title><style>
-.login-logo{{display:block;width:min(100%,280px);height:auto;aspect-ratio:1/1;
+:root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;
+min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(100%,440px);background:white;border-radius:18px;padding:28px;
+box-shadow:0 12px 36px #1232}}
+.login-logo{{display:block;width:min(100%,220px);height:auto;aspect-ratio:1/1;
 object-fit:contain;margin:0 auto;border-radius:12px;background:#050505}}
-h1{{font-family:system-ui,sans-serif}}
+h1{{font-size:1.7rem;margin:.75rem 0 .5rem}}
+label{{display:block;font-weight:650;margin:18px 0 7px}}
+input{{width:100%;font:inherit;padding:13px;border:1px solid #9aafa9;border-radius:9px}}
+button{{width:100%;margin-top:22px;padding:14px;border:0;border-radius:9px;
+background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
+p[role=alert]{{padding:12px;border-radius:9px;background:#fde8e7;color:#85221d}}
 </style></head><body><main>
 <img class="login-logo" src="/static/icon.png" width="64" height="64"
  alt="Ekonex Cloud Voice"><h1>Accedi</h1>{notice}
