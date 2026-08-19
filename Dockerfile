@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md LICENSE ./
 COPY apps ./apps
+COPY brand ./brand
 COPY migrations ./migrations
 COPY alembic.ini ./
 
@@ -18,4 +19,3 @@ USER ekonex
 EXPOSE 8000
 
 CMD ["uvicorn", "apps.cloud_api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

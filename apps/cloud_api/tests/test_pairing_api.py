@@ -139,6 +139,13 @@ async def test_login_rate_limit_cookie_and_logout(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     client = await _client(session)
+    login_page = await client.get("/login")
+    assert '<img class="login-logo" src="/static/icon.png"' in login_page.text
+    assert 'alt="Ekonex Cloud Voice"' in login_page.text
+    assert ">EKONEX VOICE<" not in login_page.text
+    assert "font-family:system-ui,sans-serif" in login_page.text
+    assert "width:min(100%,440px);background:white;border-radius:18px" in login_page.text
+    assert "background:var(--brand);color:white" in login_page.text
     for _ in range(5):
         assert (await _login(client, password="wrong-password-123")).status_code == 401
     assert (await _login(client, password="wrong-password-123")).status_code == 429
@@ -193,7 +200,7 @@ async def test_tenant_selection_only_allows_memberships(
         follow_redirects=False,
     )
     assert selected.status_code == 303
-    assert "Collega Home Assistant" in (await client.get("/pair")).text
+    assert "Collega a e-Control" in (await client.get("/pair")).text
     await client.aclose()
 
 
@@ -204,7 +211,13 @@ async def test_pair_page_render_and_submit_success_and_error(
     assert (await client.get("/pair", follow_redirects=False)).status_code == 303
     assert (await _login(client)).status_code == 303
     page = await client.get("/pair")
-    assert "Collega Home Assistant" in page.text and "XXXX-XXXX" in page.text
+    assert "Collega a e-Control" in page.text and "XXXX-XXXX" in page.text
+    assert '<img class="brand-logo" src="/static/icon.png"' in page.text
+    assert 'alt="Ekonex Cloud Voice"' in page.text
+    assert ">EKONEX VOICE<" not in page.text
+    logo = await client.get("/static/icon.png")
+    assert logo.status_code == 200
+    assert logo.headers["content-type"] == "image/png"
     failed = await client.post(
         "/pair",
         data={"csrf_token": _csrf(page), "code": "AAAA-AAAA", "installation_name": "Bad"},
