@@ -4,6 +4,25 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Home Assistant options reload compatibility
+
+Status: Ready for review
+
+### Scope
+
+- Removed the redundant ConfigEntry update listener that Home Assistant 2026.6
+  rejects when an integration uses `OptionsFlowWithReload`.
+- Kept native options-flow reload semantics so saved device, entity and label
+  selections are read by a fresh synchronizer and immediately produce a new
+  `inventory_full` snapshot.
+- Added a regression test that loads the integration, verifies it registers no
+  update listener, saves an entity selection and observes exactly one reload.
+- Bumped the custom integration version to `0.1.4`.
+
+### Scope guard
+
+- No pairing, cloud API, EVCP, Alexa or authentication changes.
+
 ## 2026-08-19 — Production entity-sync diagnostics
 
 Status: Ready for review

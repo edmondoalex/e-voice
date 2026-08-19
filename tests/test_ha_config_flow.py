@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
@@ -242,6 +242,44 @@ async def test_options_store_stable_entity_and_label_registry_ids(hass: HomeAssi
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_EXPOSED_ENTITY_REGISTRY_IDS] == [entity.id]
     assert entry.options[CONF_EXPOSURE_LABEL_ID] == label.label_id
+
+
+async def test_options_flow_reload_uses_no_incompatible_update_listener(
+    hass: HomeAssistant,
+) -> None:
+    """OptionsFlowWithReload exclusively owns the post-save entry reload."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=INSTALLATION_ID,
+        data={
+            CONF_CLOUD_URL: DEFAULT_CLOUD_URL,
+            CONF_INSTALLATION_ID: INSTALLATION_ID,
+            CONF_CONNECTOR_CREDENTIAL: CONNECTOR_SECRET,
+        },
+        options={CONF_EXPOSED_ENTITY_REGISTRY_IDS: []},
+    )
+    entry.add_to_hass(hass)
+    entity = er.async_get(hass).async_get_or_create("light", "test", "reload-light")
+    client = MagicMock()
+    client.async_authenticate = AsyncMock(return_value=INSTALLATION_ID)
+    connection = MagicMock()
+    connection.async_stop = AsyncMock()
+    with (
+        patch("custom_components.ekonex_voice.EkonexVoiceClient", return_value=client),
+        patch("custom_components.ekonex_voice.EkonexVoiceConnection", return_value=connection),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.update_listeners == []
+
+    with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as reload_entry:
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"entities": [entity.entity_id]}
+        )
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_EXPOSED_ENTITY_REGISTRY_IDS] == [entity.id]
+    reload_entry.assert_awaited_once_with(entry.entry_id)
 
 
 async def test_options_never_create_or_discover_label_by_name(hass: HomeAssistant) -> None:

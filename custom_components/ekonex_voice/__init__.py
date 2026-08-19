@@ -70,7 +70,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         inventory=inventory,
         command_executor=command_executor,
     )
-    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     connection.async_start()
     return True
 
@@ -79,8 +78,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry)
     """Unload deterministically without leaving tasks or sessions behind."""
     await entry.runtime_data.async_close()
     return True
-
-
-async def _async_reload_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) -> None:
-    """Reload after a supported entry update."""
-    await hass.config_entries.async_reload(entry.entry_id)
