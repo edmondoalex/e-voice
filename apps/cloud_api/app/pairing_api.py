@@ -245,7 +245,7 @@ def _login_page(*, csrf: str, message: str = "") -> str:
     notice = f'<p role="alert">{html.escape(message)}</p>' if message else ""
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Accedi · Ekonex Voice</title><style>
+<title>Accedi · Ekonex Cloud Voice</title><style>
 :root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5}}
 *{{box-sizing:border-box}}
 body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;
@@ -261,7 +261,7 @@ button{{width:100%;margin-top:22px;padding:14px;border:0;border-radius:9px;
 background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 p[role=alert]{{padding:12px;border-radius:9px;background:#fde8e7;color:#85221d}}
 </style></head><body><main>
-<img class="login-logo" src="/static/icon.png" width="64" height="64"
+<img class="login-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254"
  alt="Ekonex Cloud Voice"><h1>Accedi</h1>{notice}
 <form method="post" action="/login">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">
@@ -340,7 +340,7 @@ def _page(*, csrf: str, message: str = "", success: bool = False) -> str:
     return f"""<!doctype html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Collega a e-Control · Ekonex Voice</title><style>
+<title>Collega a e-Control · Ekonex Cloud Voice</title><style>
 :root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5}}
 *{{box-sizing:border-box}}
 body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;
@@ -358,10 +358,10 @@ button{{width:100%;margin-top:22px;padding:14px;border:0;border-radius:9px;
 background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 .notice{{padding:12px;border-radius:9px;margin:16px 0}}.success{{background:#dcf7e9}}
 .error{{background:#fde8e7;color:#85221d}}small{{display:block;margin-top:16px;color:#52655f}}
-</style></head><body><main><img class="brand-logo" src="/static/icon.png"
- width="64" height="64" alt="Ekonex Cloud Voice">
+</style></head><body><main><img class="brand-logo" src="/static/ekonex-cloud-voice.png"
+ width="1254" height="1254" alt="Ekonex Cloud Voice">
 <h1>Collega a e-Control</h1>
-<p>Inserisci il codice temporaneo mostrato in Home Assistant.</p>{notice}
+<p>Inserisci il codice temporaneo mostrato in e-Control.</p>{notice}
 <form method="post" action="/pair">
 <input type="hidden" name="csrf_token" value="{escaped_csrf}">
 <label for="code">Codice pairing</label>
@@ -388,8 +388,18 @@ async def _tenant_page(
     notice = f'<p role="alert">{html.escape(message)}</p>' if message else ""
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scegli installazione · Ekonex Voice</title></head><body><main>
-<strong>EKONEX VOICE</strong><h1>Scegli cliente/tenant</h1>{notice}
+<title>Scegli installazione · Ekonex Cloud Voice</title><style>
+:root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5}}*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;
+min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(100%,440px);background:white;border-radius:18px;padding:28px;
+box-shadow:0 12px 36px #1232}}img{{display:block;width:min(100%,220px);height:auto;
+aspect-ratio:1/1;object-fit:contain;margin:0 auto;border-radius:12px;background:#050505}}
+label{{display:block;font-weight:650;margin:18px 0 7px}}select,button{{width:100%;font:inherit;
+padding:13px;border:1px solid #9aafa9;border-radius:9px}}button{{margin-top:22px;border:0;
+background:var(--brand);color:white;font-weight:700}}</style></head><body><main>
+<img src="/static/ekonex-cloud-voice.png" width="1254" height="1254"
+ alt="Ekonex Cloud Voice"><h1>Scegli cliente/tenant</h1>{notice}
 <form method="post" action="/pair/select-tenant">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">
 <label for="tenant_id">Tenant autorizzato</label><select id="tenant_id" name="tenant_id">
@@ -522,5 +532,5 @@ async def pair_submit(
     except HTTPException as error:
         return HTMLResponse(_page(csrf=csrf_token, message=str(error.detail)), error.status_code)
     return HTMLResponse(
-        _page(csrf=_csrf(context), message="Home Assistant collegato correttamente.", success=True)
+        _page(csrf=_csrf(context), message="e-Control collegato correttamente.", success=True)
     )

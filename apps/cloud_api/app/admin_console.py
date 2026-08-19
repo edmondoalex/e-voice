@@ -72,18 +72,18 @@ def _e(value: object | None) -> str:
 def _layout(title: str, body: str, context: TenantContext, csrf: str) -> str:
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_e(title)} · Ekonex Voice</title><style>
+<title>{_e(title)} · Ekonex Cloud Voice</title><style>
 :root{{--ink:#17202a;--muted:#667085;--blue:#1769e0;--bg:#f4f6f9;--card:#fff;--bad:#b42318;--ok:#067647}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px system-ui,sans-serif}}
 aside{{position:fixed;inset:0 auto 0 0;width:230px;background:#101828;color:white;padding:24px}}
 aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 0}}main{{margin-left:230px;padding:28px;max-width:1400px}}
-.brand{{font-size:20px;font-weight:750;margin-bottom:25px}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}
+.brand-logo{{display:block;width:min(100%,160px);height:auto;aspect-ratio:1/1;object-fit:contain;margin:0 auto 20px;border-radius:10px;background:#050505}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
 .ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}form.inline{{display:inline}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
-</style></head><body><aside><div class="brand">Ekonex Voice</div>
-<a href="/dashboard">Dashboard</a><a href="/activity">Attività</a><a href="/system">Sistema</a><a href="/pair">Collega Home Assistant</a>
+</style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
+<a href="/dashboard">Dashboard</a><a href="/installations">Impianti</a><a href="/activity">Attività</a><a href="/system">Sistema</a><a href="/pair">Collega a e-Control</a>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
 </aside><main><p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main></body></html>"""
 
@@ -141,7 +141,7 @@ async def dashboard(
         for item in items
     )
     csrf = _csrf(context)
-    body = f'<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>Home Assistant</th><th>Connector</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna installazione</td></tr>"}</tbody></table>'
+    body = f'<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>e-Control</th><th>Connector</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna installazione</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout("Dashboard", body, context, csrf))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
