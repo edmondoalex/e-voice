@@ -319,8 +319,9 @@ body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(100%,440px);background:white;border-radius:18px;padding:28px;
 box-shadow:0 12px 36px #1232}}
-.brand{{color:var(--brand);font-weight:800;letter-spacing:.04em}}
-h1{{font-size:1.7rem;margin:.5rem 0}}p{{line-height:1.5}}
+.brand-logo{{display:block;width:min(100%,280px);height:auto;aspect-ratio:1/1;
+object-fit:contain;margin:0 auto;border-radius:12px;background:#050505}}
+h1{{font-size:1.7rem;margin:.75rem 0 .5rem}}p{{line-height:1.5}}
 label{{display:block;font-weight:650;margin:18px 0 7px}}
 input{{width:100%;font:inherit;padding:13px;border:1px solid #9aafa9;border-radius:9px}}
 input[name=code]{{text-transform:uppercase;letter-spacing:.12em;
@@ -329,7 +330,8 @@ button{{width:100%;margin-top:22px;padding:14px;border:0;border-radius:9px;
 background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 .notice{{padding:12px;border-radius:9px;margin:16px 0}}.success{{background:#dcf7e9}}
 .error{{background:#fde8e7;color:#85221d}}small{{display:block;margin-top:16px;color:#52655f}}
-</style></head><body><main><div class="brand">EKONEX VOICE</div>
+</style></head><body><main><img class="brand-logo" src="/static/icon.png"
+ width="64" height="64" alt="Ekonex Cloud Voice">
 <h1>Collega Home Assistant</h1>
 <p>Inserisci il codice temporaneo mostrato in Home Assistant.</p>{notice}
 <form method="post" action="/pair">
