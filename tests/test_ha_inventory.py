@@ -168,6 +168,7 @@ async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssist
     entry = registered_light(hass)
     registry = er.async_get(hass)
     registry.async_update_entity(entry.entity_id, name="User configured name")
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": "User configured name"})
     renamed = registry.async_get(entry.entity_id)
     item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(renamed)
     assert item is not None
