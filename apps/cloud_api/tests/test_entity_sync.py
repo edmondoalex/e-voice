@@ -1,5 +1,6 @@
 """M5 cloud persistence and reconciliation tests."""
 
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -9,7 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.domain.models import Entity, Installation
 from apps.cloud_api.app.entity_sync import EntitySyncService, StaleSyncError
-from apps.cloud_api.app.evcp import EntityItem, InventoryAccumulator, InventoryPayload
+from apps.cloud_api.app.evcp import (
+    EntityItem,
+    InventoryAccumulator,
+    InventoryFull,
+    InventoryPayload,
+    StateUpdate,
+    _apply_entity_sync,
+    inbound_adapter,
+)
 
 
 def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, object]:
@@ -183,3 +192,98 @@ async def test_multibatch_full_inventory_is_applied_atomically_after_final_batch
     assert len(after_complete) == 2
     assert all(entity.deleted_at is None for entity in after_complete)
     assert installation.sync_revision == 2
+
+
+async def test_evcp_inventory_contract_reaches_installation_scoped_persistence(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    session_id = uuid4()
+    message = inbound_adapter.validate_json(
+        json.dumps(
+            {
+                "version": 1,
+                "type": "inventory_full",
+                "id": uuid4(),
+                "timestamp": datetime.now(UTC),
+                "payload": {
+                    "session_id": session_id,
+                    "revision": 1,
+                    "batch_index": 0,
+                    "batch_count": 1,
+                    "entities": [item()],
+                },
+            },
+            default=str,
+        )
+    )
+    assert isinstance(message, InventoryFull)
+
+    await _apply_entity_sync(session, installation, installation.id, message)
+
+    persisted = (
+        await session.scalars(
+            select(Entity).where(
+                Entity.installation_id == installation.id,
+                Entity.ha_registry_id == "registry-light-1",
+            )
+        )
+    ).one()
+    assert persisted.ha_entity_id == "light.kitchen"
+    assert installation.sync_revision == 1
+
+    state_message = inbound_adapter.validate_json(
+        json.dumps(
+            {
+                "version": 1,
+                "type": "state_update",
+                "id": uuid4(),
+                "timestamp": datetime.now(UTC),
+                "payload": {
+                    "session_id": session_id,
+                    "revision": 2,
+                    "batch_index": 0,
+                    "batch_count": 1,
+                    "entities": [{**item(state="off"), "available": False}],
+                },
+            },
+            default=str,
+        )
+    )
+    assert isinstance(state_message, StateUpdate)
+    await _apply_entity_sync(session, installation, installation.id, state_message)
+    assert persisted.state == "off"
+    assert persisted.available is False
+
+
+async def test_evcp_zero_inventory_tombstones_only_own_installation(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    first = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    second = await session.get(Installation, seeded_domain.installation_b_id)  # type: ignore[attr-defined]
+    assert first is not None and second is not None
+    await EntitySyncService(session, first).apply_full(1, [item()])
+    await EntitySyncService(session, second).apply_full(1, [item()])
+    message = InventoryFull.model_validate(
+        {
+            "version": 1,
+            "type": "inventory_full",
+            "id": uuid4(),
+            "timestamp": datetime.now(UTC),
+            "payload": {
+                "session_id": uuid4(),
+                "revision": 2,
+                "batch_index": 0,
+                "batch_count": 1,
+                "entities": [],
+            },
+        }
+    )
+    await _apply_entity_sync(session, first, first.id, message)
+    entities = (
+        await session.scalars(select(Entity).where(Entity.ha_registry_id == "registry-light-1"))
+    ).all()
+    by_installation = {entity.installation_id: entity for entity in entities}
+    assert by_installation[first.id].deleted_at is not None
+    assert by_installation[second.id].deleted_at is None

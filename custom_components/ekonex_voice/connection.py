@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
-from aiohttp import ClientWebSocketResponse, WSMsgType
+from aiohttp import ClientError, ClientWebSocketResponse, WSMsgType
 from homeassistant.core import HomeAssistant
 
 from .client import EkonexVoiceAuthError, EkonexVoiceCannotConnect, EkonexVoiceProtocolError
@@ -22,6 +23,7 @@ from .models import ConnectionState
 type Sleep = Callable[[float], Coroutine[Any, Any, None]]
 type RandomValue = Callable[[], float]
 type Connect = Callable[[], Coroutine[Any, Any, ClientWebSocketResponse]]
+_LOGGER = logging.getLogger(__name__)
 
 
 class EkonexVoiceConnection:
@@ -110,6 +112,18 @@ class EkonexVoiceConnection:
                 self.next_retry_delay = delay
                 await self._sleep(delay)
                 backoff_index = min(backoff_index + 1, len(BACKOFF_SCHEDULE) - 1)
+            except (ClientError, OSError, TimeoutError):
+                self.state, self.last_error_code = ConnectionState.BACKING_OFF, "transport_error"
+                self.retry_count += 1
+                delay = self._random_value() * BACKOFF_SCHEDULE[backoff_index]
+                self.next_retry_delay = delay
+                _LOGGER.warning("Connector transport failed; retrying in %.1f seconds", delay)
+                await self._sleep(delay)
+                backoff_index = min(backoff_index + 1, len(BACKOFF_SCHEDULE) - 1)
+            except ValueError:
+                self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, "inventory_error"
+                _LOGGER.exception("Entity inventory serialization failed")
+                return
             finally:
                 if self._inventory is not None:
                     await self._inventory.async_stop()

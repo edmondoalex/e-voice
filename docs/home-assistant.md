@@ -19,6 +19,37 @@ No credential or unrestricted attribute may appear in logs or diagnostics. To
 disable label-based exposure, clear the selected label in the options flow; the
 label itself is not deleted from Home Assistant.
 
+## Inventory synchronization diagnostics
+
+An empty `entities` table is expected immediately after pairing: exposure is
+strictly opt-in. Open **Settings → Devices & services → Ekonex Voice →
+Configure**, then select devices and/or individual entities. Alternatively,
+manually create a Home Assistant label, select its stable label in the Ekonex
+Voice options, and assign that label to authorized entities or devices. Saving
+options reloads the entry and sends an immediate full snapshot.
+
+Safe Home Assistant logs record the cloud revision and entity/batch counts for
+each full snapshot; they never record entity payloads, credentials or session
+identifiers. Integration diagnostics expose the selected device/entity counts,
+whether a label is configured, last full revision/count, last state count and a
+bounded send error code. Cloud logs record only EVCP message type, revision and
+counts, followed by a persistence confirmation. Therefore:
+
+- `entities=0` with a logged `inventory_full ... entities=0` means no entity is
+  currently authorized, not a transport failure;
+- a WebSocket connection without the snapshot log means the HA inventory start
+  failed before or during send;
+- a cloud “batch received” without “synchronization applied” identifies an
+  incomplete multi-batch snapshot;
+- `STALE_REVISION` means reconnect negotiation and cloud revision diverged; the
+  Connector closes and performs a full resync from the revision in `hello_ack`.
+
+On reconnect the Connector always sends `inventory_full`, including an explicit
+empty snapshot. Registry/label changes trigger another full reconciliation;
+state changes are coalesced into `state_update`. Removing final authorization
+tombstones the cloud entity. An unavailable HA state remains authorized but is
+persisted with `available=false` and no current state value.
+
 Status: M5 entity synchronization, ready for review
 
 ## M6 safe command mappers

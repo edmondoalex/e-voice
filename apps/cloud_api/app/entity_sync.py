@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .domain.models import Entity, Installation
+
+logger = logging.getLogger(__name__)
 
 
 class StaleSyncError(Exception):
@@ -29,13 +32,21 @@ class EntitySyncService:
             select(Entity).where(Entity.installation_id == self._installation.id)
         )
         now = datetime.now(UTC)
+        tombstoned = 0
         for entity in existing:
             if entity.ha_registry_id not in seen and entity.deleted_at is None:
                 entity.deleted_at = now
                 entity.available = False
+                tombstoned += 1
         self._installation.sync_revision = revision
         self._installation.inventory_synced_at = now
         await self._session.commit()
+        logger.debug(
+            "Full entity inventory committed: revision=%d active=%d tombstoned=%d",
+            revision,
+            len(seen),
+            tombstoned,
+        )
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
