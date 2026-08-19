@@ -140,9 +140,10 @@ async def test_login_rate_limit_cookie_and_logout(
 ) -> None:
     client = await _client(session)
     login_page = await client.get("/login")
-    assert '<img class="login-logo" src="/static/icon.png"' in login_page.text
+    assert '<img class="login-logo" src="/static/ekonex-cloud-voice.png"' in login_page.text
     assert 'alt="Ekonex Cloud Voice"' in login_page.text
     assert ">EKONEX VOICE<" not in login_page.text
+    assert "Home Assistant" not in login_page.text
     assert "font-family:system-ui,sans-serif" in login_page.text
     assert "width:min(100%,440px);background:white;border-radius:18px" in login_page.text
     assert "background:var(--brand);color:white" in login_page.text
@@ -185,6 +186,9 @@ async def test_tenant_selection_only_allows_memberships(
     assert (await _login(client)).status_code == 303
     page = await client.get("/pair")
     assert "Scegli cliente/tenant" in page.text
+    assert 'src="/static/ekonex-cloud-voice.png"' in page.text
+    assert 'alt="Ekonex Cloud Voice"' in page.text
+    assert "Home Assistant" not in page.text
     denied = await client.post(
         "/pair/select-tenant",
         data={"csrf_token": _csrf(page), "tenant_id": str(uuid4())},
@@ -212,10 +216,12 @@ async def test_pair_page_render_and_submit_success_and_error(
     assert (await _login(client)).status_code == 303
     page = await client.get("/pair")
     assert "Collega a e-Control" in page.text and "XXXX-XXXX" in page.text
-    assert '<img class="brand-logo" src="/static/icon.png"' in page.text
+    assert '<img class="brand-logo" src="/static/ekonex-cloud-voice.png"' in page.text
     assert 'alt="Ekonex Cloud Voice"' in page.text
     assert ">EKONEX VOICE<" not in page.text
-    logo = await client.get("/static/icon.png")
+    assert "mostrato in e-Control" in page.text
+    assert "Home Assistant" not in page.text
+    logo = await client.get("/static/ekonex-cloud-voice.png")
     assert logo.status_code == 200
     assert logo.headers["content-type"] == "image/png"
     failed = await client.post(
@@ -235,7 +241,7 @@ async def test_pair_page_render_and_submit_success_and_error(
         },
     )
     assert succeeded.status_code == 200
-    assert "Home Assistant collegato correttamente" in succeeded.text
+    assert "e-Control collegato correttamente" in succeeded.text
     assert "evc_" not in succeeded.text
     assert started["polling_secret"] not in succeeded.text
     await client.aclose()

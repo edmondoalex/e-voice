@@ -4,6 +4,23 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Portal branding pass
+
+Status: Ready for review
+
+### Scope
+
+- Replaced the 64×64 portal image with the supplied high-resolution Ekonex Cloud Voice
+  asset while preserving the small icon for technical/HACS use.
+- Unified login, pairing, tenant selection and administration console branding.
+- Updated presentation-only Home Assistant wording to e-Control in portal HTML and added
+  the compact console logo/navigation treatment.
+
+### Scope guard
+
+- No authentication, pairing behavior, API, EVCP, database, Connector or internal naming
+  changes.
+
 ## 2026-08-19 — Multi-installation administration console
 
 Status: Ready for review

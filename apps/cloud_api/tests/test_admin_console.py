@@ -49,6 +49,10 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     assert page.status_code == 200
     assert "Home A" in page.text
     assert "Home B" not in page.text
+    assert '<img class="brand-logo" src="/static/ekonex-cloud-voice.png"' in page.text
+    assert 'alt="Ekonex Cloud Voice"' in page.text
+    assert ">Impianti<" in page.text
+    assert "Home Assistant" not in page.text
     assert (
         await client.get(f"/installations/{seeded_domain.installation_b_id}")
     ).status_code == 404
@@ -71,6 +75,7 @@ async def test_command_is_csrf_and_tenant_scoped_and_audited(
     client = await _client(session)
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Home Assistant" not in page.text
     csrf = _csrf(page)
     payload = {"csrf_token": csrf, "entity_id": str(entity.id), "operation": "power_on"}
     assert (
@@ -142,9 +147,11 @@ async def test_activity_and_system_views_remain_tenant_scoped(
     await _login(client, "owner@example.test", "owner-password-123")
     activity = await client.get("/activity", params={"event_type": "admin_login"})
     assert activity.status_code == 200
+    assert "Home Assistant" not in activity.text
     assert "admin_login" in activity.text
     assert "private_foreign_event" not in activity.text
     system = await client.get("/system")
     assert system.status_code == 200
+    assert "Home Assistant" not in system.text
     assert "Campioni storico" in system.text
     await client.aclose()
