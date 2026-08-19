@@ -1,5 +1,6 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
+import asyncio
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -173,6 +174,43 @@ async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssist
     assert item is not None
     assert item["registry_id"] == entry.id
     assert item["friendly_name"] == "User configured name"
+
+
+async def test_user_rename_replaces_original_name_in_next_inventory_full(
+    hass: HomeAssistant,
+) -> None:
+    original_name = "BusPro Luci Luce Ufficio Alex"
+    user_name = "Luce Ufficio Alex"
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "light",
+        "test",
+        "buspro-office-light",
+        suggested_object_id="buspro_gateway_192_168_3_27_6000_luce_ufficio_alex",
+        original_name=original_name,
+    )
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": original_name})
+    websocket = AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
+    websocket.send_json.reset_mock()
+
+    registry.async_update_entity(entry.entity_id, name=user_name)
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": user_name})
+    await asyncio.sleep(0.3)
+    await hass.async_block_till_done()
+
+    full_messages = [
+        call.args[0]
+        for call in websocket.send_json.await_args_list
+        if call.args[0]["type"] == "inventory_full"
+    ]
+    assert full_messages
+    renamed = full_messages[-1]["payload"]["entities"][0]
+    assert renamed["friendly_name"] == user_name
+    assert renamed["entity_id"] == entry.entity_id
+    assert renamed["registry_id"] == entry.id
+    await sync.async_stop()
 
 
 async def test_removing_final_ui_and_label_authorization_emits_empty_reconciliation(

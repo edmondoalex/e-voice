@@ -9,7 +9,13 @@ from collections.abc import Callable
 from typing import Any
 
 from aiohttp import ClientWebSocketResponse
-from homeassistant.const import EVENT_STATE_CHANGED, MATCH_ALL, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import (
+    ATTR_FRIENDLY_NAME,
+    EVENT_STATE_CHANGED,
+    MATCH_ALL,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -244,7 +250,7 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
         "registry_id": entry.id,
         "entity_id": entry.entity_id,
         "domain": entry.domain,
-        "friendly_name": _bound(entry.name or state.name),
+        "friendly_name": _bound(_friendly_name(entry, state)),
         "area_id": area_id,
         "area_name": _bound(area.name if area else None),
         "device_id": entry.device_id,
@@ -257,6 +263,18 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
         "last_changed_at": state.last_changed.isoformat().replace("+00:00", "Z"),
         "removed": False,
     }
+
+
+def _friendly_name(entry: er.RegistryEntry, state: State) -> object | None:
+    """Resolve the current HA-visible name while preserving user overrides."""
+    name_by_user: object | None = getattr(entry, "name_by_user", None)
+    if name_by_user:
+        return name_by_user
+    if entry.name and entry.name != entry.original_name:
+        return entry.name
+    return (
+        state.attributes.get(ATTR_FRIENDLY_NAME) or entry.name or entry.original_name or state.name
+    )
 
 
 def _attributes(domain: str, state: State) -> dict[str, object]:
