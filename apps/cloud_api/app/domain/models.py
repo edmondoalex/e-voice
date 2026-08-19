@@ -122,6 +122,32 @@ class TenantMembership(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
+class PortalSession(Base):
+    __tablename__ = "portal_sessions"
+    __table_args__ = (Index("ix_portal_sessions_expires", "expires_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    selected_tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PortalLoginAttempt(Base):
+    __tablename__ = "portal_login_attempts"
+    __table_args__ = (Index("ix_portal_login_attempts_email_time", "email_hash", "attempted_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    email_hash: Mapped[str] = mapped_column(String(64))
+    successful: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Installation(TimestampMixin, Base):
     __tablename__ = "installations"
     __table_args__ = (Index("ix_installations_tenant_id", "tenant_id"),)

@@ -11,15 +11,16 @@ from typing import Annotated
 from urllib.parse import parse_qs
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import AccessDeniedError, AuthenticationService, TenantContext
+from .auth import AccessDeniedError, TenantContext
 from .config import get_settings
 from .database import get_database_session
 from .domain.enums import PairingStatus
+from .domain.models import Tenant
 from .pairing import (
     PairingAccessDeniedError,
     PairingExpiredError,
@@ -27,11 +28,14 @@ from .pairing import (
     PairingService,
     PairingUnavailableError,
 )
+from .portal_auth import LoginRateLimitedError, PortalAuthenticationService, PortalIdentity
 from .services import OperationNotAllowedError
 
 router = APIRouter(tags=["connector-pairing"])
 session_dependency = Depends(get_database_session)
 CSRF_COOKIE = "ekonex_pair_csrf"
+LOGIN_CSRF_COOKIE = "ekonex_login_csrf"
+SESSION_COOKIE = "ekonex_portal_session"
 MAX_FORM_BYTES = 4096
 
 
@@ -72,24 +76,24 @@ def _service(session: AsyncSession) -> PairingService:
     )
 
 
-async def _tenant_context(
+async def _identity(
     session: Annotated[AsyncSession, session_dependency],
-    user_id: Annotated[UUID | None, Header(alias="X-Ekonex-User-ID")] = None,
-    tenant_id: Annotated[UUID | None, Header(alias="X-Ekonex-Tenant-ID")] = None,
-    ingress_secret: Annotated[str | None, Header(alias="X-Ekonex-Ingress-Secret")] = None,
+    portal_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+) -> PortalIdentity | None:
+    return await PortalAuthenticationService(session).resolve(portal_token)
+
+
+identity_dependency = Depends(_identity)
+
+
+async def _tenant_context(
+    identity: Annotated[PortalIdentity | None, identity_dependency],
 ) -> TenantContext:
-    """Resolve identity headers set exclusively by the trusted production ingress."""
-    expected_secret = get_settings().pairing_portal_ingress_secret
-    if ingress_secret is None or not hmac.compare_digest(ingress_secret, expected_secret):
+    if identity is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Autenticazione richiesta")
-    if user_id is None or tenant_id is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Autenticazione richiesta")
-    try:
-        return await AuthenticationService(session).tenant_context(
-            user_id=user_id, tenant_id=tenant_id
-        )
-    except AccessDeniedError as error:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Accesso non consentito") from error
+    if identity.context is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seleziona un tenant")
+    return identity.context
 
 
 context_dependency = Depends(_tenant_context)
@@ -189,6 +193,116 @@ def _valid_csrf(token: str, cookie: str | None, context: TenantContext) -> bool:
     return hmac.compare_digest(token, _csrf(context, timestamp, nonce)) and bool(signature)
 
 
+def _login_csrf(timestamp: int | None = None, nonce: str | None = None) -> str:
+    issued = timestamp or int(time.time())
+    random_value = nonce or secrets.token_urlsafe(16)
+    value = f"login:{issued}:{random_value}"
+    signature = hmac.new(
+        get_settings().pairing_portal_csrf_secret.encode(), value.encode(), hashlib.sha256
+    ).hexdigest()
+    return f"{value}:{signature}"
+
+
+def _valid_login_csrf(token: str, cookie: str | None) -> bool:
+    if cookie is None or not hmac.compare_digest(token, cookie):
+        return False
+    try:
+        marker, issued, nonce, signature = token.split(":", 3)
+        timestamp = int(issued)
+    except (ValueError, TypeError):
+        return False
+    if marker != "login" or not nonce or not signature:
+        return False
+    if timestamp > int(time.time()) + 60 or int(time.time()) - timestamp > 1800:
+        return False
+    return hmac.compare_digest(token, _login_csrf(timestamp, nonce))
+
+
+async def _form(request: Request) -> dict[str, str]:
+    raw = await request.body()
+    if len(raw) > MAX_FORM_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+    try:
+        values = parse_qs(raw.decode(), strict_parsing=True)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Dati non validi") from error
+    return {key: items[0] for key, items in values.items() if items}
+
+
+def _cookie(response: Response, name: str, value: str, *, max_age: int) -> None:
+    response.set_cookie(
+        name,
+        value,
+        httponly=True,
+        secure=get_settings().environment == "production",
+        samesite="strict",
+        max_age=max_age,
+        path="/",
+    )
+
+
+def _login_page(*, csrf: str, message: str = "") -> str:
+    notice = f'<p role="alert">{html.escape(message)}</p>' if message else ""
+    return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Accedi · Ekonex Voice</title></head><body><main>
+<strong>EKONEX VOICE</strong><h1>Accedi</h1>{notice}
+<form method="post" action="/login">
+<input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">
+<label for="email">Email</label><input id="email" name="email" type="email"
+ maxlength="320" required autocomplete="username">
+<label for="password">Password</label><input id="password" name="password" type="password"
+ minlength="12" maxlength="1024" required autocomplete="current-password">
+<button type="submit">Accedi</button></form></main></body></html>"""
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(
+    identity: Annotated[PortalIdentity | None, identity_dependency],
+) -> Response:
+    if identity is not None:
+        return RedirectResponse("/pair", status_code=status.HTTP_303_SEE_OTHER)
+    token = _login_csrf()
+    response = HTMLResponse(_login_page(csrf=token))
+    _cookie(response, LOGIN_CSRF_COOKIE, token, max_age=1800)
+    return response
+
+
+@router.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    session: Annotated[AsyncSession, session_dependency],
+) -> Response:
+    values = await _form(request)
+    csrf_token = values.get("csrf_token", "")
+    if not _valid_login_csrf(csrf_token, request.cookies.get(LOGIN_CSRF_COOKIE)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    try:
+        result = await PortalAuthenticationService(session).login(
+            email=values.get("email", ""), password=values.get("password", "")
+        )
+    except LoginRateLimitedError:
+        return HTMLResponse(
+            _login_page(csrf=csrf_token, message="Troppi tentativi. Riprova più tardi."),
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    if result is None:
+        return HTMLResponse(
+            _login_page(csrf=csrf_token, message="Credenziali non valide"),
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    token, _ = result
+    response = RedirectResponse("/pair", status_code=status.HTTP_303_SEE_OTHER)
+    _cookie(
+        response,
+        SESSION_COOKIE,
+        token,
+        max_age=get_settings().pairing_portal_session_hours * 3600,
+    )
+    response.delete_cookie(LOGIN_CSRF_COOKIE, path="/")
+    return response
+
+
 def _page(*, csrf: str, message: str = "", success: bool = False) -> str:
     notice = ""
     if message:
@@ -227,13 +341,99 @@ background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 <input id="installation_name" name="installation_name" maxlength="200"
  placeholder="Casa Rossi" required autocomplete="organization">
 <button type="submit">Collega</button></form>
-<small>Il codice è monouso e scade automaticamente.</small></main></body></html>"""
+<small>Il codice è monouso e scade automaticamente.</small>
+<form method="post" action="/logout">
+<input type="hidden" name="csrf_token" value="{escaped_csrf}">
+<button type="submit">Esci</button></form></main></body></html>"""
+
+
+async def _tenant_page(
+    session: AsyncSession, identity: PortalIdentity, csrf: str, message: str = ""
+) -> str:
+    options: list[str] = []
+    for membership in identity.memberships:
+        tenant = await session.get(Tenant, membership.tenant_id)
+        if tenant is not None:
+            options.append(f'<option value="{tenant.id}">{html.escape(tenant.name)}</option>')
+    notice = f'<p role="alert">{html.escape(message)}</p>' if message else ""
+    return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scegli installazione · Ekonex Voice</title></head><body><main>
+<strong>EKONEX VOICE</strong><h1>Scegli cliente/tenant</h1>{notice}
+<form method="post" action="/pair/select-tenant">
+<input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">
+<label for="tenant_id">Tenant autorizzato</label><select id="tenant_id" name="tenant_id">
+{"".join(options)}</select><button type="submit">Continua</button></form></main></body></html>"""
+
+
+@router.post("/pair/select-tenant")
+async def select_pair_tenant(
+    request: Request,
+    identity: Annotated[PortalIdentity | None, identity_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> Response:
+    if identity is None:
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    values = await _form(request)
+    current_context = TenantContext(
+        user_id=identity.user.id,
+        tenant_id=identity.session.selected_tenant_id or UUID(int=0),
+        role=identity.memberships[0].role,
+    )
+    csrf_token = values.get("csrf_token", "")
+    if not _valid_csrf(csrf_token, request.cookies.get(CSRF_COOKIE), current_context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    try:
+        tenant_id = UUID(values.get("tenant_id", ""))
+        await PortalAuthenticationService(session).select_tenant(identity, tenant_id)
+    except (ValueError, AccessDeniedError):
+        return HTMLResponse(
+            await _tenant_page(session, identity, csrf_token, "Tenant non autorizzato"),
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    return RedirectResponse("/pair", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    identity: Annotated[PortalIdentity | None, identity_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> Response:
+    if identity is None:
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    values = await _form(request)
+    context = identity.context or TenantContext(
+        identity.user.id,
+        identity.session.selected_tenant_id or UUID(int=0),
+        identity.memberships[0].role,
+    )
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    await PortalAuthenticationService(session).logout(identity)
+    response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(CSRF_COOKIE, path="/")
+    return response
 
 
 @router.get("/pair", response_class=HTMLResponse)
-async def pair_page(context: Annotated[TenantContext, context_dependency]) -> HTMLResponse:
+async def pair_page(
+    identity: Annotated[PortalIdentity | None, identity_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> Response:
+    if identity is None:
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    context = identity.context or TenantContext(
+        identity.user.id, UUID(int=0), identity.memberships[0].role
+    )
     token = _csrf(context)
-    response = HTMLResponse(_page(csrf=token))
+    content = (
+        _page(csrf=token)
+        if identity.context is not None
+        else await _tenant_page(session, identity, token)
+    )
+    response = HTMLResponse(content)
     response.set_cookie(
         CSRF_COOKIE,
         token,
@@ -241,7 +441,7 @@ async def pair_page(context: Annotated[TenantContext, context_dependency]) -> HT
         secure=get_settings().environment == "production",
         samesite="strict",
         max_age=1800,
-        path="/pair",
+        path="/",
     )
     return response
 

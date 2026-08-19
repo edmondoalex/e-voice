@@ -28,35 +28,49 @@ human pairing code is never reused or transformed into the credential.
 
 ## Pairing portal
 
-The installer opens `https://voice.e-control.tech/pair`, signs in through the
-Ekonex authentication ingress, enters the `XXXX-XXXX` code and chooses an
-installation name. The same tenant-scoped claim is also available as
+The installer opens `https://voice.e-control.tech/pair`, signs in with an Ekonex
+portal account, enters the `XXXX-XXXX` code and chooses an installation name.
+The same tenant-scoped claim is also available to the authenticated portal as
 `POST /connector/v1/pairing/claims`. Neither response contains the pairing
 session, polling secret, Connector credential or any other secret. Home
 Assistant remains the only recipient of the Connector credential through its
 existing authenticated polling request, and receives it once.
 
-The repository does not yet contain a customer-facing login/session UI. Until
-that is delivered, `/pair` and the claim API accept identity only from an
-authenticating reverse proxy that:
+Passwords are Argon2 hashes. Successful login creates a random opaque session;
+only its SHA-256 digest is stored in PostgreSQL. The browser receives the token
+in an HttpOnly, Secure (production), SameSite Strict cookie. Sessions expire,
+can be revoked with `POST /logout`, and never travel in URLs. Failed logins are
+rate-limited per normalized email without persisting the email itself.
 
-- authenticates the Ekonex user;
-- removes every caller-supplied `X-Ekonex-*` header;
-- injects `X-Ekonex-User-ID`, the selected `X-Ekonex-Tenant-ID`, and the shared
-  `X-Ekonex-Ingress-Secret` over a private upstream connection;
-- never logs the ingress secret.
-
-The backend verifies the shared ingress secret and resolves the user/tenant with
-the existing `AuthenticationService`; membership and role remain authoritative.
-Direct public access to the application upstream must be blocked in production.
-This boundary is intentionally not a replacement login system. A future portal
-login should replace trusted identity headers with an authenticated server-side
-session while continuing to produce the same `TenantContext`.
+Users with one active membership enter that tenant automatically. Users with
+several memberships must select one; the submitted identifier is accepted only
+after the existing `AuthenticationService` verifies membership and status.
+Tenant roles remain authoritative and read-only support accounts cannot claim.
 
 Browser submissions use a signed, tenant/user-bound, 30-minute CSRF token in a
-SameSite Strict HttpOnly cookie. Production must set independent high-entropy
-values for `EKONEX_PAIRING_PORTAL_CSRF_SECRET` and
-`EKONEX_PAIRING_PORTAL_INGRESS_SECRET` in the deployment secret manager.
+SameSite Strict HttpOnly cookie. Production must set a high-entropy value for
+`EKONEX_PAIRING_PORTAL_CSRF_SECRET` in the deployment secret manager.
+
+## First account bootstrap
+
+Apply migrations, then run this command once from an interactive shell in the
+API runtime (replace names and email with production values):
+
+```console
+alembic upgrade head
+python -m apps.cloud_api.app.bootstrap_portal_user \
+  --email installer@example.com \
+  --dealer-name "Ekonex" --dealer-slug ekonex \
+  --tenant-name "Cliente iniziale" --tenant-slug cliente-iniziale \
+  --role owner
+```
+
+The command prompts twice for a password of at least 12 characters, never takes
+it on the command line, refuses to run when any user already exists, and creates
+the initial dealer, tenant and verified membership atomically. There is no
+default production credential. Subsequent user administration is not yet a web
+feature and must use an audited operational process until a dedicated admin UI
+is implemented.
 
 ## Abuse prevention
 

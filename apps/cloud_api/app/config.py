@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     pairing_code_pepper: str = "development-only-pairing-pepper-32-bytes-minimum"
     pairing_delivery_key: str = Fernet.generate_key().decode()
     pairing_portal_csrf_secret: str = "development-only-pairing-csrf-secret-change-me"
-    pairing_portal_ingress_secret: str = "development-only-trusted-ingress-secret"
+    pairing_portal_session_hours: int = Field(default=12, ge=1, le=168)
     alexa_oauth_client_id: str = "ekonex-alexa-development"
     alexa_oauth_client_secret: str = "change-me"
     alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"
@@ -44,9 +44,7 @@ class Settings(BaseSettings):
     def production_pairing_secrets_are_explicit(self) -> Self:
         if self.environment == "production" and (
             self.pairing_portal_csrf_secret.startswith("development-only")
-            or self.pairing_portal_ingress_secret.startswith("development-only")
             or len(self.pairing_portal_csrf_secret) < 32
-            or len(self.pairing_portal_ingress_secret) < 32
         ):
             raise ValueError("production pairing portal secrets must be explicitly configured")
         return self

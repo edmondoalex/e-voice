@@ -14,6 +14,10 @@ Status: Ready for review
   `PairingService.claim()` flow.
 - Added the mobile-friendly Italian `/pair` portal with signed CSRF protection,
   safe error mapping and no credential disclosure.
+- Added Argon2 password login, opaque revocable server-side sessions, verified
+  membership-based tenant selection, login throttling and logout.
+- Added an interactive one-time bootstrap command with no default credential and
+  an Alembic migration for portal sessions and login-attempt metadata.
 - Enforced existing write roles for pairing claims and retained one-shot
   Connector credential delivery exclusively through Home Assistant polling.
 - Updated Home Assistant pairing help with the production portal URL and bumped
@@ -21,10 +25,12 @@ Status: Ready for review
 
 ### Authentication boundary
 
-- No parallel login system was introduced. The current minimum deployment uses
-  trusted identity headers protected by a shared ingress secret and resolves
-  them through `AuthenticationService`; production ingress requirements and the
-  future server-side login/session replacement are documented in `docs/pairing.md`.
+- The portal now works directly behind the existing Cloudflare/Caddy deployment;
+  it does not depend on identity headers injected by an authenticating ingress.
+- Tenant authorization still uses the existing `AuthenticationService` and
+  `TenantMembership` roles. A future administration UI remains out of scope.
+- Removed the official HACS catalog validator workflow: this proprietary
+  integration is distributed only as a HACS Custom Repository; Hassfest remains.
 
 ### Scope guard
 
