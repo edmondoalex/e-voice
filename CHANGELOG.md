@@ -4,6 +4,29 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Home Assistant effective entity-name synchronization
+
+Status: Ready for review
+
+### Scope
+
+- Corrected inventory metadata naming so an explicit entity user override wins,
+  otherwise the current state-machine `friendly_name` visible in Home Assistant
+  is preferred over stale registry/original metadata.
+- Preserved fallbacks for current and future registry APIs (`name_by_user`,
+  `name`, `original_name`) without changing stable entity or registry identity.
+- Added a production-shaped regression test proving that renaming
+  `BusPro Luci Luce Ufficio Alex` to `Luce Ufficio Alex` automatically emits a
+  new `inventory_full` with the new name.
+- Corrected the all-registry subscriptions: keyed Home Assistant helpers require
+  explicit IDs and treated `MATCH_ALL` as a literal key, so entity/device
+  metadata changes previously never reached the resync callback.
+- Bumped the custom integration version to `0.1.5`.
+
+### Scope guard
+
+- No pairing, cloud API, EVCP, Alexa, device, area, state or tombstone changes.
+
 ## 2026-08-19 — Home Assistant options reload compatibility
 
 Status: Ready for review
