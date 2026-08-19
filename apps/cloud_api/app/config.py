@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     admin_audit_retention_days: int = Field(default=365, ge=30, le=3650)
     portal_login_attempt_retention_days: int = Field(default=30, ge=1, le=365)
     state_history_excluded_domains: str = "sensor"
+    cleanup_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
+    cleanup_error_retry_seconds: int = Field(default=300, ge=30, le=3600)
     alexa_oauth_client_id: str = "ekonex-alexa-development"
     alexa_oauth_client_secret: str = "change-me"
     alexa_redirect_uris: str = "https://pitangui.amazon.com/api/skill/link/DEVELOPMENT"

@@ -12,7 +12,8 @@ system. Open `/dashboard` after logging in at `/login`.
   availability. Tombstoned entities remain visible but cannot be controlled.
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound
   to the selected tenant; foreign installation and entity identifiers return 404.
-- `/system` reports tenant object counts, retained samples and PostgreSQL database size.
+- `/system` reports tenant object counts, retained samples, the authoritative PostgreSQL
+  database size in MB, retention policy, and last/next maintenance execution.
 
 Owner, dealer administrator, installer and customer administrator roles may use the
 console and commands. Read-only and customer-user memberships cannot. Direct controls
@@ -35,15 +36,23 @@ Defaults:
 - portal login attempts: 30 days;
 - expired portal sessions: removed after their own expiry.
 
-Run cleanup from a scheduler (cron, systemd timer, Kubernetes CronJob or equivalent):
+Docker Compose starts the isolated `maintenance` service automatically. It executes once
+per day at 03:00 UTC by default, catches up a missed daily boundary after a restart, and
+does not share process lifecycle with the API, PostgreSQL, Redis or Connector. Override
+the hour with `EKONEX_CLEANUP_SCHEDULE_HOUR_UTC`.
+
+The same idempotent operation remains available for an explicit on-demand run:
 
 ```shell
 python -m apps.cloud_api.app.cleanup
 ```
 
-The job is idempotent, prints counts only, and never logs credentials or payload secrets.
+Each run records its start/completion time, status, duration and deleted row counts in
+`maintenance_runs`. Logs contain the same bounded summary but never credentials, tokens,
+payloads or exception messages. Scheduler/database errors are retried without stopping
+other services.
 Retention periods are configured with the corresponding `EKONEX_*_RETENTION_DAYS`
-variables in `.env.example`. Apply Alembic migration `20260819_0006` before deployment.
+variables in `.env.example`. Apply Alembic migration `20260819_0007` before deployment.
 
 ## Audit coverage
 

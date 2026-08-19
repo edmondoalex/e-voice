@@ -16,6 +16,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  maintenance:
+    build: .
+    command: ["python", "-m", "apps.cloud_api.app.scheduler"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      EKONEX_DATABASE_URL: ${EKONEX_DATABASE_URL:-postgresql+asyncpg://ekonex:local-development-only@postgres:5432/ekonex_voice}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -44,4 +57,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-
