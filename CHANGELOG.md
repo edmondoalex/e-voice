@@ -4,6 +4,27 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Production entity-sync diagnostics
+
+Status: Ready for review
+
+### Scope
+
+- Confirmed and documented that exposure remains strictly opt-in and an empty
+  initial inventory is an explicit valid reconciliation.
+- Added secret-safe inventory lifecycle logging and bounded HA diagnostics for
+  snapshot revision/count, state updates and send failures.
+- Added transport error recovery so a WebSocket send failure enters the existing
+  bounded reconnect path instead of terminating the supervisor silently.
+- Added HA/EVCP/cloud persistence contract tests for initial/empty snapshots,
+  reconnect full resync, state/unavailable updates, removal and installation
+  isolation.
+- Bumped the custom integration version to `0.1.3` for HAOS deployment.
+
+### Scope guard
+
+- No changes to pairing, portal authentication, OAuth, Alexa or command mapping.
+
 ## 2026-08-19 — Pairing portal completion
 
 Status: Ready for review

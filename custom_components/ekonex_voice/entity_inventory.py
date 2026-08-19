@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -39,6 +40,7 @@ ATTRIBUTE_ALLOWLIST = {
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25
+_LOGGER = logging.getLogger(__name__)
 
 
 class EntityInventorySynchronizer:
@@ -61,6 +63,11 @@ class EntityInventorySynchronizer:
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self.last_full_revision: int | None = None
+        self.last_full_entity_count: int | None = None
+        self.last_state_entity_count: int | None = None
+        self.send_failure_count = 0
+        self.last_error_code: str | None = None
 
     @property
     def exposure_summary(self) -> dict[str, object]:
@@ -69,6 +76,11 @@ class EntityInventorySynchronizer:
             "ui_entity_count": len(self._registry_ids),
             "label_configured": self._label_id is not None,
             "label_id": self._label_id,
+            "last_full_revision": self.last_full_revision,
+            "last_full_entity_count": self.last_full_entity_count,
+            "last_state_entity_count": self.last_state_entity_count,
+            "send_failure_count": self.send_failure_count,
+            "last_error_code": self.last_error_code,
         }
 
     def is_exposed(self, entry: er.RegistryEntry) -> bool:
@@ -91,6 +103,7 @@ class EntityInventorySynchronizer:
     ) -> None:
         await self.async_stop()
         self._websocket, self._session_id, self._revision = websocket, session_id, cloud_revision
+        _LOGGER.info("Starting entity synchronization from cloud revision %d", cloud_revision)
         self._unsubscribers.append(
             self._hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed)
         )
@@ -167,20 +180,48 @@ class EntityInventorySynchronizer:
             return
         self._revision += 1
         chunks = _chunks(items)
-        for index, chunk in enumerate(chunks):
-            message = envelope(
+        try:
+            for index, chunk in enumerate(chunks):
+                message = envelope(
+                    message_type,
+                    {
+                        "session_id": self._session_id,
+                        "revision": self._revision,
+                        "batch_index": index,
+                        "batch_count": len(chunks),
+                        "entities": chunk,
+                    },
+                )
+                if len(json.dumps(message, separators=(",", ":")).encode()) > MAX_MESSAGE_BYTES:
+                    raise ValueError("inventory_message_too_large")
+                await self._websocket.send_json(message)
+        except Exception:
+            self.send_failure_count += 1
+            self.last_error_code = "send_failed"
+            _LOGGER.warning(
+                "Entity synchronization send failed: type=%s revision=%d batches=%d",
                 message_type,
-                {
-                    "session_id": self._session_id,
-                    "revision": self._revision,
-                    "batch_index": index,
-                    "batch_count": len(chunks),
-                    "entities": chunk,
-                },
+                self._revision,
+                len(chunks),
             )
-            if len(json.dumps(message, separators=(",", ":")).encode()) > MAX_MESSAGE_BYTES:
-                raise ValueError("inventory_message_too_large")
-            await self._websocket.send_json(message)
+            raise
+        self.last_error_code = None
+        if message_type == "inventory_full":
+            self.last_full_revision = self._revision
+            self.last_full_entity_count = len(items)
+            _LOGGER.info(
+                "Entity inventory snapshot sent: revision=%d entities=%d batches=%d",
+                self._revision,
+                len(items),
+                len(chunks),
+            )
+        elif message_type == "state_update":
+            self.last_state_entity_count = len(items)
+            _LOGGER.debug(
+                "Entity state update sent: revision=%d entities=%d",
+                self._revision,
+                len(items),
+            )
 
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:

@@ -56,6 +56,11 @@ async def async_get_config_entry_diagnostics(
                         "ui_entity_count": 0,
                         "label_configured": False,
                         "label_id": None,
+                        "last_full_revision": None,
+                        "last_full_entity_count": None,
+                        "last_state_entity_count": None,
+                        "send_failure_count": 0,
+                        "last_error_code": None,
                     }
                 ),
             }

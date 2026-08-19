@@ -57,6 +57,11 @@ async def test_diagnostics_are_bounded_and_redact_entry_credential(
         "ui_entity_count": 0,
         "label_configured": False,
         "label_id": None,
+        "last_full_revision": None,
+        "last_full_entity_count": None,
+        "last_state_entity_count": None,
+        "send_failure_count": 0,
+        "last_error_code": None,
     }
 
 

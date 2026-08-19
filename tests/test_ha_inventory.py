@@ -48,6 +48,68 @@ async def test_fresh_integration_exposes_nothing(hass: HomeAssistant) -> None:
     assert sync._serialize(entry) is None
 
 
+async def test_initial_inventory_sync_sends_selected_entities(hass: HomeAssistant) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
+
+    message = websocket.send_json.await_args_list[0].args[0]
+    assert message["type"] == "inventory_full"
+    assert message["payload"]["revision"] == 1
+    assert [item["registry_id"] for item in message["payload"]["entities"]] == [entry.id]
+    assert sync.last_full_entity_count == 1
+    await sync.async_stop()
+
+
+async def test_zero_selected_entities_sends_explicit_empty_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    registered_light(hass)
+    websocket = AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), set(), None)
+
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=4)
+
+    message = websocket.send_json.await_args_list[0].args[0]
+    assert message["type"] == "inventory_full"
+    assert message["payload"]["revision"] == 5
+    assert message["payload"]["entities"] == []
+    assert sync.last_full_entity_count == 0
+    await sync.async_stop()
+
+
+async def test_reconnect_sends_full_resync_from_cloud_revision(hass: HomeAssistant) -> None:
+    entry = registered_light(hass)
+    first, second = AsyncMock(), AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    await sync.async_start(first, str(uuid4()), cloud_revision=0)
+    await sync.async_start(second, str(uuid4()), cloud_revision=1)
+
+    assert first.send_json.await_args.args[0]["payload"]["revision"] == 1
+    assert second.send_json.await_args.args[0]["type"] == "inventory_full"
+    assert second.send_json.await_args.args[0]["payload"]["revision"] == 2
+    await sync.async_stop()
+
+
+async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+    hass.states.async_set(entry.entity_id, "unavailable")
+    sync._pending.add(entry.entity_id)
+
+    await sync._flush_states()
+
+    message = websocket.send_json.await_args.args[0]
+    assert message["type"] == "state_update"
+    assert message["payload"]["entities"][0]["available"] is False
+    assert message["payload"]["entities"][0]["state"] is None
+
+
 async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(
     hass: HomeAssistant,
 ) -> None:

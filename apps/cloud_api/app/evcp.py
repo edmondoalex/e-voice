@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from .database import get_database_session
-from .domain.models import ConnectorCredential
+from .domain.models import ConnectorCredential, Installation
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
 
@@ -28,6 +29,7 @@ HEARTBEAT_INTERVAL_SECONDS = 30
 LIVENESS_TIMEOUT_SECONDS = 75.0
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class StrictModel(BaseModel):
@@ -431,6 +433,39 @@ async def _safe_close(websocket: WebSocket, code: int, reason: str) -> None:
             pass
 
 
+async def _apply_entity_sync(
+    database: AsyncSession,
+    installation: Installation,
+    installation_id: UUID,
+    message: InventoryFull | InventoryDelta | StateUpdate,
+) -> None:
+    """Accumulate and persist one validated, session-bound EVCP sync message."""
+    items = inventory_batches.add(installation_id, message.payload)
+    logger.debug(
+        "Entity synchronization batch received: type=%s revision=%d batch=%d/%d entities=%d",
+        message.type,
+        message.payload.revision,
+        message.payload.batch_index + 1,
+        message.payload.batch_count,
+        len(message.payload.entities),
+    )
+    if items is None:
+        return
+    service = EntitySyncService(database, installation)
+    if isinstance(message, InventoryFull):
+        await service.apply_full(message.payload.revision, items)
+    elif isinstance(message, StateUpdate):
+        await service.apply_state(message.payload.revision, items)
+    else:
+        await service.apply_delta(message.payload.revision, items)
+    logger.info(
+        "Entity synchronization applied: type=%s revision=%d entities=%d",
+        message.type,
+        message.payload.revision,
+        len(items),
+    )
+
+
 @router.websocket("/connector/v1/ws")
 async def connector_websocket(
     websocket: WebSocket,
@@ -471,6 +506,7 @@ async def connector_websocket(
                 },
             )
         )
+        logger.info("Connector EVCP session established; awaiting entity inventory")
         while True:
             message = await _receive(websocket, LIVENESS_TIMEOUT_SECONDS)
             if isinstance(message, Heartbeat):
@@ -495,21 +531,17 @@ async def connector_websocket(
                 await _safe_close(websocket, 4002, "INVALID_MESSAGE")
                 return
             try:
-                service = EntitySyncService(database, installation)
-                items = inventory_batches.add(installation_id, message.payload)
-                if items is not None:
-                    if isinstance(message, InventoryFull):
-                        await service.apply_full(message.payload.revision, items)
-                    elif isinstance(message, StateUpdate):
-                        await service.apply_state(message.payload.revision, items)
-                    else:
-                        await service.apply_delta(message.payload.revision, items)
+                await _apply_entity_sync(database, installation, installation_id, message)
             except StaleSyncError:
+                logger.warning(
+                    "Entity synchronization rejected: stale revision=%d", message.payload.revision
+                )
                 await _safe_close(websocket, 4009, "STALE_REVISION")
                 return
     except TimeoutError:
         await _safe_close(websocket, 4005 if not registered else 4006, "TIMEOUT")
     except (ValidationError, ValueError):
+        logger.warning("Connector EVCP message rejected: invalid schema or batch sequence")
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
     except WebSocketDisconnect:
         pass
