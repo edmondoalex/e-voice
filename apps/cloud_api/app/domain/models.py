@@ -217,6 +217,49 @@ class Entity(TimestampMixin, Base):
     )
 
 
+class EntityStateHistory(Base):
+    __tablename__ = "entity_state_history"
+    __table_args__ = (
+        Index("ix_entity_state_history_installation_time", "installation_id", "recorded_at"),
+        Index("ix_entity_state_history_entity_time", "entity_id", "recorded_at"),
+        Index("ix_entity_state_history_tenant_time", "tenant_id", "recorded_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    entity_id: Mapped[UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+    state: Mapped[str | None] = mapped_column(String(255))
+    available: Mapped[bool] = mapped_column(Boolean)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
+class OperationalEvent(Base):
+    __tablename__ = "operational_events"
+    __table_args__ = (
+        Index("ix_operational_events_installation_time", "installation_id", "created_at"),
+        Index("ix_operational_events_tenant_time", "tenant_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    entity_id: Mapped[UUID | None] = mapped_column(ForeignKey("entities.id", ondelete="SET NULL"))
+    event_type: Mapped[str] = mapped_column(String(100))
+    source: Mapped[str] = mapped_column(String(50))
+    outcome: Mapped[str] = mapped_column(String(50))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
 class AlexaPublication(TimestampMixin, Base):
     __tablename__ = "alexa_publications"
     __table_args__ = (Index("ix_alexa_publications_endpoint_id", "alexa_endpoint_id"),)

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .domain.models import Entity, Installation
+from .history import StateHistoryService
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,15 @@ class EntitySyncService:
         tombstoned = 0
         for entity in existing:
             if entity.ha_registry_id not in seen and entity.deleted_at is None:
+                previous_state, previous_available = entity.state, entity.available
                 entity.deleted_at = now
                 entity.available = False
+                await StateHistoryService(self._session).record_change(
+                    entity,
+                    tenant_id=self._installation.tenant_id,
+                    previous_state=previous_state,
+                    previous_available=previous_available,
+                )
                 tombstoned += 1
         self._installation.sync_revision = revision
         self._installation.inventory_synced_at = now
@@ -55,7 +63,14 @@ class EntitySyncService:
             if bool(item.get("removed")):
                 entity = await self._by_registry(str(item["registry_id"]))
                 if entity is not None:
+                    previous_state, previous_available = entity.state, entity.available
                     entity.deleted_at, entity.available = datetime.now(UTC), False
+                    await StateHistoryService(self._session).record_change(
+                        entity,
+                        tenant_id=self._installation.tenant_id,
+                        previous_state=previous_state,
+                        previous_available=previous_available,
+                    )
             else:
                 await self._upsert(item)
         self._installation.sync_revision = revision
@@ -69,11 +84,18 @@ class EntitySyncService:
             entity = await self._by_registry(str(item["registry_id"]))
             if entity is None or entity.deleted_at is not None:
                 raise StaleSyncError
+            previous_state, previous_available = entity.state, entity.available
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
             entity.last_seen_at = datetime.now(UTC)
+            await StateHistoryService(self._session).record_change(
+                entity,
+                tenant_id=self._installation.tenant_id,
+                previous_state=previous_state,
+                previous_available=previous_available,
+            )
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
@@ -107,6 +129,7 @@ class EntitySyncService:
                 )
             )
             entity = result.one_or_none()
+        is_new = entity is None
         if entity is None:
             entity = Entity(
                 installation_id=self._installation.id,
@@ -115,6 +138,8 @@ class EntitySyncService:
                 ha_domain=str(item["domain"]),
             )
             self._session.add(entity)
+            await self._session.flush()
+        previous_state, previous_available = entity.state, entity.available
         entity.ha_registry_id = str(item["registry_id"])
         entity.ha_entity_id = str(item["entity_id"])
         entity.ha_domain = str(item["domain"])
@@ -136,6 +161,14 @@ class EntitySyncService:
             datetime.fromisoformat(str(changed).replace("Z", "+00:00")) if changed else None
         )
         entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
+        if is_new:
+            previous_state, previous_available = None, not entity.available
+        await StateHistoryService(self._session).record_change(
+            entity,
+            tenant_id=self._installation.tenant_id,
+            previous_state=previous_state,
+            previous_available=previous_available,
+        )
         return entity
 
 

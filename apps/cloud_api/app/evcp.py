@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from .database import get_database_session
-from .domain.models import ConnectorCredential, Installation
+from .domain.models import ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
 
@@ -494,6 +494,17 @@ async def connector_websocket(
             installation_id, SessionHandle(session_id=session_id, websocket=websocket)
         )
         registered = True
+        database.add(
+            OperationalEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation_id,
+                event_type="connector_session",
+                source="connector",
+                outcome="connected",
+                metadata_json={},
+            )
+        )
+        await database.commit()
         await websocket.send_json(
             _response(
                 "hello_ack",
@@ -549,3 +560,14 @@ async def connector_websocket(
         if registered:
             inventory_batches.clear_session(installation_id, session_id)
             await sessions.remove(installation_id, session_id)
+            database.add(
+                OperationalEvent(
+                    tenant_id=credential.installation.tenant_id,
+                    installation_id=installation_id,
+                    event_type="connector_session",
+                    source="connector",
+                    outcome="disconnected",
+                    metadata_json={},
+                )
+            )
+            await database.commit()

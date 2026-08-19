@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Multi-installation administration console
+
+Status: Ready for review
+
+### Scope
+
+- Added a tenant-isolated, server-rendered dashboard, installation/entity view, activity
+  view and system/storage statistics using the existing portal session authentication.
+- Added safe direct controls through the closed M6 command dispatcher with CSRF,
+  role checks, tenant-scoped target lookup and authenticated pending/final audit events.
+- Added change-only entity state history, bounded Connector lifecycle events, configurable
+  retention and an idempotent scheduler-friendly cleanup command.
+- Added Alembic migration `20260819_0006`, tests and operations documentation.
+
+### Scope guard
+
+- No console-specific Home Assistant custom component, pairing protocol, EVCP wire format,
+  Alexa or LICENSE changes. Package version is `0.2.0`; the merged HACS integration fix
+  remains at `0.1.5`.
+
 ## 2026-08-19 — Home Assistant effective entity-name synchronization
 
 Status: Ready for review
