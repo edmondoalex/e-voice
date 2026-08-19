@@ -79,6 +79,32 @@ async def test_name_change_updates_metadata_without_duplicate_identity(
     assert entities[0].friendly_name == "Current HA name"
 
 
+async def test_connector_rename_preserves_cloud_name_overrides(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [item()])
+    entity = (
+        await session.scalars(select(Entity).where(Entity.ha_registry_id == "registry-light-1"))
+    ).one()
+    original_id, original_registry_id = entity.ha_entity_id, entity.ha_registry_id
+    entity.display_name = "Ufficio Alex"
+    entity.voice_name = "luce ufficio"
+    entity.voice_aliases = ["ufficio", "luce alex"]
+    await session.commit()
+
+    await service.apply_full(2, [{**item(), "friendly_name": "Luce Ufficio Alex evoice"}])
+
+    assert entity.friendly_name == "Luce Ufficio Alex evoice"
+    assert entity.display_name == "Ufficio Alex"
+    assert entity.voice_name == "luce ufficio"
+    assert entity.voice_aliases == ["ufficio", "luce alex"]
+    assert entity.ha_entity_id == original_id
+    assert entity.ha_registry_id == original_registry_id
+
+
 async def test_stale_and_unauthorized_state_are_rejected(
     session: AsyncSession, seeded_domain: object
 ) -> None:

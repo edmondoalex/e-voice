@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import html
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -28,6 +29,14 @@ from .domain.models import (
     Installation,
     MaintenanceRun,
     OperationalEvent,
+)
+from .entity_names import (
+    all_voice_names,
+    clean_optional_name,
+    clean_voice_aliases,
+    effective_display_name,
+    effective_voice_name,
+    voice_collisions,
 )
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .maintenance import latest_cleanup, next_cleanup_at
@@ -96,9 +105,9 @@ aside{{position:fixed;inset:0 auto 0 0;width:230px;background:#101828;color:whit
 aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;border-radius:7px}}aside a:hover,aside a:focus-visible{{background:#1d2939;color:white}}aside a.active{{background:#344054;color:white;font-weight:700}}main{{margin-left:230px;padding:28px;max-width:1400px}}
 .brand-logo{{display:block;width:min(100%,160px);height:auto;aspect-ratio:1/1;object-fit:contain;margin:0 auto 20px;border-radius:10px;background:#050505}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
-th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px}}
+th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
-.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}form.inline{{display:inline}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions{{display:flex;gap:10px;flex-wrap:wrap}}button.danger{{background:var(--bad)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
@@ -120,6 +129,15 @@ async def _installation(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Installazione non trovata")
+    return item
+
+
+async def _entity(session: AsyncSession, installation: Installation, entity_id: UUID) -> Entity:
+    item = await session.scalar(
+        select(Entity).where(Entity.id == entity_id, Entity.installation_id == installation.id)
+    )
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità non trovata")
     return item
 
 
@@ -219,7 +237,12 @@ async def installation_detail(
     query = select(Entity).where(Entity.installation_id == item.id)
     if q:
         query = query.where(
-            or_(Entity.friendly_name.ilike(f"%{q}%"), Entity.ha_entity_id.ilike(f"%{q}%"))
+            or_(
+                Entity.display_name.ilike(f"%{q}%"),
+                Entity.voice_name.ilike(f"%{q}%"),
+                Entity.friendly_name.ilike(f"%{q}%"),
+                Entity.ha_entity_id.ilike(f"%{q}%"),
+            )
         )
     if domain:
         query = query.where(Entity.ha_domain == domain)
@@ -228,7 +251,7 @@ async def installation_detail(
     entities = list(
         (
             await session.scalars(
-                query.order_by(Entity.friendly_name, Entity.ha_entity_id)
+                query.order_by(Entity.display_name, Entity.friendly_name, Entity.ha_entity_id)
                 .offset((page - 1) * PAGE_SIZE)
                 .limit(PAGE_SIZE)
             )
@@ -250,9 +273,153 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     if entity.deleted_at is None and entity.available and entity.ha_registry_id and operations:
         options = "".join(f'<option value="{op}">{op}</option>' for op in operations)
         controls = f'<form method="post" action="/installations/{installation.id}/commands" onsubmit="this.querySelector(\'button\').textContent=\'Invio…\'"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><select name="operation">{options}</select><input name="value" size="5" placeholder="valore"><button>Invia</button></form>'
-    label = entity.friendly_name or entity.ha_entity_id
+    label = effective_display_name(entity)
     lifecycle = "rimossa" if entity.deleted_at else (entity.state or "—")
-    return f'<tr><td><b>{_e(label)}</b><br><span class="muted">{_e(entity.ha_entity_id)}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name)}</td><td>{_e(lifecycle)} · {"disponibile" if entity.available else "non disponibile"}</td><td>{controls or "—"}</td></tr>'
+    edit = f'<a class="button" href="/installations/{installation.id}/entities/{entity.id}/edit">Modifica</a>'
+    return f'<tr><td><b>{_e(label)}</b><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)} · {_e(entity.ha_entity_id)}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name)}</td><td>{_e(lifecycle)} · {"disponibile" if entity.available else "non disponibile"}</td><td>{edit} {controls}</td></tr>'
+
+
+def _entity_names_form(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    *,
+    message: str = "",
+    error: bool = False,
+) -> str:
+    aliases = "\n".join(entity.voice_aliases or [])
+    notice = f'<p class="{"bad" if error else "ok"}">{_e(message)}</p>' if message else ""
+    return f'''{notice}<div class="card"><p><b>Nome e-Control</b><br>{_e(entity.friendly_name or entity.ha_entity_id)}<br><span class="muted">Sincronizzato automaticamente e non modificabile qui.</span></p>
+<form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
+<label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>
+<label class="field"><b>Nome vocale</b><input name="voice_name" maxlength="120" value="{_e(entity.voice_name)}" placeholder="Fallback: {_e(effective_display_name(entity))}"><span class="muted">Se vuoto: Nome visualizzato → Nome e-Control.</span></label>
+<label class="field"><b>Alias vocali</b><textarea name="voice_aliases" maxlength="2420" placeholder="Un alias per riga">{_e(aliases)}</textarea><span class="muted">Massimo 20 alias; spazi e duplicati senza distinzione maiuscole/minuscole vengono normalizzati.</span></label>
+<p><b>Nome dashboard effettivo:</b> {_e(effective_display_name(entity))}<br><b>Nome vocale effettivo:</b> {_e(effective_voice_name(entity))}<br><b>Tutti i nomi vocali:</b> {_e(", ".join(all_voice_names(entity)))}</p>
+<div class="actions"><button name="action" value="save">Salva</button><a class="button" href="/installations/{installation.id}">Annulla</a><button class="danger" name="action" value="reset">Ripristina nomi personalizzati</button></div></form></div>'''
+
+
+def _names_page(
+    installation: Installation,
+    entity: Entity,
+    context: TenantContext,
+    csrf: str,
+    *,
+    message: str = "",
+    error: bool = False,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    response = HTMLResponse(
+        _layout(
+            "Modifica nomi entità",
+            _entity_names_form(installation, entity, csrf, message=message, error=error),
+            context,
+            csrf,
+            "installations",
+        ),
+        status_code=status_code,
+    )
+    response.set_cookie(
+        CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
+    )
+    return response
+
+
+@router.get(
+    "/installations/{installation_id}/entities/{entity_id}/edit", response_class=HTMLResponse
+)
+async def edit_entity_names_page(
+    installation_id: UUID,
+    entity_id: UUID,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> HTMLResponse:
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    entity = await _entity(session, installation, entity_id)
+    csrf = _csrf(context)
+    return _names_page(installation, entity, context, csrf)
+
+
+@router.post(
+    "/installations/{installation_id}/entities/{entity_id}/edit", response_class=HTMLResponse
+)
+async def update_entity_names(
+    installation_id: UUID,
+    entity_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> HTMLResponse:
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    entity = await _entity(session, installation, entity_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    previous = (entity.display_name, entity.voice_name, list(entity.voice_aliases or []))
+    try:
+        if values.get("action") == "reset":
+            entity.display_name, entity.voice_name, entity.voice_aliases = None, None, []
+        else:
+            entity.display_name = clean_optional_name(values.get("display_name", ""))
+            entity.voice_name = clean_optional_name(values.get("voice_name", ""))
+            entity.voice_aliases = clean_voice_aliases(
+                re.split(r"[\r\n,]+", values.get("voice_aliases", ""))
+            )
+    except ValueError:
+        entity.display_name, entity.voice_name, entity.voice_aliases = previous
+        return _names_page(
+            installation,
+            entity,
+            context,
+            _csrf(context),
+            message="Valori troppo lunghi o troppi alias.",
+            error=True,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity).where(
+                    Entity.installation_id == installation.id, Entity.deleted_at.is_(None)
+                )
+            )
+        ).all()
+    )
+    if any(entity.id in ids for ids in voice_collisions(entities).values()):
+        entity.display_name, entity.voice_name, entity.voice_aliases = previous
+        return _names_page(
+            installation,
+            entity,
+            context,
+            _csrf(context),
+            message="Nome vocale o alias già utilizzato da un’altra entità.",
+            error=True,
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    current = (entity.display_name, entity.voice_name, list(entity.voice_aliases or []))
+    changed_fields = [
+        name
+        for name, before, after in zip(
+            ("display_name", "voice_name", "voice_aliases"), previous, current, strict=True
+        )
+        if before != after
+    ]
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            user_id=context.user_id,
+            source="admin_console",
+            event_type=(
+                "entity_names.reset" if values.get("action") == "reset" else "entity_names.updated"
+            ),
+            payload_redacted_json={"entity_id": str(entity.id), "changed_fields": changed_fields},
+            result="success",
+        )
+    )
+    await session.commit()
+    return _names_page(installation, entity, context, _csrf(context), message="Nomi salvati.")
 
 
 def _command_data(operation: str, value: str) -> dict[str, object]:
