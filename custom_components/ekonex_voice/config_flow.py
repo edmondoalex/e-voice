@@ -147,6 +147,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "code": self._pairing.code,
                 "expires_at": self._pairing.expires_at.isoformat(timespec="minutes"),
+                "pairing_url": "https://voice.e-control.tech/pair",
             },
         )
 
