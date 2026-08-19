@@ -328,7 +328,7 @@ def _page(*, csrf: str, message: str = "", success: bool = False) -> str:
     return f"""<!doctype html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Collega Home Assistant · Ekonex Voice</title><style>
+<title>Collega a e-Control · Ekonex Voice</title><style>
 :root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5}}
 *{{box-sizing:border-box}}
 body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;
@@ -348,7 +348,7 @@ background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 .error{{background:#fde8e7;color:#85221d}}small{{display:block;margin-top:16px;color:#52655f}}
 </style></head><body><main><img class="brand-logo" src="/static/icon.png"
  width="64" height="64" alt="Ekonex Cloud Voice">
-<h1>Collega Home Assistant</h1>
+<h1>Collega a e-Control</h1>
 <p>Inserisci il codice temporaneo mostrato in Home Assistant.</p>{notice}
 <form method="post" action="/pair">
 <input type="hidden" name="csrf_token" value="{escaped_csrf}">

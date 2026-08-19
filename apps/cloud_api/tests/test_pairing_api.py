@@ -200,7 +200,7 @@ async def test_tenant_selection_only_allows_memberships(
         follow_redirects=False,
     )
     assert selected.status_code == 303
-    assert "Collega Home Assistant" in (await client.get("/pair")).text
+    assert "Collega a e-Control" in (await client.get("/pair")).text
     await client.aclose()
 
 
@@ -211,7 +211,7 @@ async def test_pair_page_render_and_submit_success_and_error(
     assert (await client.get("/pair", follow_redirects=False)).status_code == 303
     assert (await _login(client)).status_code == 303
     page = await client.get("/pair")
-    assert "Collega Home Assistant" in page.text and "XXXX-XXXX" in page.text
+    assert "Collega a e-Control" in page.text and "XXXX-XXXX" in page.text
     assert '<img class="brand-logo" src="/static/icon.png"' in page.text
     assert 'alt="Ekonex Cloud Voice"' in page.text
     assert ">EKONEX VOICE<" not in page.text
