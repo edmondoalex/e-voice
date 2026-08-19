@@ -1,6 +1,7 @@
 """Authenticated console, tenant isolation and safe command tests."""
 
 import re
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.database import get_database_session
-from apps.cloud_api.app.domain.models import AuditEvent, Entity
+from apps.cloud_api.app.domain.models import AuditEvent, Entity, Installation
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.main import app
 from apps.cloud_api.tests.conftest import SeededDomain
@@ -53,6 +54,9 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     assert 'alt="Ekonex Cloud Voice"' in page.text
     assert ">Impianti<" in page.text
     assert "Home Assistant" not in page.text
+    for href in ("/dashboard", "/installations", "/activity", "/system", "/pair"):
+        assert f'href="{href}"' in page.text
+    assert 'href="/dashboard" class="active" aria-current="page"' in page.text
     assert (
         await client.get(f"/installations/{seeded_domain.installation_b_id}")
     ).status_code == 404
@@ -62,6 +66,35 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     await _login(readonly, "readonly@example.test", "readonly-password-123")
     assert (await readonly.get("/dashboard")).status_code == 403
     await readonly.aclose()
+
+
+async def test_installations_page_is_real_tenant_scoped_and_links_to_detail(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)
+    assert installation is not None
+    installation.ha_version = "2026.8"
+    installation.connector_version = "0.1.5"
+    installation.last_seen_at = datetime.now(UTC)
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get("/installations", follow_redirects=False)
+    assert page.status_code == 200
+    assert "Home A" in page.text
+    assert "Home B" not in page.text
+    assert "Versione e-Control" in page.text
+    assert "Versione Connector" in page.text
+    assert "Entità esposte" in page.text
+    assert "online" in page.text
+    assert "2026.8" in page.text
+    assert "0.1.5" in page.text
+    assert f'href="/installations/{seeded_domain.installation_a_id}"' in page.text
+    assert 'href="/installations" class="active" aria-current="page"' in page.text
+    assert (
+        await client.get(f"/installations/{seeded_domain.installation_b_id}")
+    ).status_code == 404
+    await client.aclose()
 
 
 async def test_command_is_csrf_and_tenant_scoped_and_audited(
@@ -147,11 +180,13 @@ async def test_activity_and_system_views_remain_tenant_scoped(
     await _login(client, "owner@example.test", "owner-password-123")
     activity = await client.get("/activity", params={"event_type": "admin_login"})
     assert activity.status_code == 200
+    assert 'href="/activity" class="active" aria-current="page"' in activity.text
     assert "Home Assistant" not in activity.text
     assert "admin_login" in activity.text
     assert "private_foreign_event" not in activity.text
     system = await client.get("/system")
     assert system.status_code == 200
+    assert 'href="/system" class="active" aria-current="page"' in system.text
     assert "Home Assistant" not in system.text
     assert "Campioni storico" in system.text
     await client.aclose()

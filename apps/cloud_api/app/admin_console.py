@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,21 +69,35 @@ def _e(value: object | None) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def _layout(title: str, body: str, context: TenantContext, csrf: str) -> str:
+def _nav_link(href: str, label: str, key: str, active: str) -> str:
+    attributes = ' class="active" aria-current="page"' if key == active else ""
+    return f'<a href="{href}"{attributes}>{label}</a>'
+
+
+def _layout(title: str, body: str, context: TenantContext, csrf: str, active: str) -> str:
+    navigation = "".join(
+        (
+            _nav_link("/dashboard", "Dashboard", "dashboard", active),
+            _nav_link("/installations", "Impianti", "installations", active),
+            _nav_link("/activity", "Attività", "activity", active),
+            _nav_link("/system", "Sistema", "system", active),
+            _nav_link("/pair", "Collega a e-Control", "pair", active),
+        )
+    )
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(title)} · Ekonex Cloud Voice</title><style>
 :root{{--ink:#17202a;--muted:#667085;--blue:#1769e0;--bg:#f4f6f9;--card:#fff;--bad:#b42318;--ok:#067647}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px system-ui,sans-serif}}
 aside{{position:fixed;inset:0 auto 0 0;width:230px;background:#101828;color:white;padding:24px}}
-aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 0}}main{{margin-left:230px;padding:28px;max-width:1400px}}
+aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;border-radius:7px}}aside a:hover,aside a:focus-visible{{background:#1d2939;color:white}}aside a.active{{background:#344054;color:white;font-weight:700}}main{{margin-left:230px;padding:28px;max-width:1400px}}
 .brand-logo{{display:block;width:min(100%,160px);height:auto;aspect-ratio:1/1;object-fit:contain;margin:0 auto 20px;border-radius:10px;background:#050505}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
 .ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}form.inline{{display:inline}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
-<a href="/dashboard">Dashboard</a><a href="/installations">Impianti</a><a href="/activity">Attività</a><a href="/system">Sistema</a><a href="/pair">Collega a e-Control</a>
+<nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
 </aside><main><p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main></body></html>"""
 
@@ -142,16 +156,40 @@ async def dashboard(
     )
     csrf = _csrf(context)
     body = f'<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>e-Control</th><th>Connector</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna installazione</td></tr>"}</tbody></table>'
-    response = HTMLResponse(_layout("Dashboard", body, context, csrf))
+    response = HTMLResponse(_layout("Dashboard", body, context, csrf, "dashboard"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
 
 
-@router.get("/installations")
-async def installations_redirect() -> RedirectResponse:
-    return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+@router.get("/installations", response_class=HTMLResponse)
+async def installations_page(
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> HTMLResponse:
+    _admin(context)
+    result = await session.execute(
+        select(Installation, func.count(Entity.id))
+        .outerjoin(
+            Entity,
+            (Entity.installation_id == Installation.id) & Entity.deleted_at.is_(None),
+        )
+        .where(Installation.tenant_id == context.tenant_id)
+        .group_by(Installation.id)
+        .order_by(Installation.name)
+    )
+    rows = "".join(
+        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{entity_count}</td><td>{_e(item.last_seen_at)}</td></tr>'
+        for item, entity_count in result.all()
+    )
+    csrf = _csrf(context)
+    body = f"<table><thead><tr><th>Nome</th><th>Stato</th><th>Versione e-Control</th><th>Versione Connector</th><th>Entità esposte</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or '<tr><td colspan=6>Nessun impianto</td></tr>'}</tbody></table>"
+    response = HTMLResponse(_layout("Impianti", body, context, csrf, "installations"))
+    response.set_cookie(
+        CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
+    )
+    return response
 
 
 @router.get("/installations/{installation_id}", response_class=HTMLResponse)
@@ -186,7 +224,7 @@ async def installation_detail(
     csrf = _csrf(context)
     rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
     body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div><form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comando sicuro</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
-    response = HTMLResponse(_layout(item.name, body, context, csrf))
+    response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
@@ -281,7 +319,7 @@ async def send_command(
     await session.commit()
     csrf = _csrf(context)
     body = f'<div class="card"><b>Esito: {_e(outcome.status)}</b><p>Il comando è stato completato dal dispatcher EVCP; nessun esito è simulato.</p><a class="button" href="/installations/{installation.id}">Torna all’installazione</a></div>'
-    response = HTMLResponse(_layout("Esito comando", body, context, csrf))
+    response = HTMLResponse(_layout("Esito comando", body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
@@ -375,7 +413,7 @@ async def activity(
     )
     csrf = _csrf(context)
     body = f'<form method="get"><input name="installation_id" placeholder="ID installazione" value="{_e(installation_filter)}"><input name="outcome" placeholder="Esito" value="{_e(outcome)}"><button>Filtra</button></form><table><thead><tr><th>Data</th><th>Evento</th><th>Fonte</th><th>Esito</th><th>Installazione</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna attività</td></tr>"}</tbody></table>'
-    response = HTMLResponse(_layout("Attività", body, context, csrf))
+    response = HTMLResponse(_layout("Attività", body, context, csrf, "activity"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
@@ -423,7 +461,7 @@ async def system_stats(
         )
     csrf = _csrf(context)
     body = f'<div class="cards"><div class="card"><b>{installations}</b><br>Installazioni</div><div class="card"><b>{entities}</b><br>Entità</div><div class="card"><b>{history}</b><br>Campioni storico</div><div class="card"><b>{audit}</b><br>Eventi audit</div><div class="card"><b>{_e(database_size)}</b><br>Dimensione DB (byte)</div></div><p>La pulizia retention è eseguita con <code>python -m apps.cloud_api.app.cleanup</code>.</p>'
-    response = HTMLResponse(_layout("Sistema", body, context, csrf))
+    response = HTMLResponse(_layout("Sistema", body, context, csrf, "system"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
