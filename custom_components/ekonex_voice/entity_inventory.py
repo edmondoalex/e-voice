@@ -261,15 +261,14 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
 
 
 def _friendly_name(entry: er.RegistryEntry, state: State) -> object | None:
-    """Resolve the current HA-visible name while preserving user overrides."""
+    """Resolve the current HA-visible name before registry fallbacks."""
+    visible_name: object | None = state.attributes.get(ATTR_FRIENDLY_NAME)
+    if visible_name:
+        return visible_name
     name_by_user: object | None = getattr(entry, "name_by_user", None)
     if name_by_user:
         return name_by_user
-    if entry.name and entry.name != entry.original_name:
-        return entry.name
-    return (
-        state.attributes.get(ATTR_FRIENDLY_NAME) or entry.name or entry.original_name or state.name
-    )
+    return entry.name or entry.original_name or state.name
 
 
 def _attributes(domain: str, state: State) -> dict[str, object]:

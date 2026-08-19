@@ -1,6 +1,5 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
-import asyncio
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -169,6 +168,7 @@ async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssist
     entry = registered_light(hass)
     registry = er.async_get(hass)
     registry.async_update_entity(entry.entity_id, name="User configured name")
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": "User configured name"})
     renamed = registry.async_get(entry.entity_id)
     item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(renamed)
     assert item is not None
@@ -180,7 +180,8 @@ async def test_user_rename_replaces_original_name_in_next_inventory_full(
     hass: HomeAssistant,
 ) -> None:
     original_name = "BusPro Luci Luce Ufficio Alex"
-    user_name = "Luce Ufficio Alex"
+    current_name = "Luce Ufficio Alex"
+    renamed_name = "Luce Ufficio Alex evoice"
     registry = er.async_get(hass)
     entry = registry.async_get_or_create(
         "light",
@@ -189,16 +190,24 @@ async def test_user_rename_replaces_original_name_in_next_inventory_full(
         suggested_object_id="buspro_gateway_192_168_3_27_6000_luce_ufficio_alex",
         original_name=original_name,
     )
-    hass.states.async_set(entry.entity_id, "on", {"friendly_name": original_name})
+    registry.async_update_entity(entry.entity_id, name=current_name)
+    entry = registry.async_get(entry.entity_id)
+    assert entry is not None
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": current_name})
     websocket = AsyncMock()
     sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
     await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
     websocket.send_json.reset_mock()
 
-    registry.async_update_entity(entry.entity_id, name=user_name)
-    hass.states.async_set(entry.entity_id, "on", {"friendly_name": user_name})
-    await asyncio.sleep(0.3)
-    await hass.async_block_till_done()
+    hass.states.async_set(entry.entity_id, "on", {"friendly_name": renamed_name})
+    state = hass.states.get(entry.entity_id)
+    assert state is not None
+    assert getattr(entry, "name_by_user", None) is None
+    assert entry.name == current_name
+    assert entry.original_name == original_name
+    assert state.attributes["friendly_name"] == renamed_name
+    assert state.name == renamed_name
+    await sync._send_full()
 
     full_messages = [
         call.args[0]
@@ -207,7 +216,7 @@ async def test_user_rename_replaces_original_name_in_next_inventory_full(
     ]
     assert full_messages
     renamed = full_messages[-1]["payload"]["entities"][0]
-    assert renamed["friendly_name"] == user_name
+    assert renamed["friendly_name"] == renamed_name
     assert renamed["entity_id"] == entry.entity_id
     assert renamed["registry_id"] == entry.id
     await sync.async_stop()

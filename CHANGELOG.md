@@ -4,6 +4,21 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-19 — Home Assistant visible-name synchronization 0.1.6
+
+Status: Ready for review
+
+### Scope
+
+- Gave the current Home Assistant state `friendly_name` absolute precedence when
+  serializing entity inventory metadata, with registry names retained as fallbacks.
+- Added a regression covering a UI rename when the entity registry still exposes the
+  preceding configured name, without changing entity or registry identity.
+
+### Scope guard
+
+- No EVCP schema, cloud persistence, pairing, authentication or entity identity changes.
+
 ## 2026-08-19 — Automatic database maintenance
 
 Status: Ready for review
