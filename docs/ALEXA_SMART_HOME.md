@@ -41,13 +41,20 @@ HTTP 401/429/503 responses receive three bounded attempts.
 5. Enable “Send Alexa Events” so Alexa issues `AcceptGrant`, and configure the
    LWA client credentials and region-matched Event Gateway URL.
 
-`GET /oauth/authorize` is behind the existing Ekonex authentication boundary.
-The current authenticated user is conveyed internally as `X-Ekonex-User-ID`;
-the public ingress/proxy must remove caller-supplied copies and set it only after
-login and consent. The selected tenant must be an actual user membership.
-Connector credentials are never reused or exposed. OAuth grants and tokens are
-stored only as SHA-256 digests. Unlink with `POST /oauth/revoke`; this revokes
-Alexa independently of HA pairing.
+`GET /oauth/authorize` serves the browser account-linking flow directly. Customers
+authenticate with their existing e-Control email/password through the same
+`PortalAuthenticationService` used by the pairing portal; no Cognito account or
+parallel identity store is required. Sessions remain opaque and server-side, with
+secure cookies and login rate limiting. A user with one membership proceeds directly;
+a user with multiple memberships chooses only among their active tenants through a
+CSRF-protected form. The authorization code redirect preserves Amazon's `state` value.
+
+The legacy trusted-header path remains available for controlled internal callers, but
+the public browser flow does not require reverse-proxy identity headers. Every selected
+tenant is revalidated against the authenticated user's memberships and fails closed.
+Connector credentials are never reused or exposed. OAuth grants and tokens are stored
+only as SHA-256 digests. Unlink with `POST /oauth/revoke`; this revokes Alexa
+independently of HA pairing.
 
 ## Capability matrix
 

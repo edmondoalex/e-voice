@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alexa import _digest, _redirect_allowed, _token
+from .auth import AccessDeniedError
 from .config import get_settings
 from .database import get_database_session
 from .domain.models import AlexaAccountLink, AlexaOAuthGrant, Tenant, TenantMembership
@@ -29,8 +30,8 @@ from .portal_auth import LoginRateLimitedError, PortalAuthenticationService, Por
 
 router = APIRouter(tags=["alexa-account-linking"])
 session_dependency = Depends(get_database_session)
-portal_token_cookie = Cookie(default=None, alias=SESSION_COOKIE)
-user_header = Header(default=None)
+portal_token_cookie = Cookie(alias=SESSION_COOKIE)
+user_header = Header()
 
 
 def _oauth_values(values: dict[str, str]) -> dict[str, str]:
@@ -51,7 +52,7 @@ def _oauth_values(values: dict[str, str]) -> dict[str, str]:
 
 def _validate_request(values: dict[str, str]) -> None:
     settings = get_settings()
-    if values.get("response_type") != "code":
+    if values.get("response_type") != "code" or not values.get("state"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid_request")
     if values.get("client_id") != settings.alexa_oauth_client_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid_client")
@@ -75,13 +76,20 @@ def _page(title: str, body: str) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)} · Ekonex Cloud Voice</title><style>
 :root{{--brand:#0b6b53;--ink:#16302a;--bg:#f2f7f5;--muted:#52655f}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:20px}}
-main{{width:min(100%,460px);background:white;border-radius:18px;padding:28px;box-shadow:0 12px 36px #1232}}
-img{{display:block;width:min(100%,220px);height:auto;aspect-ratio:1/1;object-fit:contain;margin:0 auto 18px;border-radius:12px;background:#050505}}
-h1{{font-size:1.6rem;margin:.5rem 0}}p{{line-height:1.5;color:var(--muted)}}label{{display:block;font-weight:650;margin:16px 0 7px}}
-input,select{{width:100%;font:inherit;padding:12px;border:1px solid #9aafa9;border-radius:9px}}button{{width:100%;margin-top:20px;padding:13px;border:0;border-radius:9px;background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);
+font-family:system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(100%,460px);background:white;border-radius:18px;padding:28px;
+box-shadow:0 12px 36px #1232}}
+img{{display:block;width:min(100%,220px);height:auto;aspect-ratio:1/1;object-fit:contain;
+margin:0 auto 18px;border-radius:12px;background:#050505}}
+h1{{font-size:1.6rem;margin:.5rem 0}}p{{line-height:1.5;color:var(--muted)}}
+label{{display:block;font-weight:650;margin:16px 0 7px}}
+input,select{{width:100%;font:inherit;padding:12px;border:1px solid #9aafa9;border-radius:9px}}
+button{{width:100%;margin-top:20px;padding:13px;border:0;border-radius:9px;
+background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
 .notice{{padding:12px;border-radius:9px;background:#fde8e7;color:#85221d}}</style></head><body><main>
-<img src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">{body}</main></body></html>"""
+<img src="/static/ekonex-cloud-voice.png" width="1254" height="1254"
+alt="Ekonex Cloud Voice">{body}</main></body></html>"""
 
 
 async def _identity(session: AsyncSession, token: str | None) -> PortalIdentity | None:
@@ -174,15 +182,15 @@ async def authorize(
         _cookie(response, LOGIN_CSRF_COOKIE, csrf, max_age=1800)
         return response
 
-    if identity.context is not None:
+    memberships = identity.memberships
+    if len(memberships) == 1:
         return await _issue_code(
             session,
             user_id=identity.user.id,
-            tenant_id=identity.context.tenant_id,
+            tenant_id=memberships[0].tenant_id,
             values=values,
         )
 
-    memberships = identity.memberships
     if not memberships:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "access_denied")
     tenants = {
@@ -199,16 +207,20 @@ async def authorize(
         for membership in memberships
         if membership.tenant_id in tenants
     )
+    csrf = _login_csrf()
     body = (
         "<h1>Scegli impianto/account</h1>"
         "<p>Alexa verrà collegata esclusivamente al tenant selezionato.</p>"
         '<form method="post" action="/oauth/alexa/tenant">'
         + _hidden(values)
+        + f'<input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">'
         + f'<label for="tenant_id">Account</label><select id="tenant_id" '
         f'name="tenant_id" required>{options}</select>'
         + '<button type="submit">Collega Alexa</button></form>'
     )
-    return HTMLResponse(_page("Scegli account", body))
+    response = HTMLResponse(_page("Scegli account", body))
+    _cookie(response, LOGIN_CSRF_COOKIE, csrf, max_age=1800)
+    return response
 
 
 @router.post("/oauth/alexa/login", response_class=HTMLResponse)
@@ -262,6 +274,8 @@ async def choose_tenant(
     values = await _form(request)
     oauth = _oauth_values(values)
     _validate_request(oauth)
+    if not _valid_login_csrf(values.get("csrf_token", ""), request.cookies.get(LOGIN_CSRF_COOKIE)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     identity = await _identity(session, portal_token)
     if identity is None:
         return RedirectResponse(f"/oauth/authorize?{urlencode(oauth)}", status_code=303)
@@ -269,7 +283,10 @@ async def choose_tenant(
         tenant_id = UUID(values.get("tenant_id", ""))
     except ValueError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid_request") from error
-    selected = await PortalAuthenticationService(session).select_tenant(identity, tenant_id)
+    try:
+        selected = await PortalAuthenticationService(session).select_tenant(identity, tenant_id)
+    except AccessDeniedError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "access_denied") from error
     return await _issue_code(
         session,
         user_id=selected.user.id,
