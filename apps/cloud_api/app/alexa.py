@@ -222,12 +222,12 @@ async def revoke(request: Request, database: AsyncSession = database_dependency)
 
 async def _authenticate(token: str, database: AsyncSession) -> AlexaAccountLink:
     row = await database.scalar(
-        select(AlexaOAuthToken).where(
-            AlexaOAuthToken.access_hash == _digest(token), AlexaOAuthToken.revoked_at.is_(None)
-        )
+        select(AlexaOAuthToken).where(AlexaOAuthToken.access_hash == _digest(token))
     )
-    if row is None or _utc(row.access_expires_at) <= datetime.now(UTC):
+    if row is None or row.revoked_at is not None:
         raise HTTPException(401, "INVALID_AUTHORIZATION_CREDENTIAL")
+    if _utc(row.access_expires_at) <= datetime.now(UTC):
+        raise HTTPException(401, "EXPIRED_AUTHORIZATION_CREDENTIAL")
     link = await database.get(AlexaAccountLink, row.link_id)
     if link is None or link.status != "active":
         raise HTTPException(401, "INVALID_AUTHORIZATION_CREDENTIAL")

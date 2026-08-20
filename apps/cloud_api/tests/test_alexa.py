@@ -230,6 +230,12 @@ async def test_expired_revoked_malformed_and_oversized_are_rejected(
     client = await _client(session)
     assert (await client.post("/alexa/v1/directive", content=b"{")).status_code == 400
     assert (await client.post("/alexa/v1/directive", content=b"x" * 65537)).status_code == 413
+    invalid = await client.post(
+        "/alexa/v1/directive",
+        json=_directive("eaa_invalid", "Alexa.Discovery", "Discover"),
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "INVALID_AUTHORIZATION_CREDENTIAL"
     token = await _access(session, seeded_domain, "eaa_revoked")
     row = await session.scalar(
         __import__("sqlalchemy")
@@ -237,13 +243,20 @@ async def test_expired_revoked_malformed_and_oversized_are_rejected(
         .where(AlexaOAuthToken.access_hash == _digest(token))
     )
     assert row is not None
+    row.access_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await session.commit()
+    expired = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    assert expired.status_code == 401
+    assert expired.json()["detail"] == "EXPIRED_AUTHORIZATION_CREDENTIAL"
     row.revoked_at = datetime.now(UTC)
     await session.commit()
-    assert (
-        await client.post(
-            "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
-        )
-    ).status_code == 401
+    revoked = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    assert revoked.status_code == 401
+    assert revoked.json()["detail"] == "INVALID_AUTHORIZATION_CREDENTIAL"
     await client.aclose()
 
 
