@@ -197,6 +197,7 @@ class Entity(TimestampMixin, Base):
     ha_entity_id: Mapped[str] = mapped_column(String(255))
     ha_registry_id: Mapped[str | None] = mapped_column(String(64))
     ha_domain: Mapped[str] = mapped_column(String(64))
+    icon: Mapped[str | None] = mapped_column(String(255))
     friendly_name: Mapped[str | None] = mapped_column(String(255))
     display_name: Mapped[str | None] = mapped_column(String(120))
     voice_name: Mapped[str | None] = mapped_column(String(120))

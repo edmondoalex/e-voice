@@ -46,13 +46,17 @@ out-of-order or cross-session messages fail closed. State updates may only targe
 an entity authorized by the latest full inventory.
 
 Entity records contain stable `registry_id`, current `entity_id`, domain,
-friendly name, area/device references and names, device class, supported
+friendly name, optional presentation-only `icon`, area/device references and names, device class, supported
 features, normalized state, availability, last-change time and explicitly safe
 attributes. An installer may expose any HA domain; domains are not an
 authorization filter. Attributes default to empty for domains without a defined
 safety allowlist. Light attributes are limited to brightness, color
 mode/temperature, RGB/HS/XY color and effect. `unknown` is represented as null
 state and `unavailable` as null state with `available: false`.
+
+`icon` is backward-compatible and does not participate in stable entity identity, Alexa endpoint
+IDs or Alexa discovery fingerprints. The cloud renders only known local SVG mappings, with safe
+domain and generic fallbacks.
 
 Exposure is opt-in before serialization. The effective set is the union of UI
 selected device IDs, UI selected stable entity-registry IDs, entities carrying
