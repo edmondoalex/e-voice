@@ -9,7 +9,9 @@ system. Open `/dashboard` after logging in at `/login`.
 - `/dashboard` lists only installations belonging to the selected tenant and derives
   online state from the EVCP liveness window.
 - `/installations/{id}` shows searchable, paginated exposed entities and their current
-  availability. Tombstoned entities remain visible but cannot be controlled.
+  availability, the latest Alexa Discovery payload metadata/diff, and redacted outcomes for the
+  latest proactive AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot
+  be controlled.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
   for an entity belonging to the selected tenant and installation.
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound

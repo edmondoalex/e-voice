@@ -4,6 +4,23 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Alexa Discovery observability and proactive synchronization
+
+Status: Ready for review
+
+### Scope
+
+- Added tenant/installation-scoped snapshots of the latest Alexa Discovery endpoint metadata and
+  new/renamed/removed diff, with no directive credentials persisted.
+- Added proactive AddOrUpdateReport/DeleteReport delivery through the existing encrypted
+  AcceptGrant/LWA/Event Gateway implementation and the existing Alexa endpoint mapper.
+- Added per-account delivery fingerprints for idempotency, bounded retry, redacted audit outcomes,
+  portal visibility, migration `20260820_0009` and focused isolation/security coverage.
+
+### Scope guard
+
+- No parallel entity inventory, Lambda protocol change, EVCP change or credential exposure.
+
 ## 2026-08-20 — Alexa Lambda cloud discovery adapter
 
 Status: Ready for review

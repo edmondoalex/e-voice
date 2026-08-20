@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -56,6 +57,20 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     await service.apply_full(2, [])
     assert entity.deleted_at is not None
     assert not entity.available
+
+
+async def test_inventory_commit_triggers_proactive_discovery_reconciliation(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(
+        Installation,
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+    )
+    assert installation is not None
+    reconcile = AsyncMock(return_value=0)
+    monkeypatch.setattr("apps.cloud_api.app.alexa_events.reconcile_discovery_safely", reconcile)
+    await EntitySyncService(session, installation).apply_full(1, [item()])
+    reconcile.assert_awaited_once_with(session, installation)
 
 
 async def test_name_change_updates_metadata_without_duplicate_identity(

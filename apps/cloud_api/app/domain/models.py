@@ -365,6 +365,47 @@ class AlexaReportedState(Base):
     reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class AlexaDiscoverySnapshot(TimestampMixin, Base):
+    __tablename__ = "alexa_discovery_snapshots"
+    __table_args__ = (
+        Index("ix_alexa_discovery_snapshots_tenant", "tenant_id"),
+        UniqueConstraint("installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    endpoint_count: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    endpoints_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    changes_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+class AlexaDiscoveryDelivery(Base):
+    """Per-account delivery ledger; authoritative endpoint data remains on Entity."""
+
+    __tablename__ = "alexa_discovery_deliveries"
+    __table_args__ = (
+        UniqueConstraint("link_id", "alexa_endpoint_id"),
+        Index("ix_alexa_discovery_deliveries_installation", "installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    link_id: Mapped[UUID] = mapped_column(ForeignKey("alexa_account_links.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    entity_id: Mapped[UUID | None] = mapped_column(ForeignKey("entities.id", ondelete="SET NULL"))
+    alexa_endpoint_id: Mapped[str] = mapped_column(String(255))
+    representation_fingerprint: Mapped[str] = mapped_column(String(64))
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (Index("ix_audit_events_tenant_created", "tenant_id", "created_at"),)

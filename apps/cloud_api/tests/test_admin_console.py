@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.admin_console import _database_size_mb
 from apps.cloud_api.app.database import get_database_session
-from apps.cloud_api.app.domain.models import AuditEvent, Entity, Installation, MaintenanceRun
+from apps.cloud_api.app.domain.models import (
+    AlexaDiscoverySnapshot,
+    AuditEvent,
+    Entity,
+    Installation,
+    MaintenanceRun,
+)
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.main import app
 from apps.cloud_api.tests.conftest import SeededDomain
@@ -279,6 +285,107 @@ async def test_installation_table_renders_effective_voice_names_and_aliases(
     assert "Nome vocale: Lampada ingresso" in page.text
     assert "Nome vocale: Luce terrazza" in page.text
     assert page.text.count("Alias: —") >= 2
+    await client.aclose()
+
+
+async def test_installation_renders_latest_alexa_discovery_and_proactive_reports(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    endpoint_value = f"ev1_{seeded_domain.entity_a_id.hex}"
+    session.add(
+        AlexaDiscoverySnapshot(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            endpoint_count=1,
+            discovered_at=datetime(2026, 8, 20, 14, 5, tzinfo=UTC),
+            endpoints_json=[
+                {
+                    "endpoint_id": endpoint_value,
+                    "voice_name": "Luce ufficio Alex",
+                    "domain": "light",
+                }
+            ],
+            changes_json=[
+                {
+                    "endpoint_id": endpoint_value,
+                    "voice_name": "Luce ufficio Alex",
+                    "domain": "light",
+                    "change": "new",
+                },
+                {
+                    "endpoint_id": "ev1_removed",
+                    "voice_name": "Vecchia luce",
+                    "domain": "light",
+                    "change": "removed",
+                },
+            ],
+        )
+    )
+    session.add_all(
+        [
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="alexa_event_gateway",
+                event_type="alexa.discovery.add_or_update",
+                payload_redacted_json={"endpoint_id": endpoint_value},
+                result="success",
+            ),
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="alexa_event_gateway",
+                event_type="alexa.discovery.delete",
+                payload_redacted_json={"endpoint_id": "ev1_removed"},
+                result="error",
+            ),
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert page.status_code == 200
+    assert "Alexa - ultima sincronizzazione" in page.text
+    assert "Ultima Discovery: 20/08/2026 14:05" in page.text
+    assert "Dispositivi inviati: 1" in page.text
+    assert "Luce ufficio Alex" in page.text
+    assert endpoint_value in page.text
+    assert "Nuovo" in page.text
+    assert "Rimosso" in page.text
+    assert "Ultimo AddOrUpdateReport" in page.text
+    assert "Ultimo DeleteReport" in page.text
+    assert "esito success" in page.text
+    assert "esito error" in page.text
+    assert "ev1_private" not in page.text
+    await client.aclose()
+
+
+async def test_installation_renders_no_alexa_discovery_tenant_safely(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    session.add(
+        AlexaDiscoverySnapshot(
+            tenant_id=seeded_domain.tenant_b_id,
+            installation_id=seeded_domain.installation_b_id,
+            endpoint_count=1,
+            endpoints_json=[
+                {
+                    "endpoint_id": "ev1_private",
+                    "voice_name": "Segreto tenant B",
+                    "domain": "light",
+                }
+            ],
+            changes_json=[],
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert page.status_code == 200
+    assert "Nessuna sincronizzazione Alexa registrata" in page.text
+    assert "Segreto tenant B" not in page.text
     await client.aclose()
 
 
