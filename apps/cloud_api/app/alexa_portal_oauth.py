@@ -219,9 +219,7 @@ async def login(
     values = await _form(request)
     oauth = _oauth_values(values)
     _validate_request(oauth)
-    if not _valid_login_csrf(
-        values.get("csrf_token", ""), request.cookies.get(LOGIN_CSRF_COOKIE)
-    ):
+    if not _valid_login_csrf(values.get("csrf_token", ""), request.cookies.get(LOGIN_CSRF_COOKIE)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     try:
         result = await PortalAuthenticationService(session).login(
