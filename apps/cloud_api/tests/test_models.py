@@ -33,7 +33,9 @@ def test_domain_tables_are_registered() -> None:
 
 def test_entity_identity_is_unique_per_installation() -> None:
     entity_table = Base.metadata.tables["entities"]
-    assert {"display_name", "voice_name", "voice_aliases"} <= set(entity_table.columns.keys())
+    assert {"display_name", "voice_name", "voice_aliases", "alexa_cover_mode"} <= set(
+        entity_table.columns.keys()
+    )
     unique_columns = {
         tuple(column.name for column in constraint.columns)
         for constraint in entity_table.constraints

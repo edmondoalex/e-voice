@@ -13,6 +13,7 @@ from apps.cloud_api.app.alexa import (
     _command,
     _digest,
     capabilities,
+    discovery_endpoint,
     endpoint_id,
 )
 from apps.cloud_api.app.database import get_database_session
@@ -341,7 +342,13 @@ def test_supported_directives_map_only_to_closed_m6_vocabulary() -> None:
         "operation": "set_brightness",
         "brightness": 128,
     }
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 70}) == {
+    cover = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.positioned",
+        ha_domain="cover",
+        supported_features=4,
+    )
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 70}, cover) == {
         "operation": "set_position",
         "position": 70,
     }
@@ -363,6 +370,7 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
         installation_id=__import__("uuid").uuid4(),
         ha_entity_id="cover.blind",
         ha_domain="cover",
+        supported_features=15,
         attributes_json={"current_position": 45},
     )
     capability = next(
@@ -387,6 +395,7 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
         installation_id=positioned.installation_id,
         ha_entity_id="cover.awning",
         ha_domain="cover",
+        supported_features=3,
         state="closed",
     )
     assert any(item["interface"] == "Alexa.ModeController" for item in capabilities(binary))
@@ -396,6 +405,94 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, binary) == {
         "operation": "close"
     }
+
+
+def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.office",
+        ha_registry_id="stable-office-cover",
+        ha_domain="cover",
+        supported_features=15,
+        state="open",
+        attributes_json={"current_position": 45},
+    )
+    stable = endpoint_id(entity)
+
+    entity.alexa_cover_mode = "discrete"
+    discrete = discovery_endpoint(entity)
+    discrete_interfaces = {item["interface"] for item in discrete["capabilities"]}
+    assert "Alexa.ModeController" in discrete_interfaces
+    assert "Alexa.RangeController" not in discrete_interfaces
+    mode = next(
+        item for item in discrete["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    assert {item["value"] for item in mode["configuration"]["supportedModes"]} == {
+        "Position.Up",
+        "Position.Down",
+        "Position.Stopped",
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) == {
+        "operation": "stop"
+    }
+
+    entity.alexa_cover_mode = "percentage"
+    percentage = discovery_endpoint(entity)
+    percentage_interfaces = {item["interface"] for item in percentage["capabilities"]}
+    assert "Alexa.RangeController" in percentage_interfaces
+    assert "Alexa.ModeController" not in percentage_interfaces
+
+    entity.alexa_cover_mode = "hybrid"
+    hybrid = discovery_endpoint(entity)
+    hybrid_controllers = [
+        item
+        for item in hybrid["capabilities"]
+        if item["interface"] in {"Alexa.ModeController", "Alexa.RangeController"}
+    ]
+    assert {item["interface"] for item in hybrid_controllers} == {
+        "Alexa.ModeController",
+        "Alexa.RangeController",
+    }
+    assert "semantics" not in next(
+        item for item in hybrid_controllers if item["interface"] == "Alexa.RangeController"
+    )
+    assert endpoint_id(entity) == stable
+    assert discrete != percentage != hybrid
+
+
+def test_cover_mode_does_not_advertise_stop_or_unsupported_position() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.basic",
+        ha_domain="cover",
+        supported_features=3,
+        alexa_cover_mode="discrete",
+    )
+    capability = next(
+        item for item in capabilities(entity) if item["interface"] == "Alexa.ModeController"
+    )
+    modes = {item["value"] for item in capability["configuration"]["supportedModes"]}
+    assert "Position.Stopped" not in modes
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
+
+
+def test_cover_auto_default_is_derived_conservatively_from_real_features() -> None:
+    discrete = Entity(
+        installation_id=uuid4(), ha_entity_id="cover.d", ha_domain="cover", supported_features=3
+    )
+    percentage = Entity(
+        installation_id=uuid4(), ha_entity_id="cover.p", ha_domain="cover", supported_features=4
+    )
+    hybrid = Entity(
+        installation_id=uuid4(), ha_entity_id="cover.h", ha_domain="cover", supported_features=7
+    )
+    assert {item["interface"] for item in capabilities(discrete)} >= {"Alexa.ModeController"}
+    assert {item["interface"] for item in capabilities(percentage)} >= {"Alexa.RangeController"}
+    interfaces = {item["interface"] for item in capabilities(hybrid)}
+    assert "Alexa.RangeController" in interfaces
+    assert "Alexa.ModeController" not in interfaces
 
 
 def test_every_advertised_reportable_property_is_proactive_and_retrievable() -> None:
@@ -420,6 +517,7 @@ async def test_discovered_cover_executes_advertised_range_directives(
     assert entity is not None
     entity.ha_domain = "cover"
     entity.ha_registry_id = "stable-cover"
+    entity.supported_features = 7
     entity.attributes_json = {"current_position": 45}
     await session.commit()
     token = await _access(session, seeded_domain, "eaa_cover")
@@ -449,4 +547,13 @@ async def test_discovered_cover_executes_advertised_range_directives(
     await_args = dispatched.await_args
     assert await_args is not None
     assert await_args.args[3] == {"operation": "set_position", "position": 100}
+
+    unsupported = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
+    unsupported["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    unsupported["directive"]["payload"] = {"mode": "Position.Stopped"}  # type: ignore[index]
+    invalid = await client.post("/alexa/v1/directive", json=unsupported)
+    assert invalid.status_code == 200
+    assert invalid.json()["event"]["header"]["name"] == "ErrorResponse"
+    assert invalid.json()["event"]["payload"]["type"] == "INVALID_DIRECTIVE"
+    assert dispatched.await_count == 1
     await client.aclose()

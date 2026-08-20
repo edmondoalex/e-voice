@@ -15,7 +15,8 @@ system. Open `/dashboard` after logging in at `/login`.
   latest AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot be
   controlled.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
-  for an entity belonging to the selected tenant and installation.
+  for an entity belonging to the selected tenant and installation. For `cover` entities it also
+  selects the feature-validated Alexa exposure mode (discrete, percentage, hybrid or automatic).
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound
   to the selected tenant; foreign installation and entity identifiers return 404.
 - `/system` reports tenant object counts, retained samples, the authoritative PostgreSQL
@@ -79,6 +80,11 @@ participate in collision detection without changing the Alexa or EVCP protocol.
 Updates and resets create `entity_names.updated` or `entity_names.reset` audit events. Audit
 payloads contain only the entity identifier and changed field names, not the configured
 names or aliases. Apply Alembic migration `20260819_0008` before deploying this feature.
+
+Cover mode changes use the same tenant-scoped, role-protected and CSRF-protected form. The
+selection is validated against synchronized e-Control feature flags before persistence and is
+included only as a changed-field name in audit metadata. Saving triggers the existing proactive
+Alexa reconciliation; endpoint identity does not change. Apply migration `20260820_0011`.
 
 ## State history and storage policy
 

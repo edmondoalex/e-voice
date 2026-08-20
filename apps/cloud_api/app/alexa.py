@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
+from .cover_modes import effective_cover_mode, supports_stop
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -41,6 +42,13 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
+
+
+def alexa_entity_eligible(entity: Entity) -> bool:
+    """Return whether an entity has a safe, publishable Alexa representation."""
+    return entity.ha_domain in SUPPORTED_DOMAINS and (
+        entity.ha_domain != "cover" or effective_cover_mode(entity) is not None
+    )
 
 
 def _digest(value: str) -> str:
@@ -263,64 +271,94 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.ColorTemperatureController", ["colorTemperatureInKelvin"])
             )
     elif entity.ha_domain == "cover":
-        if "current_position" in attributes:
-            result.append(
-                _capability("Alexa.RangeController", ["rangeValue"])
-                | {
-                    "instance": "Blind.Lift",
-                    "capabilityResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
-                        ]
-                    },
-                    "configuration": {
-                        "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
-                    },
-                    "semantics": {
-                        "actionMappings": [
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Open"],
-                                "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 100},
+        mode = effective_cover_mode(entity)
+        if mode in {"percentage", "hybrid"}:
+            range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
+                "instance": "Blind.Lift",
+                "capabilityResources": {
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                    ]
+                },
+                "configuration": {
+                    "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
+                },
+            }
+            if mode == "percentage":
+                range_capability["semantics"] = {
+                    "actionMappings": [
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Open"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 100},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Close"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 0},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Raise"],
+                            "directive": {
+                                "name": "AdjustRangeValue",
+                                "payload": {
+                                    "rangeValueDelta": 10,
+                                    "rangeValueDeltaDefault": False,
                                 },
                             },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Close"],
-                                "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 0},
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Lower"],
+                            "directive": {
+                                "name": "AdjustRangeValue",
+                                "payload": {
+                                    "rangeValueDelta": -10,
+                                    "rangeValueDeltaDefault": False,
                                 },
                             },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Raise"],
-                                "directive": {
-                                    "name": "AdjustRangeValue",
-                                    "payload": {
-                                        "rangeValueDelta": 10,
-                                        "rangeValueDeltaDefault": False,
-                                    },
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Lower"],
-                                "directive": {
-                                    "name": "AdjustRangeValue",
-                                    "payload": {
-                                        "rangeValueDelta": -10,
-                                        "rangeValueDeltaDefault": False,
-                                    },
-                                },
-                            },
-                        ]
-                    },
+                        },
+                    ]
                 }
-            )
-        else:
+            result.append(range_capability)
+        if mode in {"discrete", "hybrid"}:
+            supported_modes = [
+                {
+                    "value": "Position.Up",
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                        ]
+                    },
+                },
+                {
+                    "value": "Position.Down",
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}
+                        ]
+                    },
+                },
+            ]
+            if supports_stop(entity):
+                supported_modes.append(
+                    {
+                        "value": "Position.Stopped",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "text", "value": {"text": "stop", "locale": "en-US"}},
+                                {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
+                            ]
+                        },
+                    }
+                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
@@ -332,27 +370,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                     "configuration": {
                         "ordered": False,
-                        "supportedModes": [
-                            {
-                                "value": "Position.Up",
-                                "modeResources": {
-                                    "friendlyNames": [
-                                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
-                                    ]
-                                },
-                            },
-                            {
-                                "value": "Position.Down",
-                                "modeResources": {
-                                    "friendlyNames": [
-                                        {
-                                            "@type": "asset",
-                                            "value": {"assetId": "Alexa.Value.Close"},
-                                        }
-                                    ]
-                                },
-                            },
-                        ],
+                        "supportedModes": supported_modes,
                     },
                     "semantics": {
                         "actionMappings": [
@@ -486,7 +504,8 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
             )
         )
     if entity.ha_domain == "cover":
-        if "current_position" in attributes:
+        mode = effective_cover_mode(entity)
+        if mode in {"percentage", "hybrid"} and "current_position" in attributes:
             props.append(
                 _property(
                     "Alexa.RangeController",
@@ -495,7 +514,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     instance="Blind.Lift",
                 )
             )
-        else:
+        if mode in {"discrete", "hybrid"}:
             props.append(
                 _property(
                     "Alexa.ModeController",
@@ -556,14 +575,22 @@ def _command(
             "color_temp_kelvin": float(payload["colorTemperatureInKelvin"]),
         }
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
+        if entity is None or effective_cover_mode(entity) not in {"percentage", "hybrid"}:
+            return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
+        if effective_cover_mode(entity) not in {"percentage", "hybrid"}:
+            return None
         current = float((entity.attributes_json or {}).get("current_position", 0))
         return {
             "operation": "set_position",
             "position": round(min(100, max(0, current + float(payload["rangeValueDelta"])))),
         }
     if namespace == "Alexa.ModeController" and name == "SetMode":
+        if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
+            return None
+        if payload.get("mode") == "Position.Stopped":
+            return {"operation": "stop"} if supports_stop(entity) else None
         return (
             {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
             if payload.get("mode") in {"Position.Up", "Position.Down"}
@@ -670,7 +697,9 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
             ).all()
         )
-        entities = unambiguous_voice_entities(entities)
+        entities = unambiguous_voice_entities(
+            [entity for entity in entities if alexa_entity_eligible(entity)]
+        )
         published = [(entity, discovery_endpoint(entity)) for entity in entities]
         response = _event(
             {
@@ -706,11 +735,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 Entity.deleted_at.is_(None),
             )
         )
-        if (
-            entity is None
-            or entity.ha_registry_id is None
-            or entity.ha_domain not in SUPPORTED_DOMAINS
-        ):
+        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
         if header["namespace"] == "Alexa" and header["name"] == "ReportState":
             response = _event(
@@ -731,21 +756,6 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             )
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
-                raise HTTPException(400, "INVALID_DIRECTIVE")
-            command = command_adapter.validate_python(spec)
-            outcome = await CommandDispatchService(database, sessions).dispatch(
-                entity.installation_id,
-                entity.ha_registry_id,
-                command,
-                command_id=UUID(message_id) if _is_uuid(message_id) else uuid4(),
-            )
-            if outcome.status != "success":
-                error_type = {
-                    "unavailable": "ENDPOINT_UNREACHABLE",
-                    "timeout": "ENDPOINT_UNREACHABLE",
-                    "invalid_argument": "INVALID_VALUE",
-                    "unsupported_command": "INVALID_DIRECTIVE",
-                }.get(outcome.status, "INTERNAL_ERROR")
                 response = _event(
                     {
                         "namespace": "Alexa",
@@ -754,22 +764,48 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         "messageId": str(uuid4()),
                         "correlationToken": correlation,
                     },
-                    {"type": error_type, "message": error_type},
+                    {"type": "INVALID_DIRECTIVE", "message": "INVALID_DIRECTIVE"},
                     {"endpointId": endpoint_value},
                 )
             else:
-                response = _event(
-                    {
-                        "namespace": "Alexa",
-                        "name": "Response",
-                        "payloadVersion": "3",
-                        "messageId": str(uuid4()),
-                        "correlationToken": correlation,
-                    },
-                    {},
-                    {"endpointId": endpoint_value},
-                    state_properties(entity),
+                command = command_adapter.validate_python(spec)
+                outcome = await CommandDispatchService(database, sessions).dispatch(
+                    entity.installation_id,
+                    entity.ha_registry_id,
+                    command,
+                    command_id=UUID(message_id) if _is_uuid(message_id) else uuid4(),
                 )
+                if outcome.status != "success":
+                    error_type = {
+                        "unavailable": "ENDPOINT_UNREACHABLE",
+                        "timeout": "ENDPOINT_UNREACHABLE",
+                        "invalid_argument": "INVALID_VALUE",
+                        "unsupported_command": "INVALID_DIRECTIVE",
+                    }.get(outcome.status, "INTERNAL_ERROR")
+                    response = _event(
+                        {
+                            "namespace": "Alexa",
+                            "name": "ErrorResponse",
+                            "payloadVersion": "3",
+                            "messageId": str(uuid4()),
+                            "correlationToken": correlation,
+                        },
+                        {"type": error_type, "message": error_type},
+                        {"endpointId": endpoint_value},
+                    )
+                else:
+                    response = _event(
+                        {
+                            "namespace": "Alexa",
+                            "name": "Response",
+                            "payloadVersion": "3",
+                            "messageId": str(uuid4()),
+                            "correlationToken": correlation,
+                        },
+                        {},
+                        {"endpointId": endpoint_value},
+                        state_properties(entity),
+                    )
     _replay[replay_key] = response
     if len(_replay) > 2048:
         _replay.pop(next(iter(_replay)))
