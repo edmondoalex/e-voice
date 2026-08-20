@@ -5,6 +5,12 @@ v3 directive to Ekonex Cloud. The cloud validates the Ekonex BearerToken, resolv
 and builds discovery from the existing opt-in `entities` inventory. The Lambda never stores
 devices, tenant mappings or credentials and never writes access tokens to logs.
 
+`Alexa.Authorization/AcceptGrant` is the only directive allowed through the Lambda precheck
+without a regular `endpoint.scope` or `payload.scope`. Amazon places the linked-account token in
+`payload.grantee` and its one-use LWA authorization code in `payload.grant`; the complete directive
+is forwarded unchanged so the cloud can exchange and store the proactive-event credentials.
+Discovery, control and every other directive still require the regular BearerToken scope.
+
 ## Required AWS settings
 
 - Function name: `ekonex-voice`

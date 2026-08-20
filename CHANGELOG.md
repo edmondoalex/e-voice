@@ -4,6 +4,17 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Alexa Lambda AcceptGrant forwarding
+
+Status: Ready for review
+
+### Scope
+
+- Allowed only `Alexa.Authorization/AcceptGrant` through the Lambda authorization precheck without
+  a regular directive scope, preserving its Amazon grant and grantee payload for the cloud.
+- Kept mandatory BearerToken validation unchanged for Discovery, control and all other directives.
+- Added a production-payload regression test and Lambda deployment documentation.
+
 ## 2026-08-20 — Alexa Discovery observability and proactive synchronization
 
 Status: Ready for review
