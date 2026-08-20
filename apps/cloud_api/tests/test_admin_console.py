@@ -241,6 +241,47 @@ async def test_entity_names_dashboard_edit_reset_audit_and_tenant_isolation(
     await client.aclose()
 
 
+async def test_installation_table_renders_effective_voice_names_and_aliases(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    customized = await session.get(Entity, seeded_domain.entity_a_id)
+    assert customized is not None
+    customized.voice_name = "Luce ufficio contabilità"
+    customized.voice_aliases = ["ufficio", "luce contabilità", "lampada contabilità"]
+    session.add_all(
+        [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="light.entrance",
+                ha_registry_id="registry-entrance",
+                ha_domain="light",
+                friendly_name="Luce ingresso sincronizzata",
+                display_name="Lampada ingresso",
+            ),
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="light.terrace",
+                ha_registry_id="registry-terrace",
+                ha_domain="light",
+                friendly_name="Luce terrazza",
+            ),
+        ]
+    )
+    await session.commit()
+
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    assert page.status_code == 200
+    assert "Nome vocale: Luce ufficio contabilità" in page.text
+    assert "Alias: ufficio · luce contabilità · lampada contabilità" in page.text
+    assert "Nome vocale: Lampada ingresso" in page.text
+    assert "Nome vocale: Luce terrazza" in page.text
+    assert page.text.count("Alias: —") >= 2
+    await client.aclose()
+
+
 async def test_entity_name_edit_rejects_voice_collision(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
