@@ -360,6 +360,25 @@ def _alexa_discovery_section(
     for event in proactive_events:
         latest.setdefault(event.event_type, event)
 
+    activity_candidates: list[tuple[datetime, str, str | None]] = []
+    if snapshot is not None:
+        activity_candidates.append((snapshot.discovered_at, "Discovery completa", None))
+    for event_type, label in (
+        ("alexa.discovery.add_or_update", "AddOrUpdateReport"),
+        ("alexa.discovery.delete", "DeleteReport"),
+    ):
+        activity_event = latest.get(event_type)
+        if activity_event is not None:
+            activity_candidates.append((activity_event.created_at, label, activity_event.result))
+    if activity_candidates:
+        activity_at, activity_type, activity_result = max(
+            activity_candidates, key=lambda item: item[0]
+        )
+        result_suffix = f" · {_e(activity_result)}" if activity_result is not None else ""
+        latest_activity = f"<p><b>Ultima attività Alexa:</b> {_e(activity_at.strftime('%d/%m/%Y %H:%M'))} · {_e(activity_type)}{result_suffix}</p>"
+    else:
+        latest_activity = "<p><b>Ultima attività Alexa:</b> Nessuna attività Alexa registrata</p>"
+
     def report_line(event_type: str, label: str) -> str:
         event = latest.get(event_type)
         if event is None:
@@ -377,7 +396,7 @@ def _alexa_discovery_section(
     )
     current_inventory = f"<h3>Inventario Alexa corrente stimato</h3><p>Endpoint attivi: {len(current_endpoints)}</p><ul>{current_rows or '<li>Nessun endpoint attivo</li>'}</ul>"
     if snapshot is None:
-        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><h3>Snapshot ultima Discovery completa</h3><p>Nessuna sincronizzazione Alexa registrata</p>{reports}{current_inventory}</section>'
+        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}<h3>Snapshot ultima Discovery completa</h3><p>Nessuna sincronizzazione Alexa registrata</p>{reports}{current_inventory}</section>'
     changes = snapshot.changes_json or []
     change_by_endpoint = {
         str(change.get("endpoint_id")): str(change.get("change"))
@@ -400,7 +419,7 @@ def _alexa_discovery_section(
     new_count = sum(change.get("change") == "new" for change in changes)
     discovered_at = snapshot.discovered_at.strftime("%d/%m/%Y %H:%M")
     items = current + removed
-    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><h3>Snapshot ultima Discovery completa</h3><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
+    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}<h3>Snapshot ultima Discovery completa</h3><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
 
 
 def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:

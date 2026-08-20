@@ -4,6 +4,22 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Latest Alexa activity summary
+
+Status: Ready for review
+
+### Scope
+
+- Added a concise portal summary derived from the newest complete Discovery,
+  AddOrUpdateReport or DeleteReport timestamp and outcome.
+- Preserved the separate complete snapshot, proactive report and estimated current inventory
+  sections, including the original meaning of `Ultima Discovery`.
+
+### Scope guard
+
+- No query, persistence, Alexa protocol, proactive sync, Account Linking, Lambda, EVCP,
+  Connector or endpoint identity changes.
+
 ## 2026-08-20 — AJAX entity command form encoding fix
 
 Status: Ready for review
