@@ -117,6 +117,29 @@ button,.button{{background:var(--blue);color:white;border:0;text-decoration:none
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
 </aside><main><p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main><script>
+let csrfRefreshPromise = null;
+async function renewCommandCsrf() {{
+  if (!csrfRefreshPromise) {{
+    csrfRefreshPromise = fetch('/admin/csrf', {{headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}})
+      .then(async (response) => {{
+        const payload = await response.json();
+        if (!response.ok || !payload.csrf_token) throw new Error('Sessione scaduta');
+        document.querySelectorAll('input[name="csrf_token"]').forEach((input) => input.value = payload.csrf_token);
+        return payload.csrf_token;
+      }})
+      .finally(() => {{ csrfRefreshPromise = null; }});
+  }}
+  return csrfRefreshPromise;
+}}
+async function postEntityCommand(form, retried = false) {{
+  const response = await fetch(form.action, {{method: 'POST', body: new URLSearchParams(new FormData(form)), headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}});
+  const payload = await response.json();
+  if (response.status === 403 && payload.code === 'csrf_invalid' && !retried) {{
+    await renewCommandCsrf();
+    return postEntityCommand(form, true);
+  }}
+  return {{response, payload}};
+}}
 document.querySelectorAll('.entity-command').forEach((form) => {{
   const slider = form.querySelector('input[type="range"]');
   const value = form.querySelector('.level-value');
@@ -130,8 +153,7 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
     feedback.textContent = 'Invio...';
     button.disabled = true;
     try {{
-      const response = await fetch(form.action, {{method: 'POST', body: new URLSearchParams(new FormData(form)), headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}});
-      const payload = await response.json();
+      const {{response, payload}} = await postEntityCommand(form);
       if (!response.ok || !payload.ok) throw new Error(payload.detail || payload.message || 'Comando non riuscito');
       feedback.className = 'command-feedback ok';
       feedback.textContent = 'Comando eseguito';
@@ -153,6 +175,29 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
   }});
 }});
 </script></body></html>"""
+
+
+@router.get("/admin/csrf", response_class=JSONResponse)
+async def renew_admin_csrf(
+    context: Annotated[TenantContext, console_context_dependency],
+) -> JSONResponse:
+    """Issue a fresh CSRF pair for authenticated administrative AJAX calls."""
+    _admin(context)
+    token = _csrf(context)
+    response = JSONResponse(
+        {"csrf_token": token},
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        CSRF_COOKIE,
+        token,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=1800,
+    )
+    return response
 
 
 def _admin(context: TenantContext) -> None:
@@ -394,16 +439,21 @@ def _alexa_discovery_section(
         f'<li><b>{_e(endpoint.get("voice_name"))}</b><br><span class="muted">{_e(endpoint.get("endpoint_id"))} · {_e(endpoint.get("domain"))}</span></li>'
         for endpoint in current_endpoints
     )
-    current_inventory = f"<h3>Inventario Alexa corrente stimato</h3><p>Endpoint attivi: {len(current_endpoints)}</p><ul>{current_rows or '<li>Nessun endpoint attivo</li>'}</ul>"
+    current_inventory = f"<h3>Dispositivi attualmente presenti in Alexa</h3><p>Endpoint attivi: {len(current_endpoints)}</p><ul>{current_rows or '<li>Nessun endpoint attivo</li>'}</ul>"
+    snapshot_heading = '<h3>Snapshot ultima Discovery completa (storico)</h3><p class="muted">Questo elenco fotografa esclusivamente l’ultima Discovery completa e non rappresenta necessariamente i dispositivi aggiunti più recentemente tramite sincronizzazione proattiva.</p>'
     if snapshot is None:
-        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}<h3>Snapshot ultima Discovery completa</h3><p>Nessuna sincronizzazione Alexa registrata</p>{reports}{current_inventory}</section>'
+        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}{snapshot_heading}<p>Nessuna sincronizzazione Alexa registrata</p>{reports}{current_inventory}</section>'
     changes = snapshot.changes_json or []
     change_by_endpoint = {
         str(change.get("endpoint_id")): str(change.get("change"))
         for change in changes
         if change.get("change") in {"new", "renamed"}
     }
-    labels = {"new": "Nuovo", "renamed": "Rinominato", "removed": "Rimosso"}
+    labels = {
+        "new": "Nuovo rispetto alla Discovery precedente",
+        "renamed": "Rinominato rispetto alla Discovery precedente",
+        "removed": "Rimosso rispetto alla Discovery precedente",
+    }
 
     def endpoint_line(endpoint: dict[str, object], change: str | None = None) -> str:
         badge = f'<span class="badge">{labels[change]}</span>' if change in labels else ""
@@ -419,7 +469,7 @@ def _alexa_discovery_section(
     new_count = sum(change.get("change") == "new" for change in changes)
     discovered_at = snapshot.discovered_at.strftime("%d/%m/%Y %H:%M")
     items = current + removed
-    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}<h3>Snapshot ultima Discovery completa</h3><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
+    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}{snapshot_heading}<p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi rispetto alla Discovery completa precedente: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
 
 
 def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
@@ -716,6 +766,11 @@ async def send_command(
     installation = await _installation(session, context, installation_id)
     values = await _form(request)
     if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(
+                {"detail": "Richiesta non valida", "code": "csrf_invalid"},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     try:
         entity_id = UUID(values.get("entity_id", ""))

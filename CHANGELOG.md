@@ -4,6 +4,24 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Long-lived console CSRF renewal and Alexa UI clarity
+
+Status: Ready for review
+
+### Scope
+
+- Added an authenticated, tenant-context CSRF renewal endpoint for long-lived administration
+  pages and a single automatic command retry only for explicitly identified CSRF failures.
+- Preserved the non-JavaScript command flow and the existing authorization, tenant, audit and
+  typed dispatcher path.
+- Clarified historical complete Discovery data versus devices currently present in Alexa, while
+  preserving the latest Alexa activity summary and proactive-delivery ledger semantics.
+
+### Scope guard
+
+- No CSRF lifetime increase or bypass, database, Alexa protocol, proactive sync, Account Linking,
+  Lambda, EVCP, Connector, endpoint identity or query changes.
+
 ## 2026-08-20 — Latest Alexa activity summary
 
 Status: Ready for review

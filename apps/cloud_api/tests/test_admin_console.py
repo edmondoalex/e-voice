@@ -10,6 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.cloud_api.app import pairing_api
 from apps.cloud_api.app.admin_console import _database_size_mb
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
@@ -387,6 +388,77 @@ async def test_ajax_uses_urlencoded_payload_for_all_light_commands(
     await client.aclose()
 
 
+async def test_expired_ajax_csrf_is_renewed_and_command_retried_once(
+    session: AsyncSession,
+    seeded_domain: SeededDomain,
+    monkeypatch: object,
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-light-kitchen"
+    entity.available = True
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        dispatched.append(command)
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    old_token = _csrf(page)
+    issued_at = int(old_token.split(":")[2])
+    monkeypatch.setattr(pairing_api.time, "time", lambda: issued_at + 1801)  # type: ignore[attr-defined]
+    command_url = f"/installations/{seeded_domain.installation_a_id}/commands"
+    payload = {
+        "csrf_token": old_token,
+        "entity_id": str(entity.id),
+        "operation": "power_on",
+    }
+
+    expired = await client.post(
+        command_url,
+        data=payload,
+        headers={"Accept": "application/json"},
+    )
+    assert expired.status_code == 403
+    assert expired.json() == {"detail": "Richiesta non valida", "code": "csrf_invalid"}
+    assert dispatched == []
+
+    renewed = await client.get("/admin/csrf", headers={"Accept": "application/json"})
+    assert renewed.status_code == 200
+    assert renewed.headers["cache-control"] == "no-store"
+    new_token = renewed.json()["csrf_token"]
+    assert new_token != old_token
+    retried = await client.post(
+        command_url,
+        data={**payload, "csrf_token": new_token},
+        headers={"Accept": "application/json"},
+    )
+    assert retried.status_code == 200
+    assert retried.json()["ok"] is True
+    assert len(dispatched) == 1
+
+    assert "payload.code === 'csrf_invalid' && !retried" in page.text
+    assert page.text.count("return postEntityCommand(form, true)") == 1
+    await client.aclose()
+
+
+async def test_non_csrf_forbidden_does_not_expose_retry_code(
+    session: AsyncSession,
+    seeded_domain: SeededDomain,
+) -> None:
+    client = await _client(session)
+    await _login(client, "readonly@example.test", "readonly-password-123")
+    response = await client.get("/admin/csrf", headers={"Accept": "application/json"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Permessi insufficienti"
+    assert "code" not in response.json()
+    await client.aclose()
+
+
 async def test_entity_names_dashboard_edit_reset_audit_and_tenant_isolation(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
@@ -567,6 +639,12 @@ async def test_installation_renders_latest_alexa_discovery_and_proactive_reports
     assert page.status_code == 200
     assert "Alexa - ultima sincronizzazione" in page.text
     assert "Ultima attività Alexa:</b> 20/08/2026 14:46 · AddOrUpdateReport · success" in page.text
+    assert "Snapshot ultima Discovery completa (storico)" in page.text
+    assert "non rappresenta necessariamente i dispositivi aggiunti più recentemente" in page.text
+    assert "Dispositivi attualmente presenti in Alexa" in page.text
+    assert "Nuovo rispetto alla Discovery precedente" in page.text
+    assert "Nuovi dall’ultima Discovery" not in page.text
+    assert "Inventario Alexa corrente stimato" not in page.text
     assert "Ultima Discovery: 20/08/2026 14:05" in page.text
     assert "Dispositivi inviati: 1" in page.text
     assert "Luce ufficio Alex" in page.text
@@ -710,7 +788,7 @@ async def test_current_alexa_inventory_uses_readded_delivery_ledger(
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
     assert page.status_code == 200
-    assert "Inventario Alexa corrente stimato" in page.text
+    assert "Dispositivi attualmente presenti in Alexa" in page.text
     assert "Endpoint attivi: 1" in page.text
     assert "Luce Alexa corrente" in page.text
     assert "ev1_readded" in page.text
