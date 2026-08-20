@@ -536,6 +536,70 @@ async def test_entity_names_dashboard_edit_reset_audit_and_tenant_isolation(
     await client.aclose()
 
 
+async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.supported_features = 15
+    entity.attributes_json = {"current_position": 40}
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    edit_url = (
+        f"/installations/{seeded_domain.installation_a_id}/entities/"
+        f"{seeded_domain.entity_a_id}/edit"
+    )
+    page = await client.get(edit_url)
+    assert page.status_code == 200
+    assert "Modalità Alexa tapparella/tenda" in page.text
+    assert "Discreto — apri, ferma, chiudi" in page.text
+    assert "Percentuale — posizione 0–100%" in page.text
+    assert "Ibrido — comandi discreti e percentuali" in page.text
+
+    response = await client.post(
+        edit_url,
+        data={
+            "csrf_token": _csrf(page),
+            "action": "save",
+            "display_name": "",
+            "voice_name": "",
+            "voice_aliases": "",
+            "alexa_cover_mode": "percentage",
+        },
+    )
+    assert response.status_code == 200
+    await session.refresh(entity)
+    assert entity.alexa_cover_mode == "percentage"
+    assert (
+        await client.get(
+            f"/installations/{seeded_domain.installation_b_id}/entities/"
+            f"{seeded_domain.entity_b_id}/edit"
+        )
+    ).status_code == 404
+
+    entity.supported_features = 3
+    await session.commit()
+    invalid_page = await client.get(edit_url)
+    invalid = await client.post(
+        edit_url,
+        data={
+            "csrf_token": _csrf(invalid_page),
+            "action": "save",
+            "display_name": "",
+            "voice_name": "",
+            "voice_aliases": "",
+            "alexa_cover_mode": "hybrid",
+        },
+    )
+    assert invalid.status_code == 422
+    assert "incompatibile con le funzioni e-Control disponibili" in invalid.text
+    await session.refresh(entity)
+    assert entity.alexa_cover_mode == "percentage"
+    await client.aclose()
+
+
 async def test_installation_table_renders_effective_voice_names_and_aliases(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:

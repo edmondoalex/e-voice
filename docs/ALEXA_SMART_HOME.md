@@ -137,7 +137,7 @@ independently of HA pairing.
 | --- | --- | --- |
 | light | Power, Brightness; Color/ColorTemperature only when M5 attributes support them | on/off, brightness, RGB, Kelvin |
 | switch | PowerController | on/off |
-| cover | RangeController `Blind.Lift` with open/close/raise/lower semantics when position exists; otherwise ModeController `Blinds.Position` | absolute/relative position or typed open/close |
+| cover | Per-entity Discrete: ModeController `Blinds.Position`; Percentage: RangeController `Blind.Lift`; Hybrid: both, with semantics on only one controller | typed open/close/stop (only when HA advertises it) and/or absolute/relative position |
 | climate | ThermostatController | target temperature, thermostat mode |
 | fan | PowerController, PercentageController | on/off, percentage |
 | scene | SceneController | activate |
@@ -147,6 +147,26 @@ are never discovered. No Alexa field can choose an HA service, domain, entity ID
 or target. Tombstoned M5 entities immediately disappear and are no longer
 controllable. Endpoint ID is derived from the immutable cloud entity UUID, so HA
 name/entity_id changes update presentation without duplicating identity.
+
+### Cover exposure modes
+
+The entity edit page offers a persisted Alexa mode for each `cover`: **Discrete** (open/close,
+plus stop only when the synchronized HA feature flags support it), **Percentage** (absolute
+position 0–100), or **Hybrid** (both capability families). `Automatico` is the safe default and
+derives the least surprising publishable mode solely from `supported_features`: percentage when
+set-position exists (preserving the established range behavior), otherwise discrete when
+open+close exist. Hybrid is an explicit opt-in when both feature families are available.
+An incompatible explicit mode is rejected in the portal; if HA later removes a required feature,
+the endpoint is omitted until its mode or features become compatible instead of advertising a
+command that cannot execute.
+
+Hybrid discovery maps open/close/raise/lower semantics only on `ModeController`, avoiding the
+semantic phrase collision Amazon forbids across generic controllers on one endpoint. The range
+controller remains directly addressable for position utterances. A mode change preserves the
+entity-derived endpoint ID but changes its Discovery representation fingerprint, so the existing
+proactive reconciliation emits `AddOrUpdateReport` only when needed. The implementation follows
+Amazon's current blinds/shades device template and generic-controller semantic uniqueness rules.
+Apply Alembic migration `20260820_0011` before deploying.
 
 ## Manual acceptance
 

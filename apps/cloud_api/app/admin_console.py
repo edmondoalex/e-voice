@@ -21,6 +21,7 @@ from .alexa_events import reconcile_discovery_safely
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
+from .cover_modes import effective_cover_mode, validate_cover_mode
 from .database import get_database_session
 from .domain.enums import TenantRole
 from .domain.models import (
@@ -603,11 +604,27 @@ def _entity_names_form(
 ) -> str:
     aliases = "\n".join(entity.voice_aliases or [])
     notice = f'<p class="{"bad" if error else "ok"}">{_e(message)}</p>' if message else ""
+    cover_mode = ""
+    if entity.ha_domain == "cover":
+        selected = entity.alexa_cover_mode or "auto"
+        labels = {
+            "auto": "Automatico (in base alle funzioni e-Control)",
+            "discrete": "Discreto — apri, ferma, chiudi",
+            "percentage": "Percentuale — posizione 0–100%",
+            "hybrid": "Ibrido — comandi discreti e percentuali",
+        }
+        options = "".join(
+            f'<option value="{value}"{" selected" if value == selected else ""}>{label}</option>'
+            for value, label in labels.items()
+        )
+        effective = effective_cover_mode(entity) or "non pubblicabile con le funzioni attuali"
+        cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">Discreto usa apertura/chiusura e abilita arresto solo se supportato; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Modalità effettiva: {_e(effective)}.</span></label>"""
     return f'''{notice}<div class="card"><p><b>Nome e-Control</b><br>{_e(entity.friendly_name or entity.ha_entity_id)}<br><span class="muted">Sincronizzato automaticamente e non modificabile qui.</span></p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>
 <label class="field"><b>Nome vocale</b><input name="voice_name" maxlength="120" value="{_e(entity.voice_name)}" placeholder="Fallback: {_e(effective_display_name(entity))}"><span class="muted">Se vuoto: Nome visualizzato → Nome e-Control.</span></label>
 <label class="field"><b>Alias vocali</b><textarea name="voice_aliases" maxlength="2420" placeholder="Un alias per riga">{_e(aliases)}</textarea><span class="muted">Massimo 20 alias; spazi e duplicati senza distinzione maiuscole/minuscole vengono normalizzati.</span></label>
+{cover_mode}
 <p><b>Nome dashboard effettivo:</b> {_e(effective_display_name(entity))}<br><b>Nome vocale effettivo:</b> {_e(effective_voice_name(entity))}<br><b>Tutti i nomi vocali:</b> {_e(", ".join(all_voice_names(entity)))}</p>
 <div class="actions"><button name="action" value="save">Salva</button><a class="button" href="/installations/{installation.id}">Annulla</a><button class="danger" name="action" value="reset">Ripristina nomi personalizzati</button></div></form></div>'''
 
@@ -670,7 +687,12 @@ async def update_entity_names(
     values = await _form(request)
     if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
-    previous = (entity.display_name, entity.voice_name, list(entity.voice_aliases or []))
+    previous = (
+        entity.display_name,
+        entity.voice_name,
+        list(entity.voice_aliases or []),
+        entity.alexa_cover_mode,
+    )
     try:
         if values.get("action") == "reset":
             entity.display_name, entity.voice_name, entity.voice_aliases = None, None, []
@@ -680,14 +702,30 @@ async def update_entity_names(
             entity.voice_aliases = clean_voice_aliases(
                 re.split(r"[\r\n,]+", values.get("voice_aliases", ""))
             )
+            if entity.ha_domain == "cover":
+                requested_mode = values.get("alexa_cover_mode", "auto")
+                entity.alexa_cover_mode = (
+                    None
+                    if requested_mode == "auto"
+                    else validate_cover_mode(entity, requested_mode)
+                )
     except ValueError:
-        entity.display_name, entity.voice_name, entity.voice_aliases = previous
+        (
+            entity.display_name,
+            entity.voice_name,
+            entity.voice_aliases,
+            entity.alexa_cover_mode,
+        ) = previous
         return _names_page(
             installation,
             entity,
             context,
             _csrf(context),
-            message="Valori troppo lunghi o troppi alias.",
+            message=(
+                "Modalità Alexa incompatibile con le funzioni e-Control disponibili."
+                if entity.ha_domain == "cover"
+                else "Valori troppo lunghi o troppi alias."
+            ),
             error=True,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
@@ -701,7 +739,12 @@ async def update_entity_names(
         ).all()
     )
     if any(entity.id in ids for ids in voice_collisions(entities).values()):
-        entity.display_name, entity.voice_name, entity.voice_aliases = previous
+        (
+            entity.display_name,
+            entity.voice_name,
+            entity.voice_aliases,
+            entity.alexa_cover_mode,
+        ) = previous
         return _names_page(
             installation,
             entity,
@@ -711,11 +754,19 @@ async def update_entity_names(
             error=True,
             status_code=status.HTTP_409_CONFLICT,
         )
-    current = (entity.display_name, entity.voice_name, list(entity.voice_aliases or []))
+    current = (
+        entity.display_name,
+        entity.voice_name,
+        list(entity.voice_aliases or []),
+        entity.alexa_cover_mode,
+    )
     changed_fields = [
         name
         for name, before, after in zip(
-            ("display_name", "voice_name", "voice_aliases"), previous, current, strict=True
+            ("display_name", "voice_name", "voice_aliases", "alexa_cover_mode"),
+            previous,
+            current,
+            strict=True,
         )
         if before != after
     ]

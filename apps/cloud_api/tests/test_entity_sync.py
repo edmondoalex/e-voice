@@ -110,6 +110,7 @@ async def test_connector_rename_preserves_cloud_name_overrides(
     entity.display_name = "Ufficio Alex"
     entity.voice_name = "luce ufficio"
     entity.voice_aliases = ["ufficio", "luce alex"]
+    entity.alexa_cover_mode = "hybrid"
     await session.commit()
 
     await service.apply_full(2, [{**item(), "friendly_name": "Luce Ufficio Alex evoice"}])
@@ -118,6 +119,7 @@ async def test_connector_rename_preserves_cloud_name_overrides(
     assert entity.display_name == "Ufficio Alex"
     assert entity.voice_name == "luce ufficio"
     assert entity.voice_aliases == ["ufficio", "luce alex"]
+    assert entity.alexa_cover_mode == "hybrid"
     assert entity.ha_entity_id == original_id
     assert entity.ha_registry_id == original_registry_id
 

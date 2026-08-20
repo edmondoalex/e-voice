@@ -214,7 +214,7 @@ class AlexaEventGateway:
 
     async def reconcile_discovery(self, installation: Installation) -> int:
         """Publish only changed endpoint representations for one installation."""
-        from .alexa import SUPPORTED_DOMAINS, discovery_endpoint
+        from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
         from .entity_names import unambiguous_voice_entities
 
         entities = list(
@@ -228,7 +228,9 @@ class AlexaEventGateway:
                 )
             ).all()
         )
-        entities = unambiguous_voice_entities(entities)
+        entities = unambiguous_voice_entities(
+            [entity for entity in entities if alexa_entity_eligible(entity)]
+        )
         current: dict[str, tuple[Entity, dict[str, Any], str]] = {}
         for entity in entities:
             endpoint = discovery_endpoint(entity)

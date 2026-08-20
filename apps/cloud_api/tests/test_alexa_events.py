@@ -174,6 +174,25 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert renamed["event"]["header"]["name"] == "AddOrUpdateReport"
     assert renamed["event"]["payload"]["endpoints"][0]["friendlyName"] == "luce cucina nuova"
 
+    entity.ha_domain = "cover"
+    entity.supported_features = 7
+    entity.attributes_json = {"current_position": 45}
+    entity.alexa_cover_mode = "discrete"
+    await session.commit()
+    assert await gateway.reconcile_discovery(installation) == 1
+    discrete = json.loads(requests[-1].content)["event"]["payload"]["endpoints"][0]
+    assert discrete["endpointId"] == endpoint_value
+    assert "Alexa.ModeController" in {item["interface"] for item in discrete["capabilities"]}
+
+    entity.alexa_cover_mode = "hybrid"
+    await session.commit()
+    assert await gateway.reconcile_discovery(installation) == 1
+    hybrid = json.loads(requests[-1].content)["event"]["payload"]["endpoints"][0]
+    assert hybrid["endpointId"] == endpoint_value
+    assert {"Alexa.ModeController", "Alexa.RangeController"} <= {
+        item["interface"] for item in hybrid["capabilities"]
+    }
+
     entity.deleted_at = datetime.now(UTC)
     await session.commit()
     assert await gateway.reconcile_discovery(installation) == 1
@@ -192,7 +211,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
             )
         ).all()
     )
-    assert [event.result for event in audits] == ["success", "success", "success"]
+    assert [event.result for event in audits] == ["success"] * 5
     assert all("token" not in json.dumps(event.payload_redacted_json) for event in audits)
     await client.aclose()
 
