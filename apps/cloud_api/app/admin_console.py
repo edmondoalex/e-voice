@@ -12,7 +12,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,7 +104,7 @@ def _layout(title: str, body: str, context: TenantContext, csrf: str, active: st
     return f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(title)} · Ekonex Cloud Voice</title><style>
-:root{{--ink:#17202a;--muted:#667085;--blue:#1769e0;--bg:#f4f6f9;--card:#fff;--bad:#b42318;--ok:#067647}}
+:root{{--ink:#17202a;--muted:#667085;--blue:#1769e0;--bg:#f4f6f9;--card:#fff;--bad:#b42318;--ok:#067647;--off:#667085;--removed:#dc6803}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px system-ui,sans-serif}}
 aside{{position:fixed;inset:0 auto 0 0;width:230px;background:#101828;color:white;padding:24px}}
 aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;border-radius:7px}}aside a:hover,aside a:focus-visible{{background:#1d2939;color:white}}aside a.active{{background:#344054;color:white;font-weight:700}}main{{margin-left:230px;padding:28px;max-width:1400px}}
@@ -112,11 +112,47 @@ aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;bord
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
-.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger,.button-off{{background:var(--bad)}}.button-on{{background:var(--ok)}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--bad)}}.status-dot.available{{background:var(--ok)}}.level-control input{{width:110px;padding:0}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
-</aside><main><p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main></body></html>"""
+</aside><main><p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main><script>
+document.querySelectorAll('.entity-command').forEach((form) => {{
+  const slider = form.querySelector('input[type="range"]');
+  const value = form.querySelector('.level-value');
+  if (slider && value) slider.addEventListener('input', () => value.textContent = `${{slider.value}}%`);
+  form.addEventListener('submit', async (event) => {{
+    event.preventDefault();
+    const row = form.closest('[data-entity-row]');
+    const feedback = row.querySelector('.command-feedback');
+    const button = form.querySelector('button');
+    feedback.className = 'command-feedback muted';
+    feedback.textContent = 'Invio...';
+    button.disabled = true;
+    try {{
+      const response = await fetch(form.action, {{method: 'POST', body: new FormData(form), headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.detail || payload.message || 'Comando non riuscito');
+      feedback.className = 'command-feedback ok';
+      feedback.textContent = 'Comando eseguito';
+      if (payload.state === 'on' || payload.state === 'off') {{
+        row.classList.remove('state-on', 'state-off');
+        row.classList.add(`state-${{payload.state}}`);
+        row.querySelector('.entity-state').textContent = payload.state;
+        row.querySelector('.status-dot').className = `status-dot state-${{payload.state}}`;
+        row.querySelectorAll('[data-power]').forEach((item) => {{
+          item.classList.toggle('active-on', payload.state === 'on' && item.dataset.power === 'on');
+          item.classList.toggle('active-off', payload.state === 'off' && item.dataset.power === 'off');
+          item.setAttribute('aria-pressed', String(item.dataset.power === payload.state));
+        }});
+      }}
+    }} catch (error) {{
+      feedback.className = 'command-feedback bad';
+      feedback.textContent = error.message || 'Comando non riuscito';
+    }} finally {{ button.disabled = false; }}
+  }});
+}});
+</script></body></html>"""
 
 
 def _admin(context: TenantContext) -> None:
@@ -381,9 +417,23 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     availability = (
         "disponibile" if entity.available and entity.deleted_at is None else "non disponibile"
     )
-    status_class = "available" if availability == "disponibile" else ""
+    if entity.deleted_at is not None:
+        state_class = "removed"
+    elif not entity.available:
+        state_class = "unavailable"
+    elif entity.state in {"on", "off"}:
+        state_class = entity.state
+    else:
+        state_class = "neutral"
     icon = entity_icon_svg(entity.icon, entity.ha_domain)
-    return f'<tr><td><div class="entity-summary">{icon}<div class="entity-meta" aria-label="Nome vocale: {_e(voice_name)}"><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot {status_class}"></span>{_e(lifecycle)}<br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}</div></td></tr>'
+    return f'<tr class="state-{state_class}" data-entity-row="{entity.id}"><td><div class="entity-summary">{icon}<div class="entity-meta"><span class="voice-label">Nome vocale: {_e(voice_name)}</span><br><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot state-{state_class}"></span><span class="entity-state">{_e(lifecycle)}</span><br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}<span class="command-feedback" role="status" aria-live="polite"></span></div></td></tr>'
+
+
+def _light_level(entity: Entity) -> int:
+    brightness = (entity.attributes_json or {}).get("brightness")
+    if not isinstance(brightness, int) or isinstance(brightness, bool):
+        return 0
+    return min(100, max(0, round(brightness * 100 / 255)))
 
 
 def _control_form(
@@ -395,16 +445,21 @@ def _control_form(
     *,
     css_class: str = "",
     level: bool = False,
+    level_value: int = 0,
+    power: str | None = None,
+    active: bool = False,
     enabled: bool,
 ) -> str:
     disabled = "" if enabled else " disabled"
     level_input = (
-        f'<input type="range" name="value" min="0" max="100" value="50" step="1" aria-label="Livello luce percentuale"{disabled}>'
+        f'<input type="range" name="value" min="0" max="100" value="{level_value}" step="1" aria-label="Livello luce percentuale"{disabled}><output class="level-value">{level_value}%</output>'
         if level
         else ""
     )
     form_class = "inline level-control" if level else "inline"
-    return f'<form class="{form_class}" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{operation}">{level_input}<button class="{css_class}"{disabled}>{label}</button></form>'
+    power_data = f' data-power="{power}" aria-pressed="{str(active).lower()}"' if power else ""
+    active_class = f" active-{power}" if active and power else ""
+    return f'<form class="entity-command {form_class}" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{operation}">{level_input}<button class="command-button {css_class}{active_class}"{power_data}{disabled}>{label}</button></form>'
 
 
 def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
@@ -417,7 +472,8 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                     csrf,
                     "power_on",
                     "ON",
-                    css_class="button-on",
+                    power="on",
+                    active=entity.state == "on" and enabled,
                     enabled=enabled,
                 ),
                 _control_form(
@@ -426,7 +482,8 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                     csrf,
                     "power_off",
                     "OFF",
-                    css_class="button-off",
+                    power="off",
+                    active=entity.state == "off" and enabled,
                     enabled=enabled,
                 ),
                 _control_form(
@@ -436,6 +493,7 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                     "set_brightness",
                     "SET LIGHT LEVEL",
                     level=True,
+                    level_value=_light_level(entity),
                     enabled=enabled,
                 ),
             )
@@ -628,13 +686,13 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     return data
 
 
-@router.post("/installations/{installation_id}/commands", response_class=HTMLResponse)
+@router.post("/installations/{installation_id}/commands", response_model=None)
 async def send_command(
     installation_id: UUID,
     request: Request,
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     _admin(context)
     installation = await _installation(session, context, installation_id)
     values = await _form(request)
@@ -688,6 +746,20 @@ async def send_command(
         )
     )
     await session.commit()
+    if "application/json" in request.headers.get("accept", ""):
+        succeeded = outcome.status == "success"
+        target_state = None
+        if succeeded and command.operation in {"power_on", "power_off"}:
+            target_state = "on" if command.operation == "power_on" else "off"
+        return JSONResponse(
+            {
+                "ok": succeeded,
+                "message": "Comando eseguito" if succeeded else "Comando non riuscito",
+                "status": outcome.status,
+                "state": target_state,
+            },
+            status_code=status.HTTP_200_OK if succeeded else status.HTTP_502_BAD_GATEWAY,
+        )
     csrf = _csrf(context)
     body = f'<div class="card"><b>Esito: {_e(outcome.status)}</b><p>Il comando è stato completato dal dispatcher EVCP; nessun esito è simulato.</p><a class="button" href="/installations/{installation.id}">Torna all’installazione</a></div>'
     response = HTMLResponse(_layout("Esito comando", body, context, csrf, "installations"))

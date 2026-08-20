@@ -4,6 +4,22 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Entity control UX polish
+
+Status: Ready for review
+
+### Scope
+
+- Made the effective voice name both the primary entity title and an explicit labelled value.
+- Added distinct on, off, unavailable and removed state indicators plus active ON/OFF controls.
+- Added progressively enhanced inline command submission and feedback while retaining the
+  server-rendered non-JavaScript result page.
+- Displayed the current light level percentage beside the explicit 0–100% slider.
+
+### Scope guard
+
+- No Alexa, EVCP, database, entity identity, authorization or dispatcher contract changes.
+
 ## 2026-08-20 — Entity controls, icons and Alexa inventory visibility
 
 Status: Ready for review

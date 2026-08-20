@@ -21,7 +21,7 @@ from apps.cloud_api.app.domain.models import (
     Installation,
     MaintenanceRun,
 )
-from apps.cloud_api.app.evcp import CommandResultPayload, sessions
+from apps.cloud_api.app.evcp import CommandResultPayload, CommandStatus, sessions
 from apps.cloud_api.app.main import app
 from apps.cloud_api.tests.conftest import SeededDomain
 
@@ -193,11 +193,14 @@ async def test_light_direct_controls_icons_levels_and_unavailable_state(
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
     assert "<b>Luce cucina vocale</b>" in page.text
+    assert '<span class="voice-label">Nome vocale: Luce cucina vocale</span>' in page.text
     assert 'data-icon="mdi:ceiling-light"' in page.text
     assert ">ON</button>" in page.text
     assert ">OFF</button>" in page.text
     assert ">SET LIGHT LEVEL</button>" in page.text
     assert '<select name="operation">' not in page.text
+    assert 'value="0" step="1"' in page.text
+    assert '<output class="level-value">0%</output>' in page.text
     for operation, value in (
         ("power_on", ""),
         ("power_off", ""),
@@ -228,6 +231,103 @@ async def test_light_direct_controls_icons_levels_and_unavailable_state(
     assert 'data-icon="mdi:lightbulb"' in unavailable.text
     assert "non disponibile" in unavailable.text
     assert "disabled" in unavailable.text
+    await client.aclose()
+
+
+async def test_entity_state_colors_active_power_and_light_percentages(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-light-kitchen"
+    entity.available = True
+
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    for state_value, brightness, expected_class, active_power, percentage in (
+        ("on", 0, "state-on", "on", 0),
+        ("off", 128, "state-off", "off", 50),
+        ("on", 255, "state-on", "on", 100),
+    ):
+        entity.state = state_value
+        entity.attributes_json = {"brightness": brightness}
+        await session.commit()
+        page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+        assert f'class="{expected_class}" data-entity-row="{entity.id}"' in page.text
+        assert f'class="status-dot {expected_class}"' in page.text
+        assert f'data-power="{active_power}" aria-pressed="true"' in page.text
+        assert f'<output class="level-value">{percentage}%</output>' in page.text
+
+    entity.available = False
+    await session.commit()
+    unavailable = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'class="status-dot state-unavailable"' in unavailable.text
+    assert "disabled" in unavailable.text
+
+    entity.deleted_at = datetime.now(UTC)
+    await session.commit()
+    removed = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'class="status-dot state-removed"' in removed.text
+    assert "rimossa" in removed.text
+    assert "disabled" in removed.text
+    await client.aclose()
+
+
+async def test_ajax_command_returns_inline_success_and_error_with_html_fallback(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-light-kitchen"
+    entity.available = True
+    await session.commit()
+    outcome: CommandStatus = "success"
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status=outcome)
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    payload = {
+        "csrf_token": _csrf(page),
+        "entity_id": str(entity.id),
+        "operation": "power_on",
+    }
+    success = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data=payload,
+        headers={"Accept": "application/json"},
+    )
+    assert success.status_code == 200
+    assert success.json() == {
+        "ok": True,
+        "message": "Comando eseguito",
+        "status": "success",
+        "state": "on",
+    }
+    assert "event.preventDefault()" in page.text
+    assert "feedback.textContent = 'Comando eseguito'" in page.text
+
+    outcome = "execution_failed"
+    failed = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data=payload,
+        headers={"Accept": "application/json"},
+    )
+    assert failed.status_code == 502
+    assert failed.json()["ok"] is False
+    assert failed.json()["message"] == "Comando non riuscito"
+
+    fallback_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    fallback = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data={**payload, "csrf_token": _csrf(fallback_page)},
+    )
+    assert fallback.status_code == 200
+    assert "Esito: execution_failed" in fallback.text
     await client.aclose()
 
 
