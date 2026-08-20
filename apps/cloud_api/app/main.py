@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .admin_console import router as admin_console_router
 from .alexa import router as alexa_router
+from .alexa_portal_oauth import router as alexa_portal_oauth_router
 from .evcp import router as evcp_router
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
@@ -26,6 +27,9 @@ app.mount(
 app.include_router(pairing_router)
 app.include_router(admin_console_router)
 app.include_router(evcp_router)
+# Browser-facing account linking must win the GET /oauth/authorize route;
+# token/revoke/directive endpoints remain on the Alexa adapter router.
+app.include_router(alexa_portal_oauth_router)
 app.include_router(alexa_router)
 
 
