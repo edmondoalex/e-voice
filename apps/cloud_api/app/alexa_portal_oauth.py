@@ -64,7 +64,8 @@ def _validate_request(values: dict[str, str]) -> None:
 
 def _hidden(values: dict[str, str]) -> str:
     return "".join(
-        f'<input type="hidden" name="{html.escape(key, quote=True)}" value="{html.escape(value, quote=True)}">'
+        f'<input type="hidden" name="{html.escape(key, quote=True)}" '
+        f'value="{html.escape(value, quote=True)}">'
         for key, value in values.items()
     )
 
@@ -157,13 +158,17 @@ async def authorize(
     if identity is None:
         csrf = _login_csrf()
         body = (
-            "<h1>Collega Alexa a e-Control</h1><p>Accedi con lo stesso account e-Control che usi per gestire i tuoi impianti.</p>"
+            "<h1>Collega Alexa a e-Control</h1>"
+            "<p>Accedi con lo stesso account e-Control che usi per gestire i tuoi impianti.</p>"
             '<form method="post" action="/oauth/alexa/login">'
             + _hidden(values)
             + f'<input type="hidden" name="csrf_token" value="{html.escape(csrf, quote=True)}">'
-            '<label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="username">'
-            '<label for="password">Password</label><input id="password" name="password" type="password" minlength="12" maxlength="1024" required autocomplete="current-password">'
-            "<button type="submit">Accedi e continua</button></form>"
+            + '<label for="email">Email</label>'
+            + '<input id="email" name="email" type="email" required autocomplete="username">'
+            + '<label for="password">Password</label>'
+            + '<input id="password" name="password" type="password" minlength="12" '
+            + 'maxlength="1024" required autocomplete="current-password">'
+            + '<button type="submit">Accedi e continua</button></form>'
         )
         response = HTMLResponse(_page("Collega Alexa", body))
         _cookie(response, LOGIN_CSRF_COOKIE, csrf, max_age=1800)
@@ -183,20 +188,25 @@ async def authorize(
     tenants = {
         tenant.id: tenant
         for tenant in (
-            await session.scalars(select(Tenant).where(Tenant.id.in_([m.tenant_id for m in memberships])))
+            await session.scalars(
+                select(Tenant).where(Tenant.id.in_([m.tenant_id for m in memberships]))
+            )
         ).all()
     }
     options = "".join(
-        f'<option value="{membership.tenant_id}">{html.escape(tenants[membership.tenant_id].name)}</option>'
+        f'<option value="{membership.tenant_id}">'
+        f"{html.escape(tenants[membership.tenant_id].name)}</option>"
         for membership in memberships
         if membership.tenant_id in tenants
     )
     body = (
-        "<h1>Scegli impianto/account</h1><p>Alexa verrà collegata esclusivamente al tenant selezionato.</p>"
+        "<h1>Scegli impianto/account</h1>"
+        "<p>Alexa verrà collegata esclusivamente al tenant selezionato.</p>"
         '<form method="post" action="/oauth/alexa/tenant">'
         + _hidden(values)
-        + f'<label for="tenant_id">Account</label><select id="tenant_id" name="tenant_id" required>{options}</select>'
-        "<button type="submit">Collega Alexa</button></form>"
+        + f'<label for="tenant_id">Account</label><select id="tenant_id" '
+        f'name="tenant_id" required>{options}</select>'
+        + '<button type="submit">Collega Alexa</button></form>'
     )
     return HTMLResponse(_page("Scegli account", body))
 
@@ -209,16 +219,27 @@ async def login(
     values = await _form(request)
     oauth = _oauth_values(values)
     _validate_request(oauth)
-    if not _valid_login_csrf(values.get("csrf_token", ""), request.cookies.get(LOGIN_CSRF_COOKIE)):
+    if not _valid_login_csrf(
+        values.get("csrf_token", ""), request.cookies.get(LOGIN_CSRF_COOKIE)
+    ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     try:
         result = await PortalAuthenticationService(session).login(
             email=values.get("email", ""), password=values.get("password", "")
         )
     except LoginRateLimitedError:
-        return HTMLResponse(_page("Collega Alexa", '<p class="notice">Troppi tentativi. Riprova più tardi.</p>'), status_code=429)
+        return HTMLResponse(
+            _page(
+                "Collega Alexa",
+                '<p class="notice">Troppi tentativi. Riprova più tardi.</p>',
+            ),
+            status_code=429,
+        )
     if result is None:
-        return HTMLResponse(_page("Collega Alexa", '<p class="notice">Credenziali non valide.</p>'), status_code=401)
+        return HTMLResponse(
+            _page("Collega Alexa", '<p class="notice">Credenziali non valide.</p>'),
+            status_code=401,
+        )
     token, _ = result
     response = RedirectResponse(
         f"/oauth/authorize?{urlencode(oauth)}",
