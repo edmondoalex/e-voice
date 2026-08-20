@@ -32,6 +32,17 @@ percentage and maps it to the existing typed 0–255 M6 brightness field before 
 are disabled for unavailable or removed entities. Other supported domains expose only their
 allowlisted value-free operations; no generic service or operation selector is rendered.
 
+The effective voice name is the primary entity title and is also explicitly labelled. State
+indicators distinguish on (green), off (grey), unavailable (red) and removed (orange), with the
+corresponding ON/OFF control marked active. The light slider displays its selected percentage and
+does not dispatch while dragging.
+
+Command forms use progressive enhancement: JavaScript submits the existing CSRF-protected form
+to the same tenant-scoped endpoint with `Accept: application/json`, renders bounded success/error
+feedback inline and updates ON/OFF presentation after a confirmed success. Without JavaScript the
+same form posts normally and returns the existing server-rendered outcome page. Authentication,
+role checks, command validation, audit and Connector dispatch are shared by both paths.
+
 The optional Connector-provided icon uses an allowlisted local SVG path. Unknown icons fall back
 to a domain icon and then to a generic automation icon, so no remote asset or untrusted SVG is
 rendered. Apply Alembic migration `20260820_0010` before deploying icon persistence.
