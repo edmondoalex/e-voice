@@ -331,6 +331,62 @@ async def test_ajax_command_returns_inline_success_and_error_with_html_fallback(
     await client.aclose()
 
 
+async def test_ajax_uses_urlencoded_payload_for_all_light_commands(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-light-kitchen"
+    entity.available = True
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        dispatched.append(command)
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    assert "body: new URLSearchParams(new FormData(form))" in page.text
+    assert "body: new FormData(form)" not in page.text
+
+    multipart = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        files={
+            "csrf_token": (None, _csrf(page)),
+            "entity_id": (None, str(entity.id)),
+            "operation": (None, "power_on"),
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert multipart.status_code == 403
+    assert multipart.json()["detail"] == "Richiesta non valida"
+    assert dispatched == []
+
+    for operation, value in (("power_on", ""), ("power_off", ""), ("set_brightness", "50")):
+        response = await client.post(
+            f"/installations/{seeded_domain.installation_a_id}/commands",
+            data={
+                "csrf_token": _csrf(page),
+                "entity_id": str(entity.id),
+                "operation": operation,
+                "value": value,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 200
+    assert [item["operation"] for item in dispatched] == [
+        "power_on",
+        "power_off",
+        "set_brightness",
+    ]
+    assert dispatched[-1]["brightness"] == 128
+    await client.aclose()
+
+
 async def test_entity_names_dashboard_edit_reset_audit_and_tenant_isolation(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:

@@ -130,7 +130,7 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
     feedback.textContent = 'Invio...';
     button.disabled = true;
     try {{
-      const response = await fetch(form.action, {{method: 'POST', body: new FormData(form), headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}});
+      const response = await fetch(form.action, {{method: 'POST', body: new URLSearchParams(new FormData(form)), headers: {{Accept: 'application/json'}}, credentials: 'same-origin'}});
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.detail || payload.message || 'Comando non riuscito');
       feedback.className = 'command-feedback ok';

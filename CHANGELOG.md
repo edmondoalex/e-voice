@@ -4,6 +4,21 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — AJAX entity command form encoding fix
+
+Status: Ready for review
+
+### Scope
+
+- Encoded progressive-enhancement command submissions as URL-encoded form data, matching the
+  working non-JavaScript form and the intentionally bounded portal form parser.
+- Added regression coverage for the rejected multipart payload and successful ON, OFF and
+  SET LIGHT LEVEL dispatch through the unchanged secure command path.
+
+### Scope guard
+
+- No dispatcher, authorization, CSRF, tenant, Alexa, EVCP, database or Connector changes.
+
 ## 2026-08-20 — Entity control UX polish
 
 Status: Ready for review

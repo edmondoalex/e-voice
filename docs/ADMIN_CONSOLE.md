@@ -38,10 +38,12 @@ corresponding ON/OFF control marked active. The light slider displays its select
 does not dispatch while dragging.
 
 Command forms use progressive enhancement: JavaScript submits the existing CSRF-protected form
-to the same tenant-scoped endpoint with `Accept: application/json`, renders bounded success/error
-feedback inline and updates ON/OFF presentation after a confirmed success. Without JavaScript the
-same form posts normally and returns the existing server-rendered outcome page. Authentication,
-role checks, command validation, audit and Connector dispatch are shared by both paths.
+as `application/x-www-form-urlencoded` to the same tenant-scoped endpoint with
+`Accept: application/json`, renders bounded success/error feedback inline and updates ON/OFF
+presentation after a confirmed success. This encoding intentionally matches the bounded portal
+form parser and the normal HTML submit. Without JavaScript the same form posts normally and
+returns the existing server-rendered outcome page. Authentication, role checks, command
+validation, audit and Connector dispatch are shared by both paths.
 
 The optional Connector-provided icon uses an allowlisted local SVG path. Unknown icons fall back
 to a domain icon and then to a generic automation icon, so no remote asset or untrusted SVG is
