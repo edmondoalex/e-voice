@@ -43,6 +43,10 @@ def _access_token(directive: dict[str, Any]) -> str | None:
     return token if isinstance(token, str) and token else None
 
 
+def _is_accept_grant(header: dict[str, Any]) -> bool:
+    return header.get("namespace") == "Alexa.Authorization" and header.get("name") == "AcceptGrant"
+
+
 def _backend_endpoint() -> str:
     base_url = os.environ.get(BACKEND_URL_ENV, "").strip().rstrip("/")
     parsed = urlparse(base_url)
@@ -118,7 +122,7 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
         logger.warning("Rejected malformed Alexa directive")
         return _error_response({}, "INVALID_DIRECTIVE")
     namespace, name = str(header.get("namespace", "")), str(header.get("name", ""))
-    if _access_token(directive) is None:
+    if _access_token(directive) is None and not _is_accept_grant(header):
         logger.warning(
             "Alexa directive missing authorization namespace=%s name=%s", namespace, name
         )

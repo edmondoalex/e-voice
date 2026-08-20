@@ -57,6 +57,40 @@ def discover_response() -> dict[str, Any]:
     }
 
 
+def accept_grant() -> dict[str, Any]:
+    return {
+        "directive": {
+            "header": {
+                "namespace": "Alexa.Authorization",
+                "name": "AcceptGrant",
+                "payloadVersion": "3",
+                "messageId": "accept-grant-request-id",
+            },
+            "payload": {
+                "grant": {
+                    "type": "OAuth2.AuthorizationCode",
+                    "code": "amazon-one-use-authorization-code",
+                },
+                "grantee": {"type": "BearerToken", "token": ACCESS_TOKEN},
+            },
+        }
+    }
+
+
+def accept_grant_response() -> dict[str, Any]:
+    return {
+        "event": {
+            "header": {
+                "namespace": "Alexa.Authorization",
+                "name": "AcceptGrant.Response",
+                "payloadVersion": "3",
+                "messageId": "cloud-accept-grant-response-id",
+            },
+            "payload": {},
+        }
+    }
+
+
 class FakeResponse:
     def __init__(self, value: dict[str, Any]) -> None:
         self._body = json.dumps(value).encode()
@@ -100,6 +134,26 @@ def test_discovery_forwards_bearer_directive_and_returns_cloud_endpoints(
         assert lambda_handler(discovery(), None) == expected
 
 
+def test_accept_grant_without_normal_scope_is_forwarded_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EKONEX_VOICE_BACKEND_URL", "https://voice.e-control.tech")
+    directive = accept_grant()
+    expected = accept_grant_response()
+
+    def open_backend(request: Request, timeout: float) -> FakeResponse:
+        assert request.full_url == "https://voice.e-control.tech/alexa/v1/directive"
+        assert timeout == 8
+        assert request.data is not None
+        forwarded = json.loads(request.data.decode())
+        assert forwarded == directive
+        assert "scope" not in forwarded["directive"]["payload"]
+        return FakeResponse(expected)
+
+    with patch("aws_lambda.alexa_smart_home.lambda_function.urlopen", open_backend):
+        assert lambda_handler(directive, None) == expected
+
+
 @pytest.mark.parametrize(
     ("detail", "expected"),
     [
@@ -130,6 +184,15 @@ def test_missing_token_fails_without_calling_backend(caplog: pytest.LogCaptureFi
     open_backend.assert_not_called()
     assert response["event"]["payload"]["type"] == "INVALID_AUTHORIZATION_CREDENTIAL"
     assert ACCESS_TOKEN not in caplog.text
+
+
+def test_non_accept_grant_authorization_without_scope_is_rejected() -> None:
+    directive = accept_grant()
+    directive["directive"]["header"]["name"] = "UnsupportedAuthorization"  # type: ignore[index]
+    with patch("aws_lambda.alexa_smart_home.lambda_function.urlopen") as open_backend:
+        response = lambda_handler(directive, None)
+    open_backend.assert_not_called()
+    assert response["event"]["payload"]["type"] == "INVALID_AUTHORIZATION_CREDENTIAL"
 
 
 def test_backend_outage_returns_internal_error_without_credentials(
