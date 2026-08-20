@@ -11,7 +11,6 @@ AlexaCoverMode = Literal["discrete", "percentage", "hybrid"]
 COVER_OPEN = 1
 COVER_CLOSE = 2
 COVER_SET_POSITION = 4
-COVER_STOP = 8
 COVER_MODES: tuple[AlexaCoverMode, ...] = ("discrete", "percentage", "hybrid")
 
 
@@ -24,11 +23,6 @@ def supports_discrete(entity: Entity) -> bool:
 def supports_percentage(entity: Entity) -> bool:
     """Return whether HA advertises absolute cover positioning."""
     return bool(entity.supported_features & COVER_SET_POSITION)
-
-
-def supports_stop(entity: Entity) -> bool:
-    """Return whether HA advertises the stop operation."""
-    return bool(entity.supported_features & COVER_STOP)
 
 
 def effective_cover_mode(entity: Entity) -> AlexaCoverMode | None:

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode, supports_stop
+from .cover_modes import effective_cover_mode
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -347,18 +347,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
-            if supports_stop(entity):
-                supported_modes.append(
-                    {
-                        "value": "Position.Stopped",
-                        "modeResources": {
-                            "friendlyNames": [
-                                {"@type": "text", "value": {"text": "stop", "locale": "en-US"}},
-                                {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
-                            ]
-                        },
-                    }
-                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
@@ -390,7 +378,19 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                                     "payload": {"mode": "Position.Down"},
                                 },
                             },
-                        ]
+                        ],
+                        "stateMappings": [
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Closed"],
+                                "value": "Position.Down",
+                            },
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Open"],
+                                "value": "Position.Up",
+                            },
+                        ],
                     },
                 }
             )
@@ -589,8 +589,6 @@ def _command(
     if namespace == "Alexa.ModeController" and name == "SetMode":
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
-        if payload.get("mode") == "Position.Stopped":
-            return {"operation": "stop"} if supports_stop(entity) else None
         return (
             {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
             if payload.get("mode") in {"Position.Up", "Position.Down"}

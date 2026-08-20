@@ -137,7 +137,7 @@ independently of HA pairing.
 | --- | --- | --- |
 | light | Power, Brightness; Color/ColorTemperature only when M5 attributes support them | on/off, brightness, RGB, Kelvin |
 | switch | PowerController | on/off |
-| cover | Per-entity Discrete: ModeController `Blinds.Position`; Percentage: RangeController `Blind.Lift`; Hybrid: both, with semantics on only one controller | typed open/close/stop (only when HA advertises it) and/or absolute/relative position |
+| cover | Per-entity Discrete: ModeController `Blinds.Position`; Percentage: RangeController `Blind.Lift`; Hybrid: both, with semantics on only one controller | typed open/close and/or absolute/relative position |
 | climate | ThermostatController | target temperature, thermostat mode |
 | fan | PowerController, PercentageController | on/off, percentage |
 | scene | SceneController | activate |
@@ -150,8 +150,8 @@ name/entity_id changes update presentation without duplicating identity.
 
 ### Cover exposure modes
 
-The entity edit page offers a persisted Alexa mode for each `cover`: **Discrete** (open/close,
-plus stop only when the synchronized HA feature flags support it), **Percentage** (absolute
+The entity edit page offers a persisted Alexa mode for each `cover`: **Discrete** (open/close),
+**Percentage** (absolute
 position 0–100), or **Hybrid** (both capability families). `Automatico` is the safe default and
 derives the least surprising publishable mode solely from `supported_features`: percentage when
 set-position exists (preserving the established range behavior), otherwise discrete when
@@ -167,6 +167,23 @@ entity-derived endpoint ID but changes its Discovery representation fingerprint,
 proactive reconciliation emits `AddOrUpdateReport` only when needed. The implementation follows
 Amazon's current blinds/shades device template and generic-controller semantic uniqueness rules.
 Apply Alembic migration `20260820_0011` before deploying.
+
+Amazon's current blinds/shades template defines the discrete `Blinds.Position` controller with
+exactly two modes: `Position.Up` and `Position.Down`. Alexa Smart Home does not define a Stop
+directive for window treatments; media `PlaybackController.Stop` and cooking
+`TimeHoldController.Hold` are not valid substitutes. Consequently Ekonex does not advertise a
+custom third stop mode, because doing so turns the standard blinds controller into a generic
+selector and can make open/close utterance routing unreliable. Stop remains available in the
+e-Control portal and EVCP when HA supports it, but not as an Alexa cover utterance.
+The controller includes Amazon's canonical Open/Close action mappings and Open/Closed state
+mappings; global Alexa assets provide localized mode vocabulary, including `it-IT`, without
+custom localized controller values.
+
+`AddOrUpdateReport` updates the endpoint representation while preserving `endpointId`. Amazon can
+retain cached controller metadata, especially after a previously incompatible representation;
+after deploying this correction, run one complete device discovery (or remove and rediscover the
+device) to replace that cached model. Ekonex cannot force the Alexa app to render three direct
+buttons: the app UI is selected by Alexa from the declared standard capability.
 
 ## Manual acceptance
 
