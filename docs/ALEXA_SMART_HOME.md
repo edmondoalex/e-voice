@@ -61,6 +61,11 @@ Discovery snapshot and its endpoint names/IDs/domains/diff, plus the most recent
 AddOrUpdateReport/DeleteReport endpoint, result and timestamp. It reads tenant-scoped snapshots and
 redacted audit metadata only. Apply Alembic migration `20260820_0009` before deploying.
 
+The leading **Ultima attività Alexa** line compares those already-loaded timestamps and reports the
+newest complete Discovery, AddOrUpdateReport or DeleteReport. It is a presentation-only summary:
+`Ultima Discovery` continues to mean only the last complete Discover.Response snapshot, and no
+additional inventory, query or persistence is introduced.
+
 End-to-end acceptance:
 
 1. Enable/relink the development skill so Ekonex receives a successful `AcceptGrant`.

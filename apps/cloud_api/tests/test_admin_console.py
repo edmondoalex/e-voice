@@ -547,6 +547,7 @@ async def test_installation_renders_latest_alexa_discovery_and_proactive_reports
                 event_type="alexa.discovery.add_or_update",
                 payload_redacted_json={"endpoint_id": endpoint_value},
                 result="success",
+                created_at=datetime(2026, 8, 20, 14, 46, tzinfo=UTC),
             ),
             AuditEvent(
                 tenant_id=seeded_domain.tenant_a_id,
@@ -555,6 +556,7 @@ async def test_installation_renders_latest_alexa_discovery_and_proactive_reports
                 event_type="alexa.discovery.delete",
                 payload_redacted_json={"endpoint_id": "ev1_removed"},
                 result="error",
+                created_at=datetime(2026, 8, 20, 14, 10, tzinfo=UTC),
             ),
         ]
     )
@@ -564,6 +566,7 @@ async def test_installation_renders_latest_alexa_discovery_and_proactive_reports
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
     assert page.status_code == 200
     assert "Alexa - ultima sincronizzazione" in page.text
+    assert "Ultima attività Alexa:</b> 20/08/2026 14:46 · AddOrUpdateReport · success" in page.text
     assert "Ultima Discovery: 20/08/2026 14:05" in page.text
     assert "Dispositivi inviati: 1" in page.text
     assert "Luce ufficio Alex" in page.text
@@ -575,6 +578,72 @@ async def test_installation_renders_latest_alexa_discovery_and_proactive_reports
     assert "esito success" in page.text
     assert "esito error" in page.text
     assert "ev1_private" not in page.text
+    await client.aclose()
+
+
+async def test_installation_renders_delete_as_latest_alexa_activity(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    session.add(
+        AlexaDiscoverySnapshot(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            endpoint_count=0,
+            discovered_at=datetime(2026, 8, 20, 13, 34, tzinfo=UTC),
+            endpoints_json=[],
+            changes_json=[],
+        )
+    )
+    session.add_all(
+        [
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="alexa_event_gateway",
+                event_type="alexa.discovery.add_or_update",
+                payload_redacted_json={"endpoint_id": "ev1_updated"},
+                result="success",
+                created_at=datetime(2026, 8, 20, 13, 40, tzinfo=UTC),
+            ),
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="alexa_event_gateway",
+                event_type="alexa.discovery.delete",
+                payload_redacted_json={"endpoint_id": "ev1_deleted"},
+                result="success",
+                created_at=datetime(2026, 8, 20, 13, 42, tzinfo=UTC),
+            ),
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Ultima attività Alexa:</b> 20/08/2026 13:42 · DeleteReport · success" in page.text
+    assert "Ultima Discovery: 20/08/2026 13:34" in page.text
+    await client.aclose()
+
+
+async def test_installation_renders_discovery_as_only_alexa_activity(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    session.add(
+        AlexaDiscoverySnapshot(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            endpoint_count=0,
+            discovered_at=datetime(2026, 8, 20, 12, 15, tzinfo=UTC),
+            endpoints_json=[],
+            changes_json=[],
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Ultima attività Alexa:</b> 20/08/2026 12:15 · Discovery completa" in page.text
+    assert "Ultima Discovery: 20/08/2026 12:15" in page.text
     await client.aclose()
 
 
@@ -601,6 +670,7 @@ async def test_installation_renders_no_alexa_discovery_tenant_safely(
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
     assert page.status_code == 200
+    assert "Nessuna attività Alexa registrata" in page.text
     assert "Nessuna sincronizzazione Alexa registrata" in page.text
     assert "Segreto tenant B" not in page.text
     await client.aclose()
