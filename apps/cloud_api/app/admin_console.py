@@ -274,9 +274,11 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
         options = "".join(f'<option value="{op}">{op}</option>' for op in operations)
         controls = f'<form method="post" action="/installations/{installation.id}/commands" onsubmit="this.querySelector(\'button\').textContent=\'Invio…\'"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><select name="operation">{options}</select><input name="value" size="5" placeholder="valore"><button>Invia</button></form>'
     label = effective_display_name(entity)
+    voice_name = effective_voice_name(entity)
+    aliases = " · ".join(_e(alias) for alias in (entity.voice_aliases or [])) or "—"
     lifecycle = "rimossa" if entity.deleted_at else (entity.state or "—")
     edit = f'<a class="button" href="/installations/{installation.id}/entities/{entity.id}/edit">Modifica</a>'
-    return f'<tr><td><b>{_e(label)}</b><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)} · {_e(entity.ha_entity_id)}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name)}</td><td>{_e(lifecycle)} · {"disponibile" if entity.available else "non disponibile"}</td><td>{edit} {controls}</td></tr>'
+    return f'<tr><td><b>{_e(label)}</b><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)} · {_e(entity.ha_entity_id)}</span><br><span class="muted">Nome vocale: {_e(voice_name)}</span><br><span class="muted">Alias: {aliases}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name)}</td><td>{_e(lifecycle)} · {"disponibile" if entity.available else "non disponibile"}</td><td>{edit} {controls}</td></tr>'
 
 
 def _entity_names_form(
