@@ -27,6 +27,7 @@ def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, 
         "registry_id": registry_id,
         "entity_id": "light.kitchen",
         "domain": "light",
+        "icon": "mdi:ceiling-light",
         "friendly_name": "Kitchen",
         "area_id": None,
         "area_name": None,
@@ -54,6 +55,7 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     ).one()
     assert entity.state == "on"
     assert entity.attributes_json == {"brightness": 100}
+    assert entity.icon == "mdi:ceiling-light"
     await service.apply_full(2, [])
     assert entity.deleted_at is not None
     assert not entity.available

@@ -155,6 +155,7 @@ class EntitySyncService:
         entity.ha_registry_id = str(item["registry_id"])
         entity.ha_entity_id = str(item["entity_id"])
         entity.ha_domain = str(item["domain"])
+        entity.icon = _optional(item, "icon")
         entity.friendly_name = _optional(item, "friendly_name")
         entity.area_id, entity.area_name = _optional(item, "area_id"), _optional(item, "area_name")
         entity.device_id, entity.device_name = (

@@ -1,5 +1,8 @@
 # Ekonex Voice Home Assistant Connector
 
+Version 0.1.7 includes the current entity icon in inventory metadata when available. The field is
+optional for EVCP compatibility and never changes registry identity or exposure selection.
+
 ## M5 opt-in exposure acceptance
 
 On HAOS, open Ekonex Voice configuration options. A fresh entry must show no

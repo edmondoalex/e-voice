@@ -19,7 +19,12 @@ def registered_light(hass: HomeAssistant) -> er.RegistryEntry:
     hass.states.async_set(
         entry.entity_id,
         "on",
-        {"brightness": 120, "access_token": "never-share", "friendly_name": "Kitchen"},
+        {
+            "brightness": 120,
+            "access_token": "never-share",
+            "friendly_name": "Kitchen",
+            "icon": "mdi:ceiling-light",
+        },
     )
     return entry
 
@@ -118,6 +123,7 @@ async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(
     item = sync._serialize(entry)
     assert item is not None
     assert item["registry_id"] == entry.id
+    assert item["icon"] == "mdi:ceiling-light"
     assert item["attributes"] == {"brightness": 120}
 
 

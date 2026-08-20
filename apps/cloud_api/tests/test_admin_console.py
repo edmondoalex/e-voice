@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.cloud_api.app.admin_console import _database_size_mb
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
+    AlexaAccountLink,
+    AlexaDiscoveryDelivery,
     AlexaDiscoverySnapshot,
     AuditEvent,
     Entity,
@@ -167,6 +169,65 @@ async def test_command_rejects_cross_tenant_entity(
         },
     )
     assert response.status_code == 404
+    await client.aclose()
+
+
+async def test_light_direct_controls_icons_levels_and_unavailable_state(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-light-kitchen"
+    entity.voice_name = "Luce cucina vocale"
+    entity.icon = "mdi:ceiling-light"
+    entity.available = True
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        dispatched.append(command)
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "<b>Luce cucina vocale</b>" in page.text
+    assert 'data-icon="mdi:ceiling-light"' in page.text
+    assert ">ON</button>" in page.text
+    assert ">OFF</button>" in page.text
+    assert ">SET LIGHT LEVEL</button>" in page.text
+    assert '<select name="operation">' not in page.text
+    for operation, value in (
+        ("power_on", ""),
+        ("power_off", ""),
+        ("set_brightness", "0"),
+        ("set_brightness", "50"),
+        ("set_brightness", "100"),
+    ):
+        command_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+        base = {"csrf_token": _csrf(command_page), "entity_id": str(entity.id)}
+        response = await client.post(
+            f"/installations/{seeded_domain.installation_a_id}/commands",
+            data={**base, "operation": operation, "value": value},
+        )
+        assert response.status_code == 200
+    assert [command["operation"] for command in dispatched] == [
+        "power_on",
+        "power_off",
+        "set_brightness",
+        "set_brightness",
+        "set_brightness",
+    ]
+    assert [command.get("brightness") for command in dispatched[-3:]] == [0, 128, 255]
+
+    entity.available = False
+    entity.icon = "mdi:unknown-future-icon"
+    await session.commit()
+    unavailable = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'data-icon="mdi:lightbulb"' in unavailable.text
+    assert "non disponibile" in unavailable.text
+    assert "disabled" in unavailable.text
     await client.aclose()
 
 
@@ -386,6 +447,47 @@ async def test_installation_renders_no_alexa_discovery_tenant_safely(
     assert page.status_code == 200
     assert "Nessuna sincronizzazione Alexa registrata" in page.text
     assert "Segreto tenant B" not in page.text
+    await client.aclose()
+
+
+async def test_current_alexa_inventory_uses_readded_delivery_ledger(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.voice_name = "Luce Alexa corrente"
+    link = AlexaAccountLink(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_a_id,
+        provider_subject="current-ledger-subject",
+    )
+    session.add(link)
+    await session.flush()
+    delivery = AlexaDiscoveryDelivery(
+        link_id=link.id,
+        installation_id=seeded_domain.installation_a_id,
+        entity_id=entity.id,
+        alexa_endpoint_id="ev1_readded",
+        representation_fingerprint="a" * 64,
+        published_at=datetime.now(UTC),
+    )
+    session.add(delivery)
+    await session.commit()
+    delivery.removed_at = datetime.now(UTC)
+    await session.commit()
+    delivery.removed_at = None
+    delivery.representation_fingerprint = "b" * 64
+    delivery.published_at = datetime.now(UTC)
+    await session.commit()
+
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert page.status_code == 200
+    assert "Inventario Alexa corrente stimato" in page.text
+    assert "Endpoint attivi: 1" in page.text
+    assert "Luce Alexa corrente" in page.text
+    assert "ev1_readded" in page.text
     await client.aclose()
 
 

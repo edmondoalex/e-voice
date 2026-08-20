@@ -24,6 +24,8 @@ from .config import get_settings
 from .database import get_database_session
 from .domain.enums import TenantRole
 from .domain.models import (
+    AlexaAccountLink,
+    AlexaDiscoveryDelivery,
     AlexaDiscoverySnapshot,
     AuditEvent,
     Entity,
@@ -32,6 +34,7 @@ from .domain.models import (
     MaintenanceRun,
     OperationalEvent,
 )
+from .entity_icons import entity_icon_svg
 from .entity_names import (
     all_voice_names,
     clean_optional_name,
@@ -109,7 +112,7 @@ aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;bord
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
-.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions{{display:flex;gap:10px;flex-wrap:wrap}}button.danger{{background:var(--bad)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger,.button-off{{background:var(--bad)}}.button-on{{background:var(--ok)}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--bad)}}.status-dot.available{{background:var(--ok)}}.level-control input{{width:110px;padding:0}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
@@ -281,9 +284,30 @@ async def installation_detail(
             )
         ).all()
     )
+    current_result = await session.execute(
+        select(AlexaDiscoveryDelivery, Entity)
+        .join(AlexaAccountLink, AlexaAccountLink.id == AlexaDiscoveryDelivery.link_id)
+        .outerjoin(Entity, Entity.id == AlexaDiscoveryDelivery.entity_id)
+        .where(
+            AlexaAccountLink.tenant_id == context.tenant_id,
+            AlexaAccountLink.status == "active",
+            AlexaDiscoveryDelivery.installation_id == item.id,
+            AlexaDiscoveryDelivery.removed_at.is_(None),
+        )
+    )
+    current_alexa: dict[str, dict[str, object]] = {}
+    for delivery, entity in current_result.all():
+        current_alexa.setdefault(
+            delivery.alexa_endpoint_id,
+            {
+                "endpoint_id": delivery.alexa_endpoint_id,
+                "voice_name": effective_voice_name(entity) if entity is not None else "—",
+                "domain": entity.ha_domain if entity is not None else "—",
+            },
+        )
     csrf = _csrf(context)
     rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_alexa_discovery_section(discovery, proactive_events)}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comando sicuro</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -292,7 +316,9 @@ async def installation_detail(
 
 
 def _alexa_discovery_section(
-    snapshot: AlexaDiscoverySnapshot | None, proactive_events: list[AuditEvent]
+    snapshot: AlexaDiscoverySnapshot | None,
+    proactive_events: list[AuditEvent],
+    current_endpoints: list[dict[str, object]],
 ) -> str:
     latest: dict[str, AuditEvent] = {}
     for event in proactive_events:
@@ -309,8 +335,13 @@ def _alexa_discovery_section(
     reports = report_line(
         "alexa.discovery.add_or_update", "Ultimo AddOrUpdateReport"
     ) + report_line("alexa.discovery.delete", "Ultimo DeleteReport")
+    current_rows = "".join(
+        f'<li><b>{_e(endpoint.get("voice_name"))}</b><br><span class="muted">{_e(endpoint.get("endpoint_id"))} · {_e(endpoint.get("domain"))}</span></li>'
+        for endpoint in current_endpoints
+    )
+    current_inventory = f"<h3>Inventario Alexa corrente stimato</h3><p>Endpoint attivi: {len(current_endpoints)}</p><ul>{current_rows or '<li>Nessun endpoint attivo</li>'}</ul>"
     if snapshot is None:
-        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><p>Nessuna sincronizzazione Alexa registrata</p>{reports}</section>'
+        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><h3>Snapshot ultima Discovery completa</h3><p>Nessuna sincronizzazione Alexa registrata</p>{reports}{current_inventory}</section>'
     changes = snapshot.changes_json or []
     change_by_endpoint = {
         str(change.get("endpoint_id")): str(change.get("change"))
@@ -333,21 +364,106 @@ def _alexa_discovery_section(
     new_count = sum(change.get("change") == "new" for change in changes)
     discovered_at = snapshot.discovered_at.strftime("%d/%m/%Y %H:%M")
     items = current + removed
-    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul></section>'
+    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><h3>Snapshot ultima Discovery completa</h3><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
 
 
 def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     operations = sorted(DOMAIN_OPERATIONS.get(entity.ha_domain, ()))
-    controls = ""
-    if entity.deleted_at is None and entity.available and entity.ha_registry_id and operations:
-        options = "".join(f'<option value="{op}">{op}</option>' for op in operations)
-        controls = f'<form method="post" action="/installations/{installation.id}/commands" onsubmit="this.querySelector(\'button\').textContent=\'Invio…\'"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><select name="operation">{options}</select><input name="value" size="5" placeholder="valore"><button>Invia</button></form>'
-    label = effective_display_name(entity)
+    enabled = bool(
+        entity.deleted_at is None and entity.available and entity.ha_registry_id and operations
+    )
+    controls = _entity_controls(installation, entity, csrf, enabled)
     voice_name = effective_voice_name(entity)
+    display_name = effective_display_name(entity)
     aliases = " · ".join(_e(alias) for alias in (entity.voice_aliases or [])) or "—"
     lifecycle = "rimossa" if entity.deleted_at else (entity.state or "—")
     edit = f'<a class="button" href="/installations/{installation.id}/entities/{entity.id}/edit">Modifica</a>'
-    return f'<tr><td><b>{_e(label)}</b><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)} · {_e(entity.ha_entity_id)}</span><br><span class="muted">Nome vocale: {_e(voice_name)}</span><br><span class="muted">Alias: {aliases}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name)}</td><td>{_e(lifecycle)} · {"disponibile" if entity.available else "non disponibile"}</td><td>{edit} {controls}</td></tr>'
+    availability = (
+        "disponibile" if entity.available and entity.deleted_at is None else "non disponibile"
+    )
+    status_class = "available" if availability == "disponibile" else ""
+    icon = entity_icon_svg(entity.icon, entity.ha_domain)
+    return f'<tr><td><div class="entity-summary">{icon}<div class="entity-meta" aria-label="Nome vocale: {_e(voice_name)}"><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot {status_class}"></span>{_e(lifecycle)}<br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}</div></td></tr>'
+
+
+def _control_form(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    operation: str,
+    label: str,
+    *,
+    css_class: str = "",
+    level: bool = False,
+    enabled: bool,
+) -> str:
+    disabled = "" if enabled else " disabled"
+    level_input = (
+        f'<input type="range" name="value" min="0" max="100" value="50" step="1" aria-label="Livello luce percentuale"{disabled}>'
+        if level
+        else ""
+    )
+    form_class = "inline level-control" if level else "inline"
+    return f'<form class="{form_class}" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{operation}">{level_input}<button class="{css_class}"{disabled}>{label}</button></form>'
+
+
+def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
+    if entity.ha_domain == "light":
+        return "".join(
+            (
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "power_on",
+                    "ON",
+                    css_class="button-on",
+                    enabled=enabled,
+                ),
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "power_off",
+                    "OFF",
+                    css_class="button-off",
+                    enabled=enabled,
+                ),
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "set_brightness",
+                    "SET LIGHT LEVEL",
+                    level=True,
+                    enabled=enabled,
+                ),
+            )
+        )
+    simple_labels = {
+        "power_on": "ON",
+        "power_off": "OFF",
+        "open": "APRI",
+        "close": "CHIUDI",
+        "stop": "STOP",
+        "activate": "ATTIVA",
+        "press": "PREMI",
+    }
+    return (
+        "".join(
+            _control_form(
+                installation,
+                entity,
+                csrf,
+                operation,
+                simple_labels[operation],
+                enabled=enabled,
+            )
+            for operation in sorted(DOMAIN_OPERATIONS.get(entity.ha_domain, ()))
+            if operation in simple_labels
+        )
+        or '<span class="muted">Nessun controllo diretto</span>'
+    )
 
 
 def _entity_names_form(
@@ -497,7 +613,10 @@ async def update_entity_names(
 def _command_data(operation: str, value: str) -> dict[str, object]:
     data: dict[str, object] = {"operation": operation}
     if operation == "set_brightness":
-        data["brightness"] = int(value)
+        percentage = int(value)
+        if not 0 <= percentage <= 100:
+            raise ValueError("brightness percentage outside bounds")
+        data["brightness"] = round(percentage * 255 / 100)
     elif operation == "set_position":
         data["position"] = int(value)
     elif operation == "set_target_temperature":

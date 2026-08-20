@@ -8,10 +8,12 @@ system. Open `/dashboard` after logging in at `/login`.
 
 - `/dashboard` lists only installations belonging to the selected tenant and derives
   online state from the EVCP liveness window.
-- `/installations/{id}` shows searchable, paginated exposed entities and their current
-  availability, the latest Alexa Discovery payload metadata/diff, and redacted outcomes for the
-  latest proactive AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot
-  be controlled.
+- `/installations/{id}` shows searchable, paginated exposed entities with the effective voice
+  name as the primary label, local icons, synchronized e-Control metadata, current state and
+  availability. It distinguishes the latest complete Alexa Discovery snapshot from the estimated
+  current inventory derived from active proactive deliveries, and shows redacted outcomes for the
+  latest AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot be
+  controlled.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
   for an entity belonging to the selected tenant and installation.
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound
@@ -24,6 +26,15 @@ console and commands. Read-only and customer-user memberships cannot. Direct con
 reuse the closed M6 command vocabulary and dispatcher; arbitrary Home Assistant service
 calls are impossible. A result is displayed as successful only after the Connector
 returns that outcome. Pending and final outcomes are audited with the authenticated user.
+
+Lights expose direct ON/OFF controls and a 0–100% level slider. The portal validates the
+percentage and maps it to the existing typed 0–255 M6 brightness field before dispatch. Controls
+are disabled for unavailable or removed entities. Other supported domains expose only their
+allowlisted value-free operations; no generic service or operation selector is rendered.
+
+The optional Connector-provided icon uses an allowlisted local SVG path. Unknown icons fall back
+to a domain icon and then to a generic automation icon, so no remote asset or untrusted SVG is
+rendered. Apply Alembic migration `20260820_0010` before deploying icon persistence.
 
 ## Entity names and voice aliases
 

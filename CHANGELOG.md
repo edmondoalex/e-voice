@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Entity controls, icons and Alexa inventory visibility
+
+Status: Ready for review
+
+### Scope
+
+- Redesigned installation entity rows around the effective voice name, synchronized icon,
+  e-Control metadata, availability and compact direct controls.
+- Added typed ON/OFF and 0–100% light-level controls through the existing safe M6 dispatcher;
+  removed/unavailable entities cannot be operated.
+- Extended EVCP entity inventory compatibly with an optional icon and persisted it with migration
+  `20260820_0010`, using only local allowlisted SVG paths with domain/unknown fallbacks.
+- Distinguished the last complete Alexa Discovery snapshot from the estimated current Alexa
+  inventory derived from the existing proactive-delivery ledger.
+
+### Scope guard
+
+- No arbitrary service passthrough, Alexa endpoint/fingerprint change, parallel inventory,
+  authentication change or entity identity change.
+
 ## 2026-08-20 — Alexa Lambda AcceptGrant forwarding
 
 Status: Ready for review
