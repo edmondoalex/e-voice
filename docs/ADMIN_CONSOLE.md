@@ -45,6 +45,13 @@ form parser and the normal HTML submit. Without JavaScript the same form posts n
 returns the existing server-rendered outcome page. Authentication, role checks, command
 validation, audit and Connector dispatch are shared by both paths.
 
+Long-lived pages renew CSRF safely through authenticated `GET /admin/csrf`. The endpoint returns a
+fresh tenant/user-bound token, rotates the HttpOnly cookie and is marked `Cache-Control: no-store`.
+An AJAX command retries exactly once only when the command endpoint returns the explicit
+`csrf_invalid` code; authorization and other 403 responses do not trigger renewal or retry. The
+rejected request never reaches the dispatcher, preventing duplicate commands. Concurrent renewal
+requests share one browser promise, and the configured 30-minute CSRF lifetime is unchanged.
+
 The optional Connector-provided icon uses an allowlisted local SVG path. Unknown icons fall back
 to a domain icon and then to a generic automation icon, so no remote asset or untrusted SVG is
 rendered. Apply Alembic migration `20260820_0010` before deploying icon persistence.

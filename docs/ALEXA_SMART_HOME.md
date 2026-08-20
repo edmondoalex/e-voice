@@ -66,6 +66,11 @@ newest complete Discovery, AddOrUpdateReport or DeleteReport. It is a presentati
 `Ultima Discovery` continues to mean only the last complete Discover.Response snapshot, and no
 additional inventory, query or persistence is introduced.
 
+The portal labels the complete snapshot as historical and explains that its entries and comparison
+badges refer only to the preceding complete Discovery. **Dispositivi attualmente presenti in
+Alexa** remains derived from active rows in the existing proactive-delivery ledger, so it is the
+current operational view. These labels do not alter snapshot, report or ledger semantics.
+
 End-to-end acceptance:
 
 1. Enable/relink the development skill so Ekonex receives a successful `AcceptGrant`.
