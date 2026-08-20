@@ -24,6 +24,54 @@ expiry/on HTTP 401, and sends to the configured regional Event Gateway. M5 state
 deltas trigger reports; identical property snapshots are durably suppressed and
 HTTP 401/429/503 responses receive three bounded attempts.
 
+## Proactive discovery and portal observability
+
+After `Alexa.Authorization/AcceptGrant`, Ekonex exchanges Amazon's one-use grant with LWA and
+stores the customer access/refresh tokens encrypted in `alexa_event_authorizations`. These Amazon
+tokens authenticate Ekonex **to Alexa** and are distinct from the Ekonex BearerToken Alexa sends
+with directives. They are refreshed through LWA before expiry or after an Event Gateway HTTP 401;
+neither tokens nor event bodies are logged or displayed.
+
+Every committed inventory full/delta, relevant state metadata update, and cloud voice-name edit
+reconciles the installation against the endpoint representation produced by the existing
+`discovery_endpoint()` mapper. A per-account delivery ledger stores only endpoint ID and a SHA-256
+representation fingerprint. New or materially changed representations generate
+`Alexa.Discovery.AddOrUpdateReport`; endpoints no longer eligible generate
+`Alexa.Discovery.DeleteReport` with their previously published endpoint ID. Unchanged fingerprints
+produce no event. A failed delivery does not fail HA/EVCP synchronization and remains eligible for
+a later bounded retry.
+
+For Italy/Europe configure:
+
+```dotenv
+EKONEX_ALEXA_EVENT_GATEWAY_URL=https://api.eu.amazonalexa.com/v3/events
+EKONEX_ALEXA_LWA_CLIENT_ID=<Login with Amazon security profile client ID>
+EKONEX_ALEXA_LWA_CLIENT_SECRET=<secret-manager value>
+EKONEX_ALEXA_TOKEN_ENCRYPTION_KEY=<stable high-entropy production secret>
+```
+
+In the Alexa Developer Console, enable **Send Alexa Events** and confirm that the Smart Home skill
+receives `AcceptGrant`. The LWA security profile configured above must be the one associated with
+the skill. Regional account-linking redirect URLs remain configured as described below. No Lambda
+change is required: proactive reports are emitted by the Ekonex Cloud backend directly to the
+regional Alexa Event Gateway.
+
+The installation portal section **Alexa - ultima sincronizzazione** shows the last manual
+Discovery snapshot and its endpoint names/IDs/domains/diff, plus the most recent
+AddOrUpdateReport/DeleteReport endpoint, result and timestamp. It reads tenant-scoped snapshots and
+redacted audit metadata only. Apply Alembic migration `20260820_0009` before deploying.
+
+End-to-end acceptance:
+
+1. Enable/relink the development skill so Ekonex receives a successful `AcceptGrant`.
+2. Expose a new entity in e-Control and wait for inventory sync; verify it appears in Alexa without
+   invoking manual discovery and the portal shows a successful AddOrUpdateReport.
+3. Rename its effective voice name; verify Alexa and the portal update while endpointId is stable.
+4. Change only state; verify no AddOrUpdateReport unless the change alters advertised capabilities.
+5. Remove Ekonex exposure; verify a successful DeleteReport and removal from Alexa.
+6. Temporarily point the gateway to a controlled failing endpoint in staging; verify sync still
+   commits, delivery is audited as error, secrets are absent, and a later reconcile retries it.
+
 ## Developer console
 
 1. Create a Smart Home skill (not a Custom Skill) and select payload version 3.

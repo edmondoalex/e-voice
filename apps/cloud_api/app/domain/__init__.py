@@ -1,6 +1,8 @@
 """Core multi-tenant domain."""
 
 from .models import (
+    AlexaDiscoveryDelivery,
+    AlexaDiscoverySnapshot,
     AlexaPublication,
     AuditEvent,
     ConnectorCredential,
@@ -15,6 +17,8 @@ from .models import (
 )
 
 __all__ = [
+    "AlexaDiscoverySnapshot",
+    "AlexaDiscoveryDelivery",
     "AlexaPublication",
     "AuditEvent",
     "ConnectorCredential",

@@ -6,6 +6,8 @@ from apps.cloud_api.app.database import Base
 def test_domain_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "alexa_account_links",
+        "alexa_discovery_deliveries",
+        "alexa_discovery_snapshots",
         "alexa_event_authorizations",
         "alexa_oauth_grants",
         "alexa_oauth_tokens",

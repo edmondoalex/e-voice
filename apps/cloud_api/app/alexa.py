@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,8 +16,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
 from .database import get_database_session
@@ -37,6 +40,7 @@ user_header = Header(default=None)
 MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
+logger = logging.getLogger(__name__)
 
 
 def _digest(value: str) -> str:
@@ -646,6 +650,13 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         return JSONResponse(_replay[replay_key])
     correlation = header.get("correlationToken")
     if header["namespace"] == "Alexa.Discovery" and header["name"] == "Discover":
+        installations = list(
+            (
+                await database.scalars(
+                    select(Installation).where(Installation.tenant_id == link.tenant_id)
+                )
+            ).all()
+        )
         entities = list(
             (
                 await database.scalars(
@@ -660,6 +671,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             ).all()
         )
         entities = unambiguous_voice_entities(entities)
+        published = [(entity, discovery_endpoint(entity)) for entity in entities]
         response = _event(
             {
                 "namespace": "Alexa.Discovery",
@@ -667,8 +679,15 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 "payloadVersion": "3",
                 "messageId": str(uuid4()),
             },
-            {"endpoints": [discovery_endpoint(entity) for entity in entities]},
+            {"endpoints": [endpoint for _, endpoint in published]},
         )
+        try:
+            await record_discovery(database, link.tenant_id, link.id, installations, published)
+        except SQLAlchemyError:
+            await database.rollback()
+            logger.exception(
+                "Failed to record Alexa Discovery observation tenant_id=%s", link.tenant_id
+            )
     else:
         endpoint = directive.get("endpoint", {})
         endpoint_value = endpoint.get("endpointId", "")

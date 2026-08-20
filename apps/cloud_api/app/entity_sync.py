@@ -55,6 +55,9 @@ class EntitySyncService:
             len(seen),
             tombstoned,
         )
+        from .alexa_events import reconcile_discovery_safely
+
+        await reconcile_discovery_safely(self._session, self._installation)
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
@@ -75,6 +78,9 @@ class EntitySyncService:
                 await self._upsert(item)
         self._installation.sync_revision = revision
         await self._session.commit()
+        from .alexa_events import reconcile_discovery_safely
+
+        await reconcile_discovery_safely(self._session, self._installation)
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
@@ -107,6 +113,12 @@ class EntitySyncService:
             for entity in changed_entities:
                 if entity.ha_domain in SUPPORTED_DOMAINS:
                     await gateway.report_entity(entity)
+            await gateway.reconcile_discovery(self._installation)
+        except Exception:  # External Alexa delivery must not fail committed entity state.
+            await self._session.rollback()
+            logger.exception(
+                "Alexa proactive reporting failed installation_id=%s", self._installation.id
+            )
         finally:
             await gateway.close()
 

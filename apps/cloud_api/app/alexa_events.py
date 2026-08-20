@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -18,14 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import Settings, get_settings
 from .domain.models import (
     AlexaAccountLink,
+    AlexaDiscoveryDelivery,
     AlexaEventAuthorization,
     AlexaReportedState,
+    AuditEvent,
     Entity,
     Installation,
 )
 
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
-RETRYABLE_STATUS = {401, 429, 503}
+logger = logging.getLogger(__name__)
 
 
 def _utc(value: datetime) -> datetime:
@@ -209,23 +212,223 @@ class AlexaEventGateway:
                 sent += 1
         return sent
 
+    async def reconcile_discovery(self, installation: Installation) -> int:
+        """Publish only changed endpoint representations for one installation."""
+        from .alexa import SUPPORTED_DOMAINS, discovery_endpoint
+        from .entity_names import unambiguous_voice_entities
+
+        entities = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == installation.id,
+                        Entity.deleted_at.is_(None),
+                        Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+                    )
+                )
+            ).all()
+        )
+        entities = unambiguous_voice_entities(entities)
+        current: dict[str, tuple[Entity, dict[str, Any], str]] = {}
+        for entity in entities:
+            endpoint = discovery_endpoint(entity)
+            fingerprint = hashlib.sha256(
+                json.dumps(endpoint, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            current[str(endpoint["endpointId"])] = (entity, endpoint, fingerprint)
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        sent = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            deliveries = list(
+                (
+                    await self._session.scalars(
+                        select(AlexaDiscoveryDelivery).where(
+                            AlexaDiscoveryDelivery.link_id == link.id,
+                            AlexaDiscoveryDelivery.installation_id == installation.id,
+                        )
+                    )
+                ).all()
+            )
+            previous = {item.alexa_endpoint_id: item for item in deliveries}
+            updates = [
+                value
+                for endpoint_id, value in current.items()
+                if endpoint_id not in previous
+                or previous[endpoint_id].removed_at is not None
+                or previous[endpoint_id].representation_fingerprint != value[2]
+            ]
+            deletions = [
+                item
+                for endpoint_id, item in previous.items()
+                if item.removed_at is None and endpoint_id not in current
+            ]
+            if authorization is None:
+                await self._audit_discovery(
+                    installation,
+                    "alexa.discovery.authorization_missing",
+                    None,
+                    None,
+                    "skipped",
+                )
+                await self._session.commit()
+                continue
+            if updates:
+                event = self._discovery_event(
+                    "AddOrUpdateReport", [endpoint for _, endpoint, _ in updates]
+                )
+                success = await self._send(authorization, event)
+                now = datetime.now(UTC)
+                for entity, endpoint, fingerprint in updates:
+                    endpoint_value = str(endpoint["endpointId"])
+                    delivery = previous.get(endpoint_value)
+                    if success:
+                        if delivery is None:
+                            delivery = AlexaDiscoveryDelivery(
+                                link_id=link.id,
+                                installation_id=installation.id,
+                                entity_id=entity.id,
+                                alexa_endpoint_id=endpoint_value,
+                                representation_fingerprint=fingerprint,
+                                published_at=now,
+                            )
+                            self._session.add(delivery)
+                        delivery.entity_id = entity.id
+                        delivery.representation_fingerprint = fingerprint
+                        delivery.published_at = now
+                        delivery.removed_at = None
+                        sent += 1
+                    await self._audit_discovery(
+                        installation,
+                        "alexa.discovery.add_or_update",
+                        entity.id,
+                        endpoint_value,
+                        "success" if success else "error",
+                    )
+            if deletions:
+                event = self._discovery_event(
+                    "DeleteReport",
+                    [{"endpointId": item.alexa_endpoint_id} for item in deletions],
+                )
+                success = await self._send(authorization, event)
+                now = datetime.now(UTC)
+                for delivery in deletions:
+                    if success:
+                        delivery.removed_at = now
+                        sent += 1
+                    await self._audit_discovery(
+                        installation,
+                        "alexa.discovery.delete",
+                        delivery.entity_id,
+                        delivery.alexa_endpoint_id,
+                        "success" if success else "error",
+                    )
+            await self._session.commit()
+        return sent
+
+    @staticmethod
+    def _discovery_event(name: str, endpoints: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "event": {
+                "header": {
+                    "namespace": "Alexa.Discovery",
+                    "name": name,
+                    "payloadVersion": "3",
+                    "messageId": str(uuid4()),
+                },
+                "payload": {
+                    "scope": {"type": "BearerToken", "token": ""},
+                    "endpoints": endpoints,
+                },
+            }
+        }
+
+    async def _audit_discovery(
+        self,
+        installation: Installation,
+        event_type: str,
+        entity_id: object | None,
+        endpoint_value: str | None,
+        result: str,
+    ) -> None:
+        payload = {"endpoint_id": endpoint_value} if endpoint_value else {}
+        if entity_id is not None:
+            payload["entity_id"] = str(entity_id)
+        self._session.add(
+            AuditEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation.id,
+                source="alexa_event_gateway",
+                event_type=event_type,
+                payload_redacted_json=payload,
+                result=result,
+            )
+        )
+
     async def _send(self, authorization: AlexaEventAuthorization, event: dict[str, Any]) -> bool:
         access = self._cipher.decrypt(authorization.access_token_encrypted).decode()
         if _utc(authorization.expires_at) <= datetime.now(UTC) + timedelta(seconds=30):
-            access = await self._refresh(authorization)
+            try:
+                access = await self._refresh(authorization)
+            except httpx.HTTPError:
+                logger.warning("Alexa LWA token refresh failed before event delivery")
+                return False
         for attempt in range(3):
-            event["event"]["endpoint"]["scope"]["token"] = access
-            response = await self._client.post(
-                self._settings.alexa_event_gateway_url,
-                json=event,
-                headers={"Authorization": f"Bearer {access}"},
-            )
+            event_body = event["event"]
+            scope_parent = event_body.get("endpoint") or event_body.get("payload")
+            scope_parent["scope"]["token"] = access
+            try:
+                response = await self._client.post(
+                    self._settings.alexa_event_gateway_url,
+                    json=event,
+                    headers={"Authorization": f"Bearer {access}"},
+                )
+            except httpx.HTTPError:
+                logger.warning(
+                    "Alexa Event Gateway transport error event=%s attempt=%d",
+                    event_body["header"]["name"],
+                    attempt + 1,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(attempt + 1)
+                continue
             if response.is_success:
                 return True
-            if response.status_code not in RETRYABLE_STATUS:
+            if response.status_code not in {401, 429} and response.status_code < 500:
                 return False
             if response.status_code == 401:
-                access = await self._refresh(authorization)
+                try:
+                    access = await self._refresh(authorization)
+                except httpx.HTTPError:
+                    logger.warning("Alexa LWA token refresh failed after gateway HTTP 401")
+                    return False
             if attempt < 2:
                 await asyncio.sleep(attempt + 1)
         return False
+
+
+async def reconcile_discovery_safely(session: AsyncSession, installation: Installation) -> int:
+    """Run bounded proactive discovery without failing the authoritative sync."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.reconcile_discovery(installation)
+    except Exception:  # The external observability path must never fail entity synchronization.
+        await session.rollback()
+        logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        return 0
+    finally:
+        await gateway.close()

@@ -1,10 +1,12 @@
 """M7 Alexa account-linking, discovery, mapping and isolation tests."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import (
@@ -14,7 +16,13 @@ from apps.cloud_api.app.alexa import (
     endpoint_id,
 )
 from apps.cloud_api.app.database import get_database_session
-from apps.cloud_api.app.domain.models import AlexaAccountLink, AlexaOAuthToken, Entity
+from apps.cloud_api.app.domain.models import (
+    AlexaAccountLink,
+    AlexaDiscoveryDelivery,
+    AlexaDiscoverySnapshot,
+    AlexaOAuthToken,
+    Entity,
+)
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.main import app
 
@@ -126,6 +134,21 @@ async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
     endpoints = response.json()["event"]["payload"]["endpoints"]
     assert [item["friendlyName"] for item in endpoints] == ["Kitchen"]
     stable = endpoints[0]["endpointId"]
+    snapshot = await session.scalar(
+        select(AlexaDiscoverySnapshot).where(
+            AlexaDiscoverySnapshot.installation_id == seeded_domain.installation_a_id  # type: ignore[attr-defined]
+        )
+    )
+    assert snapshot is not None
+    assert snapshot.endpoint_count == 1
+    assert snapshot.endpoints_json == [
+        {"endpoint_id": stable, "voice_name": "Kitchen", "domain": "light"}
+    ]
+    assert snapshot.changes_json[0]["change"] == "new"
+    delivery = await session.scalar(
+        select(AlexaDiscoveryDelivery).where(AlexaDiscoveryDelivery.alexa_endpoint_id == stable)
+    )
+    assert delivery is not None
     entity.display_name = "Ufficio Alex"
     entity.voice_name = "luce ufficio"
     entity.voice_aliases = ["ufficio", "luce alex"]
@@ -138,6 +161,45 @@ async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
     ]
     assert updated[0]["endpointId"] == stable
     assert updated[0]["friendlyName"] == "luce ufficio"
+    await session.refresh(snapshot)
+    assert snapshot.changes_json == [
+        {
+            "endpoint_id": stable,
+            "voice_name": "luce ufficio",
+            "domain": "light",
+            "change": "renamed",
+            "previous_voice_name": "Kitchen",
+        }
+    ]
+    persisted = json.dumps({"endpoints": snapshot.endpoints_json, "changes": snapshot.changes_json})
+    assert token not in persisted
+    assert token not in delivery.representation_fingerprint
+    assert (
+        await session.scalar(
+            select(AlexaDiscoverySnapshot).where(
+                AlexaDiscoverySnapshot.tenant_id == seeded_domain.tenant_b_id  # type: ignore[attr-defined]
+            )
+        )
+        is None
+    )
+    entity.deleted_at = datetime.now(UTC)
+    await session.commit()
+    removed_body = _directive(token, "Alexa.Discovery", "Discover")
+    removed_body["directive"]["header"]["messageId"] = "removed-discovery"  # type: ignore[index]
+    removed_response = await client.post("/alexa/v1/directive", json=removed_body)
+    assert removed_response.json()["event"]["payload"]["endpoints"] == []
+    await session.refresh(snapshot)
+    assert snapshot.endpoint_count == 0
+    assert snapshot.changes_json == [
+        {
+            "endpoint_id": stable,
+            "voice_name": "luce ufficio",
+            "domain": "light",
+            "change": "removed",
+        }
+    ]
+    await session.refresh(delivery)
+    assert delivery.removed_at is not None
     await client.aclose()
 
 

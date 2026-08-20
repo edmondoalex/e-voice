@@ -17,12 +17,14 @@ from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa_events import reconcile_discovery_safely
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
 from .database import get_database_session
 from .domain.enums import TenantRole
 from .domain.models import (
+    AlexaDiscoverySnapshot,
     AuditEvent,
     Entity,
     EntityStateHistory,
@@ -107,7 +109,7 @@ aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;bord
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
-.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions{{display:flex;gap:10px;flex-wrap:wrap}}button.danger{{background:var(--bad)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions{{display:flex;gap:10px;flex-wrap:wrap}}button.danger{{background:var(--bad)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
@@ -257,14 +259,81 @@ async def installation_detail(
             )
         ).all()
     )
+    discovery = await session.scalar(
+        select(AlexaDiscoverySnapshot).where(
+            AlexaDiscoverySnapshot.tenant_id == context.tenant_id,
+            AlexaDiscoverySnapshot.installation_id == item.id,
+        )
+    )
+    proactive_events = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.tenant_id == context.tenant_id,
+                    AuditEvent.installation_id == item.id,
+                    AuditEvent.event_type.in_(
+                        ["alexa.discovery.add_or_update", "alexa.discovery.delete"]
+                    ),
+                )
+                .order_by(AuditEvent.created_at.desc())
+                .limit(100)
+            )
+        ).all()
+    )
     csrf = _csrf(context)
     rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div><form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comando sicuro</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_alexa_discovery_section(discovery, proactive_events)}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comando sicuro</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+def _alexa_discovery_section(
+    snapshot: AlexaDiscoverySnapshot | None, proactive_events: list[AuditEvent]
+) -> str:
+    latest: dict[str, AuditEvent] = {}
+    for event in proactive_events:
+        latest.setdefault(event.event_type, event)
+
+    def report_line(event_type: str, label: str) -> str:
+        event = latest.get(event_type)
+        if event is None:
+            return f"<p>{label}: —</p>"
+        endpoint_value = event.payload_redacted_json.get("endpoint_id", "—")
+        timestamp = event.created_at.strftime("%d/%m/%Y %H:%M")
+        return f"<p>{label}: {_e(timestamp)} · endpoint {_e(endpoint_value)} · esito {_e(event.result)}</p>"
+
+    reports = report_line(
+        "alexa.discovery.add_or_update", "Ultimo AddOrUpdateReport"
+    ) + report_line("alexa.discovery.delete", "Ultimo DeleteReport")
+    if snapshot is None:
+        return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><p>Nessuna sincronizzazione Alexa registrata</p>{reports}</section>'
+    changes = snapshot.changes_json or []
+    change_by_endpoint = {
+        str(change.get("endpoint_id")): str(change.get("change"))
+        for change in changes
+        if change.get("change") in {"new", "renamed"}
+    }
+    labels = {"new": "Nuovo", "renamed": "Rinominato", "removed": "Rimosso"}
+
+    def endpoint_line(endpoint: dict[str, object], change: str | None = None) -> str:
+        badge = f'<span class="badge">{labels[change]}</span>' if change in labels else ""
+        return f'<li><b>{_e(endpoint.get("voice_name"))}</b>{badge}<br><span class="muted">{_e(endpoint.get("endpoint_id"))} · {_e(endpoint.get("domain"))}</span></li>'
+
+    current = "".join(
+        endpoint_line(endpoint, change_by_endpoint.get(str(endpoint.get("endpoint_id"))))
+        for endpoint in (snapshot.endpoints_json or [])
+    )
+    removed = "".join(
+        endpoint_line(change, "removed") for change in changes if change.get("change") == "removed"
+    )
+    new_count = sum(change.get("change") == "new" for change in changes)
+    discovered_at = snapshot.discovered_at.strftime("%d/%m/%Y %H:%M")
+    items = current + removed
+    return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2><p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi dall’ultima Discovery: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul></section>'
 
 
 def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
@@ -421,6 +490,7 @@ async def update_entity_names(
         )
     )
     await session.commit()
+    await reconcile_discovery_safely(session, installation)
     return _names_page(installation, entity, context, _csrf(context), message="Nomi salvati.")
 
 
