@@ -41,6 +41,23 @@ HTTP 401/429/503 responses receive three bounded attempts.
 5. Enable “Send Alexa Events” so Alexa issues `AcceptGrant`, and configure the
    LWA client credentials and region-matched Event Gateway URL.
 
+## AWS Lambda directive adapter
+
+The deployable standard-library-only handler is
+`aws_lambda/alexa_smart_home/lambda_function.py`. Set
+`EKONEX_VOICE_BACKEND_URL=https://voice.e-control.tech`; the handler posts the unmodified
+Alexa directive to `/alexa/v1/directive`. The BearerToken remains inside the directive body and
+is validated only by Ekonex Cloud. The cloud uses the existing tenant-owned `Entity` inventory,
+opt-in/tombstone rules, centralized voice names and capability mapper to build
+`Alexa.Discovery.Discover.Response`; the Lambda has no parallel device model.
+
+The Lambda maps invalid, revoked and expired cloud tokens to the corresponding Alexa v3
+authorization errors, maps rate limiting explicitly and uses `INTERNAL_ERROR` for transport or
+unexpected backend failures. Logs contain only directive namespace/name and bounded status
+metadata, never request bodies, access tokens or credentials. Exact packaging, AWS CLI update,
+runtime/environment and alias instructions are in
+`aws_lambda/alexa_smart_home/README.md`.
+
 `GET /oauth/authorize` serves the browser account-linking flow directly. Customers
 authenticate with their existing e-Control email/password through the same
 `PortalAuthenticationService` used by the pairing portal; no Cognito account or

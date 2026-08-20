@@ -4,6 +4,23 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Alexa Lambda cloud discovery adapter
+
+Status: Ready for review
+
+### Scope
+
+- Added a deployable dependency-free AWS Lambda handler that forwards Alexa Smart Home v3
+  directives to the existing tenant-scoped Ekonex Cloud adapter.
+- Added bounded HTTPS transport, response validation, secret-free diagnostics and Alexa-native
+  invalid/expired authorization, rate-limit and backend failure responses.
+- Distinguished expired from invalid/revoked cloud access tokens and added focused discovery
+  and authentication tests plus exact deployment instructions for `ekonex-voice`.
+
+### Scope guard
+
+- No parallel entity/device model, EVCP change, Connector change or new cloud inventory API.
+
 ## 2026-08-19 — Entity custom display and voice names
 
 Status: Ready for review
