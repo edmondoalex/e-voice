@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode
+from .cover_modes import COVER_STOP, effective_cover_mode
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -619,11 +619,19 @@ def _command(
     if namespace == "Alexa.ModeController" and name == "SetMode":
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
-        return (
-            {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
-            if payload.get("mode") in {"Position.Up", "Position.Down"}
+        mode_value = payload.get("mode")
+        operation = (
+            {
+                "Position.Up": "open",
+                "Position.Stopped": "stop",
+                "Position.Down": "close",
+            }.get(mode_value)
+            if isinstance(mode_value, str)
             else None
         )
+        if operation == "stop" and not entity.supported_features & COVER_STOP:
+            return None
+        return {"operation": operation} if operation is not None else None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":

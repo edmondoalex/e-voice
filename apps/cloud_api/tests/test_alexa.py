@@ -605,7 +605,9 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         "Position.Up",
         "Position.Down",
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) == {
+        "operation": "stop"
+    }
 
     entity.alexa_cover_mode = "percentage"
     percentage = discovery_endpoint(entity)
@@ -646,6 +648,33 @@ def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
     assert "Position.Stopped" not in modes
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
     assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
+
+
+@pytest.mark.parametrize("state", ["unknown", "open", "closed", "opening", "closing"])
+@pytest.mark.parametrize(
+    ("mode", "operation"),
+    [
+        ("Position.Up", "open"),
+        ("Position.Stopped", "stop"),
+        ("Position.Down", "close"),
+    ],
+)
+def test_assumed_state_discrete_cover_commands_are_stateless(
+    state: str, mode: str, operation: str
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.assumed_commands",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state=state,
+        attributes_json={"assumed_state": True, "is_closed": None},
+    )
+
+    assert _command("Alexa.ModeController", "SetMode", {"mode": mode}, entity) == {
+        "operation": operation
+    }
 
 
 def test_cover_auto_default_is_derived_conservatively_from_real_features() -> None:
