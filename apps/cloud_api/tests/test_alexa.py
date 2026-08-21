@@ -178,6 +178,56 @@ def test_state_properties_omit_other_invalid_numeric_attributes() -> None:
             assert _property_value(entity, namespace, name) is None
 
 
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("open", "Position.Up"),
+        ("closed", "Position.Down"),
+        ("unknown", None),
+        ("opening", None),
+        ("closing", None),
+        ("unavailable", None),
+        (None, None),
+    ],
+)
+def test_discrete_cover_reports_only_determinable_mode(
+    state: str | None, expected: str | None
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.discrete_state",
+        ha_domain="cover",
+        supported_features=3,
+        alexa_cover_mode="discrete",
+        state=state,
+    )
+
+    modes = [
+        item
+        for item in state_properties(entity)
+        if item["namespace"] == "Alexa.ModeController" and item["name"] == "mode"
+    ]
+
+    assert [item["value"] for item in modes] == ([] if expected is None else [expected])
+
+
+def test_unknown_assumed_state_cover_omits_mode_property() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.assumed_state",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state="unknown",
+        attributes_json={"assumed_state": True, "is_closed": None},
+    )
+
+    assert not any(
+        item["namespace"] == "Alexa.ModeController" and item["name"] == "mode"
+        for item in state_properties(entity)
+    )
+
+
 async def test_report_state_response_omits_null_brightness(
     session: AsyncSession, seeded_domain: object
 ) -> None:

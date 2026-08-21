@@ -525,6 +525,13 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
     if entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
+        discrete_position = (
+            "Position.Up"
+            if entity.state == "open"
+            else "Position.Down"
+            if entity.state == "closed"
+            else None
+        )
         if mode in {"percentage", "hybrid"} and current_position is not None:
             props.append(
                 _property(
@@ -534,12 +541,12 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     instance="Blind.Lift",
                 )
             )
-        if mode in {"discrete", "hybrid"}:
+        if mode in {"discrete", "hybrid"} and discrete_position is not None:
             props.append(
                 _property(
                     "Alexa.ModeController",
                     "mode",
-                    "Position.Up" if entity.state == "open" else "Position.Down",
+                    discrete_position,
                     instance="Blinds.Position",
                 )
             )
