@@ -431,11 +431,8 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert {item["value"] for item in mode["configuration"]["supportedModes"]} == {
         "Position.Up",
         "Position.Down",
-        "Position.Stopped",
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) == {
-        "operation": "stop"
-    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
 
     entity.alexa_cover_mode = "percentage"
     percentage = discovery_endpoint(entity)
@@ -461,7 +458,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert discrete != percentage != hybrid
 
 
-def test_cover_mode_does_not_advertise_stop_or_unsupported_position() -> None:
+def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
     entity = Entity(
         installation_id=uuid4(),
         ha_entity_id="cover.basic",
@@ -556,4 +553,78 @@ async def test_discovered_cover_executes_advertised_range_directives(
     assert invalid.json()["event"]["header"]["name"] == "ErrorResponse"
     assert invalid.json()["event"]["payload"]["type"] == "INVALID_DIRECTIVE"
     assert dispatched.await_count == 1
+    await client.aclose()
+
+
+async def test_discover_response_uses_canonical_discrete_blinds_json(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-discrete-cover"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    entity.attributes_json = {"current_position": 45}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_discrete_cover_json")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event"]["header"]["name"] == "Discover.Response"
+    endpoint = body["event"]["payload"]["endpoints"][0]
+    assert endpoint["endpointId"] == endpoint_id(entity)
+    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    controllers = [
+        capability
+        for capability in endpoint["capabilities"]
+        if capability["interface"]
+        in {"Alexa.ModeController", "Alexa.RangeController", "Alexa.ToggleController"}
+    ]
+    assert [controller["interface"] for controller in controllers] == ["Alexa.ModeController"]
+    controller = controllers[0]
+    assert controller["instance"] == "Blinds.Position"
+    assert controller["capabilityResources"] == {
+        "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+    }
+    assert controller["configuration"] == {
+        "ordered": False,
+        "supportedModes": [
+            {
+                "value": "Position.Up",
+                "modeResources": {
+                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}]
+                },
+            },
+            {
+                "value": "Position.Down",
+                "modeResources": {
+                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}]
+                },
+            },
+        ],
+    }
+    mappings = controller["semantics"]["actionMappings"]
+    actions = [action for mapping in mappings for action in mapping["actions"]]
+    assert actions.count("Alexa.Actions.Open") == 1
+    assert actions.count("Alexa.Actions.Close") == 1
+    assert len(actions) == len(set(actions))
+    assert controller["semantics"]["stateMappings"] == [
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Closed"],
+            "value": "Position.Down",
+        },
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Open"],
+            "value": "Position.Up",
+        },
+    ]
+    assert "Position.Stopped" not in json.dumps(endpoint)
+    assert '"@type": "text"' not in json.dumps(endpoint)
     await client.aclose()

@@ -554,7 +554,8 @@ async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
     page = await client.get(edit_url)
     assert page.status_code == 200
     assert "Modalità Alexa tapparella/tenda" in page.text
-    assert "Discreto — apri, ferma, chiudi" in page.text
+    assert "Discreto — apri e chiudi" in page.text
+    assert "Alexa non definisce un comando Stop per tapparelle" in page.text
     assert "Percentuale — posizione 0–100%" in page.text
     assert "Ibrido — comandi discreti e percentuali" in page.text
 

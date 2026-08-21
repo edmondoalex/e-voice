@@ -4,6 +4,23 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-20 — Alexa discrete cover Discovery correction
+
+Status: Ready for review
+
+### Scope
+
+- Restored Amazon's canonical two-mode `Blinds.Position` representation for discrete covers by
+  removing the non-standard `Position.Stopped` mode.
+- Kept exactly one Open and one Close semantic mapping, preserving endpoint identity and the
+  existing proactive Discovery fingerprint flow.
+- Clarified that Alexa controls the app presentation and exposes no standard Stop directive for
+  window treatments; e-Control direct stop remains unchanged.
+
+### Scope guard
+
+- No EVCP, Connector, Lambda, database, endpoint identity, percentage or Account Linking changes.
+
 ## 2026-08-20 — Per-entity Alexa cover modes
 
 Status: Ready for review

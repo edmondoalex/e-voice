@@ -609,7 +609,7 @@ def _entity_names_form(
         selected = entity.alexa_cover_mode or "auto"
         labels = {
             "auto": "Automatico (in base alle funzioni e-Control)",
-            "discrete": "Discreto — apri, ferma, chiudi",
+            "discrete": "Discreto — apri e chiudi",
             "percentage": "Percentuale — posizione 0–100%",
             "hybrid": "Ibrido — comandi discreti e percentuali",
         }
@@ -618,7 +618,7 @@ def _entity_names_form(
             for value, label in labels.items()
         )
         effective = effective_cover_mode(entity) or "non pubblicabile con le funzioni attuali"
-        cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">Discreto usa apertura/chiusura e abilita arresto solo se supportato; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Modalità effettiva: {_e(effective)}.</span></label>"""
+        cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">Discreto usa apertura/chiusura; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Alexa non definisce un comando Stop per tapparelle: lo stop resta disponibile nei controlli diretti e-Control. Modalità effettiva: {_e(effective)}.</span></label>"""
     return f'''{notice}<div class="card"><p><b>Nome e-Control</b><br>{_e(entity.friendly_name or entity.ha_entity_id)}<br><span class="muted">Sincronizzato automaticamente e non modificabile qui.</span></p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>

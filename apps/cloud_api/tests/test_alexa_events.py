@@ -183,6 +183,17 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     discrete = json.loads(requests[-1].content)["event"]["payload"]["endpoints"][0]
     assert discrete["endpointId"] == endpoint_value
     assert "Alexa.ModeController" in {item["interface"] for item in discrete["capabilities"]}
+    assert "Position.Stopped" not in json.dumps(discrete)
+    discrete_mode = next(
+        item for item in discrete["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    discrete_actions = [
+        action
+        for mapping in discrete_mode["semantics"]["actionMappings"]
+        for action in mapping["actions"]
+    ]
+    assert discrete_actions.count("Alexa.Actions.Open") == 1
+    assert discrete_actions.count("Alexa.Actions.Close") == 1
 
     entity.alexa_cover_mode = "hybrid"
     await session.commit()
