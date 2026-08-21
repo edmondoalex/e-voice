@@ -352,19 +352,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
-            if entity.supported_features & COVER_STOP:
-                supported_modes.insert(
-                    1,
-                    {
-                        "value": "Position.Stopped",
-                        "modeResources": {
-                            "friendlyNames": [
-                                {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
-                                {"@type": "text", "value": {"text": "stop", "locale": "it-IT"}},
-                            ]
-                        },
-                    },
-                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
@@ -411,6 +398,11 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         ],
                     },
                 }
+            )
+        if entity.supported_features & COVER_STOP:
+            result.append(
+                _capability("Alexa.PlaybackController")
+                | {"instance": "cover.stop", "supportedOperations": ["Pause"]}
             )
     elif entity.ha_domain == "climate":
         result.append(
@@ -640,15 +632,16 @@ def _command(
         operation = (
             {
                 "Position.Up": "open",
-                "Position.Stopped": "stop",
                 "Position.Down": "close",
             }.get(mode_value)
             if isinstance(mode_value, str)
             else None
         )
-        if operation == "stop" and not entity.supported_features & COVER_STOP:
-            return None
         return {"operation": operation} if operation is not None else None
+    if namespace == "Alexa.PlaybackController" and name == "Pause":
+        if entity is None or entity.ha_domain != "cover":
+            return None
+        return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
