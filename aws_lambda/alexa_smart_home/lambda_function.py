@@ -12,11 +12,37 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+# AWS Lambda installs the CloudWatch handler on the root logger, whose default
+# level does not enable application INFO records. Configure only this module's
+# diagnostic logger; records still propagate to Lambda's existing handler.
+logger.setLevel(logging.INFO)
 
 BACKEND_URL_ENV = "EKONEX_VOICE_BACKEND_URL"
 BACKEND_TIMEOUT_ENV = "EKONEX_VOICE_BACKEND_TIMEOUT_SECONDS"
 DIRECTIVE_PATH = "/alexa/v1/directive"
 MAX_RESPONSE_BYTES = 1_048_576
+
+
+def _safe_directive_log(directive: dict[str, Any], header: dict[str, Any]) -> str:
+    """Serialize only diagnostic fields that cannot contain credentials."""
+    endpoint = directive.get("endpoint")
+    payload = directive.get("payload")
+    safe_payload = (
+        {key: payload[key] for key in ("mode", "rangeValue", "rangeValueDelta") if key in payload}
+        if isinstance(payload, dict)
+        else {}
+    )
+    return json.dumps(
+        {
+            "namespace": header.get("namespace"),
+            "name": header.get("name"),
+            "endpoint_id": endpoint.get("endpointId") if isinstance(endpoint, dict) else None,
+            "instance": header.get("instance"),
+            "payload": safe_payload,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _directive_parts(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -127,6 +153,7 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
             "Alexa directive missing authorization namespace=%s name=%s", namespace, name
         )
         return _error_response(header, "INVALID_AUTHORIZATION_CREDENTIAL")
+    logger.info("alexa_directive_received %s", _safe_directive_log(directive, header))
     try:
         endpoint = _backend_endpoint()
         timeout = _timeout_seconds()

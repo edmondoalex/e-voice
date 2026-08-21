@@ -205,3 +205,10 @@ buttons: the app UI is selected by Alexa from the declared standard capability.
 
 Amazon developer-console configuration, Lambda/HTTPS reachability, real Alexa
 account linking, voice utterances and certification cannot run in repository CI.
+
+## Temporary Issue #48 diagnostic
+
+The unmerged diagnostic branch can reintroduce `Position.Stopped` behind the disabled-by-default
+`EKONEX_ALEXA_EXPERIMENTAL_COVER_STOP_MODE` flag. This is an A/B investigation tool, not a supported
+or certification-ready capability. Exact deployment, test evidence, safe log collection and
+immediate rollback instructions are in `docs/ALEXA_COVER_STOP_DIAGNOSTIC.md`.
