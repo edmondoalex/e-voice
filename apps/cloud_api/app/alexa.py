@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -453,6 +454,13 @@ def _property(
     return item
 
 
+def _numeric_attribute(attributes: dict[str, Any], name: str) -> int | float | None:
+    value = attributes.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def state_properties(entity: Entity) -> list[dict[str, Any]]:
     attributes = entity.attributes_json or {}
     props = [
@@ -468,21 +476,31 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    if entity.ha_domain == "light" and "brightness" in attributes:
+    brightness = _numeric_attribute(attributes, "brightness")
+    if entity.ha_domain == "light" and brightness is not None:
         props.append(
             _property(
                 "Alexa.BrightnessController",
                 "brightness",
-                round(int(attributes["brightness"]) * 100 / 255),
+                round(brightness * 100 / 255),
             )
         )
     if entity.ha_domain == "light" and "rgb_color" in attributes:
         rgb = attributes["rgb_color"]
-        if isinstance(rgb, list) and len(rgb) == 3:
+        if (
+            isinstance(rgb, list)
+            and len(rgb) == 3
+            and all(
+                not isinstance(component, bool)
+                and isinstance(component, (int, float))
+                and math.isfinite(component)
+                for component in rgb
+            )
+        ):
             import colorsys
 
             hue, saturation, brightness = colorsys.rgb_to_hsv(
-                float(rgb[0]) / 255, float(rgb[1]) / 255, float(rgb[2]) / 255
+                rgb[0] / 255, rgb[1] / 255, rgb[2] / 255
             )
             props.append(
                 _property(
@@ -495,22 +513,24 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     },
                 )
             )
-    if entity.ha_domain == "light" and "color_temp_kelvin" in attributes:
+    color_temperature = _numeric_attribute(attributes, "color_temp_kelvin")
+    if entity.ha_domain == "light" and color_temperature is not None:
         props.append(
             _property(
                 "Alexa.ColorTemperatureController",
                 "colorTemperatureInKelvin",
-                attributes["color_temp_kelvin"],
+                color_temperature,
             )
         )
     if entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
-        if mode in {"percentage", "hybrid"} and "current_position" in attributes:
+        current_position = _numeric_attribute(attributes, "current_position")
+        if mode in {"percentage", "hybrid"} and current_position is not None:
             props.append(
                 _property(
                     "Alexa.RangeController",
                     "rangeValue",
-                    attributes["current_position"],
+                    current_position,
                     instance="Blind.Lift",
                 )
             )
@@ -524,20 +544,23 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 )
             )
     if entity.ha_domain == "fan":
-        props.append(
-            _property(
-                "Alexa.PercentageController",
-                "percentage",
-                attributes.get("percentage", 0),
+        percentage = _numeric_attribute(attributes, "percentage")
+        if percentage is not None:
+            props.append(
+                _property(
+                    "Alexa.PercentageController",
+                    "percentage",
+                    percentage,
+                )
             )
-        )
     if entity.ha_domain == "climate":
-        if value := attributes.get("temperature"):
+        temperature = _numeric_attribute(attributes, "temperature")
+        if temperature is not None:
             props.append(
                 _property(
                     "Alexa.ThermostatController",
                     "targetSetpoint",
-                    {"value": value, "scale": "CELSIUS"},
+                    {"value": temperature, "scale": "CELSIUS"},
                 )
             )
         props.append(

@@ -33,6 +33,7 @@ async def test_change_report_refresh_retry_and_idempotency(
     assert entity is not None
     entity.ha_registry_id = "stable-light"
     entity.state = "on"
+    entity.attributes_json = {"brightness": None}
     session.add(link)
     await session.commit()
 
@@ -76,6 +77,10 @@ async def test_change_report_refresh_retry_and_idempotency(
     sent = json.loads(event_attempts[-1].content)
     assert sent["event"]["header"]["name"] == "ChangeReport"
     assert sent["event"]["payload"]["change"]["properties"]
+    assert all(
+        item["namespace"] != "Alexa.BrightnessController"
+        for item in sent["event"]["payload"]["change"]["properties"]
+    )
     assert "lwa-access" not in str(sent).replace(sent["event"]["endpoint"]["scope"]["token"], "")
     assert await gateway.report_entity(entity) == 0
     assert len(event_attempts) == 3

@@ -15,6 +15,7 @@ from apps.cloud_api.app.alexa import (
     capabilities,
     discovery_endpoint,
     endpoint_id,
+    state_properties,
 )
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
@@ -77,6 +78,126 @@ def _directive(
             "scope": {"type": "BearerToken", "token": token},
         }
     return value
+
+
+def _property_value(entity: Entity, namespace: str, name: str) -> object | None:
+    return next(
+        (
+            item["value"]
+            for item in state_properties(entity)
+            if item["namespace"] == namespace and item["name"] == name
+        ),
+        None,
+    )
+
+
+def test_light_state_properties_omit_null_brightness() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.null_brightness",
+        ha_domain="light",
+        attributes_json={"brightness": None},
+    )
+
+    assert _property_value(entity, "Alexa.BrightnessController", "brightness") is None
+
+
+def test_light_state_properties_omit_missing_brightness() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.missing_brightness",
+        ha_domain="light",
+        attributes_json={},
+    )
+
+    assert _property_value(entity, "Alexa.BrightnessController", "brightness") is None
+
+
+def test_light_state_properties_convert_valid_numeric_brightness() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.valid_brightness",
+        ha_domain="light",
+        attributes_json={"brightness": 128},
+    )
+
+    assert _property_value(entity, "Alexa.BrightnessController", "brightness") == 50
+
+
+def test_state_properties_omit_other_invalid_numeric_attributes() -> None:
+    entities_and_properties = [
+        (
+            Entity(
+                installation_id=uuid4(),
+                ha_entity_id="light.invalid_color",
+                ha_domain="light",
+                attributes_json={
+                    "rgb_color": [255, None, 0],
+                    "color_temp_kelvin": "unknown",
+                },
+            ),
+            (
+                ("Alexa.ColorController", "color"),
+                ("Alexa.ColorTemperatureController", "colorTemperatureInKelvin"),
+            ),
+        ),
+        (
+            Entity(
+                installation_id=uuid4(),
+                ha_entity_id="cover.invalid_position",
+                ha_domain="cover",
+                supported_features=4,
+                attributes_json={"current_position": None},
+            ),
+            (("Alexa.RangeController", "rangeValue"),),
+        ),
+        (
+            Entity(
+                installation_id=uuid4(),
+                ha_entity_id="fan.invalid_percentage",
+                ha_domain="fan",
+                attributes_json={"percentage": "unknown"},
+            ),
+            (("Alexa.PercentageController", "percentage"),),
+        ),
+        (
+            Entity(
+                installation_id=uuid4(),
+                ha_entity_id="climate.invalid_temperature",
+                ha_domain="climate",
+                attributes_json={"temperature": None},
+            ),
+            (("Alexa.ThermostatController", "targetSetpoint"),),
+        ),
+    ]
+
+    for entity, properties in entities_and_properties:
+        for namespace, name in properties:
+            assert _property_value(entity, namespace, name) is None
+
+
+async def test_report_state_response_omits_null_brightness(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "light"
+    entity.ha_registry_id = "stable-null-brightness"
+    entity.state = "on"
+    entity.attributes_json = {"brightness": None}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_null_brightness")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa", "ReportState", endpoint_id(entity)),
+    )
+
+    assert response.status_code == 200
+    properties = response.json()["context"]["properties"]
+    assert all(item["namespace"] != "Alexa.BrightnessController" for item in properties)
+    await client.aclose()
 
 
 async def test_oauth_authorization_code_is_one_use_and_refresh_rotates(
