@@ -14,10 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .domain.models import AuditEvent, Entity, Installation
 from .evcp import CommandResultPayload
+from .logging_config import configure_info_logger
 
 COMMAND_TIMEOUT_SECONDS = 8.0
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = configure_info_logger(logging.getLogger(__name__))
 
 
 class StrictCommand(BaseModel):

@@ -20,6 +20,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from .database import get_database_session
 from .domain.models import ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
+from .logging_config import configure_info_logger
 from .repositories import ConnectorCredentialRepository
 
 PROTOCOL_VERSION = 1
@@ -29,8 +30,7 @@ HEARTBEAT_INTERVAL_SECONDS = 30
 LIVENESS_TIMEOUT_SECONDS = 75.0
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = configure_info_logger(logging.getLogger(__name__))
 
 
 class StrictModel(BaseModel):

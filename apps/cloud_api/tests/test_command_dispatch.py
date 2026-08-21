@@ -1,6 +1,7 @@
 """M6 cloud command authorization, routing and correlation tests."""
 
 import asyncio
+import io
 import logging
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -14,6 +15,7 @@ from starlette.websockets import WebSocketState
 from apps.cloud_api.app.command_dispatch import (
     CommandDispatchService,
     PowerCommand,
+    _log_dispatch,
     command_adapter,
 )
 from apps.cloud_api.app.domain.models import AuditEvent, Entity
@@ -22,6 +24,49 @@ from apps.cloud_api.app.evcp import (
     ConnectorSessionRegistry,
     SessionHandle,
 )
+from apps.cloud_api.app.logging_config import configure_info_logger
+
+
+def test_dispatch_info_is_emitted_without_root_handler() -> None:
+    root = logging.getLogger()
+    diagnostic = logging.getLogger("apps.cloud_api.app.command_dispatch")
+    uvicorn = logging.getLogger("uvicorn.error")
+    original = (
+        root.level,
+        list(root.handlers),
+        diagnostic.level,
+        diagnostic.propagate,
+        list(diagnostic.handlers),
+        list(uvicorn.handlers),
+    )
+    stream = io.StringIO()
+    try:
+        root.setLevel(logging.WARNING)
+        root.handlers.clear()
+        uvicorn.handlers.clear()
+        diagnostic.handlers.clear()
+        configure_info_logger(diagnostic)
+        assert len(diagnostic.handlers) == 1
+        diagnostic.handlers[0].setStream(stream)
+
+        _log_dispatch(
+            uuid4(), uuid4(), "dry-cover-registry-id", "stop", "connector_result", status="success"
+        )
+
+        assert "evcp_command_dispatch" in stream.getvalue()
+        assert '"operation":"stop"' in stream.getvalue()
+        assert '"stage":"connector_result"' in stream.getvalue()
+        assert root.level == logging.WARNING
+        assert root.handlers == []
+        configure_info_logger(diagnostic)
+        assert len(diagnostic.handlers) == 1
+    finally:
+        root.setLevel(original[0])
+        root.handlers[:] = original[1]
+        diagnostic.setLevel(original[2])
+        diagnostic.propagate = original[3]
+        diagnostic.handlers[:] = original[4]
+        uvicorn.handlers[:] = original[5]
 
 
 async def test_dispatch_requires_active_installation_scoped_exposed_entity(
@@ -103,30 +148,34 @@ async def test_session_registry_correlates_result_and_deduplicates_command_id() 
     websocket.send_json.assert_awaited_once()
 
 
-async def test_session_registry_has_bounded_cloud_timeout(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_session_registry_has_bounded_cloud_timeout() -> None:
     registry = ConnectorSessionRegistry()
     installation_id, session_id = uuid4(), uuid4()
     websocket = AsyncMock()
     websocket.client_state = WebSocketState.CONNECTED
     websocket.application_state = WebSocketState.CONNECTED
     await registry.replace(installation_id, SessionHandle(session_id, websocket))
-    with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.evcp"):
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    evcp_logger = logging.getLogger("apps.cloud_api.app.evcp")
+    evcp_logger.addHandler(handler)
+    try:
         outcome = await registry.dispatch(
             installation_id, uuid4(), "stable-light", {"operation": "power_on"}, 0.001
         )
+    finally:
+        evcp_logger.removeHandler(handler)
+    diagnostics = stream.getvalue()
     assert outcome.status == "timeout"
     assert outcome.error_code == "COMMAND_TIMEOUT"
-    assert '"stage":"sending"' in caplog.text
-    assert '"transport_ready":true' in caplog.text
-    assert '"stage":"timeout"' in caplog.text
+    assert '"stage":"sending"' in diagnostics
+    assert '"transport_ready":true' in diagnostics
+    assert '"stage":"timeout"' in diagnostics
 
 
 async def test_dispatch_diagnostics_distinguish_offline_lookup_and_timeout(
     session: AsyncSession,
     seeded_domain: object,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
@@ -139,20 +188,32 @@ async def test_dispatch_diagnostics_distinguish_offline_lookup_and_timeout(
     await session.commit()
     registry = ConnectorSessionRegistry()
 
-    with caplog.at_level(logging.INFO):
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    diagnostic_loggers = [
+        logging.getLogger("apps.cloud_api.app.evcp"),
+        logging.getLogger("apps.cloud_api.app.command_dispatch"),
+    ]
+    for diagnostic_logger in diagnostic_loggers:
+        diagnostic_logger.addHandler(handler)
+    try:
         outcome = await CommandDispatchService(session, registry).dispatch(
             installation_id,
             entity.ha_registry_id,
             command_adapter.validate_python({"operation": "open"}),
         )
+    finally:
+        for diagnostic_logger in diagnostic_loggers:
+            diagnostic_logger.removeHandler(handler)
+    diagnostics = stream.getvalue()
 
     assert outcome.status == "unavailable"
     assert outcome.error_code == "INSTALLATION_OFFLINE"
-    assert '"stage":"session_unavailable"' in caplog.text
-    assert '"stage":"connector_result"' in caplog.text
-    assert '"status":"unavailable"' in caplog.text
-    assert "token" not in caplog.text.lower()
-    assert "authorization" not in caplog.text.lower()
+    assert '"stage":"session_unavailable"' in diagnostics
+    assert '"stage":"connector_result"' in diagnostics
+    assert '"status":"unavailable"' in diagnostics
+    assert "token" not in diagnostics.lower()
+    assert "authorization" not in diagnostics.lower()
 
 
 async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:
