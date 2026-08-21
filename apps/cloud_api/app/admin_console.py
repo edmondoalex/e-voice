@@ -21,7 +21,7 @@ from .alexa_events import reconcile_discovery_safely
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode, validate_cover_mode
+from .cover_modes import effective_cover_mode, supports_stop, validate_cover_mode
 from .database import get_database_session
 from .domain.enums import TenantRole
 from .domain.models import (
@@ -379,11 +379,14 @@ async def installation_detail(
     )
     current_alexa: dict[str, dict[str, object]] = {}
     for delivery, entity in current_result.all():
+        voice_name = effective_voice_name(entity) if entity is not None else "—"
+        if delivery.alexa_endpoint_id.endswith("_stop") and entity is not None:
+            voice_name = f"Ferma {voice_name}"
         current_alexa.setdefault(
             delivery.alexa_endpoint_id,
             {
                 "endpoint_id": delivery.alexa_endpoint_id,
-                "voice_name": effective_voice_name(entity) if entity is not None else "—",
+                "voice_name": voice_name,
                 "domain": entity.ha_domain if entity is not None else "—",
             },
         )
@@ -618,7 +621,12 @@ def _entity_names_form(
             for value, label in labels.items()
         )
         effective = effective_cover_mode(entity) or "non pubblicabile con le funzioni attuali"
-        cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">Discreto usa apertura/chiusura; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Alexa non definisce un comando Stop per tapparelle: lo stop resta disponibile nei controlli diretti e-Control. Modalità effettiva: {_e(effective)}.</span></label>"""
+        stop_note = (
+            "Alexa espone anche la scena separata “Ferma …”, invocabile con “Alexa, attiva Ferma …”."
+            if supports_stop(entity)
+            else "La cover non dichiara il supporto stop, quindi non viene esposta alcuna scena Ferma."
+        )
+        cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">Discreto usa apertura/chiusura; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Alexa non definisce uno Stop nativo per tapparelle. {_e(stop_note)} Modalità effettiva: {_e(effective)}.</span></label>"""
     return f'''{notice}<div class="card"><p><b>Nome e-Control</b><br>{_e(entity.friendly_name or entity.ha_entity_id)}<br><span class="muted">Sincronizzato automaticamente e non modificabile qui.</span></p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>

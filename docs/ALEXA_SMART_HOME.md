@@ -174,7 +174,7 @@ directive for window treatments; media `PlaybackController.Stop` and cooking
 `TimeHoldController.Hold` are not valid substitutes. Consequently Ekonex does not advertise a
 custom third stop mode, because doing so turns the standard blinds controller into a generic
 selector and can make open/close utterance routing unreliable. Stop remains available in the
-e-Control portal and EVCP when HA supports it, but not as an Alexa cover utterance.
+e-Control portal and EVCP when HA supports it, but not as a native Alexa cover utterance.
 The controller includes Amazon's canonical Open/Close action mappings and Open/Closed state
 mappings; global Alexa assets provide localized mode vocabulary, including `it-IT`, without
 custom localized controller values.
@@ -185,13 +185,45 @@ after deploying this correction, run one complete device discovery (or remove an
 device) to replace that cached model. Ekonex cannot force the Alexa app to render three direct
 buttons: the app UI is selected by Alexa from the declared standard capability.
 
+### Alexa cover stop fallback
+
+There is no self-service, pre-built Alexa Smart Home capability that maps the natural utterance
+`Alexa, ferma <cover>` to a window-treatment Stop directive. The alternatives were reviewed
+against Amazon's current documentation:
+
+- `PlaybackController.Stop` is restricted to audio/video playback;
+- `TimeHoldController.Hold` is coupled to cooking appliances;
+- adding `Position.Stopped` to `Blinds.Position` violates the documented two-mode blinds model;
+- Alexa+ custom capabilities require the preview-only Smart Home AI Toolkit and Amazon
+  representative access, so they are not a generally publishable dependency today;
+- a separate custom interaction model would require an invocation name and would not provide the
+  requested native Smart Home utterance.
+
+For a cover that actually advertises HA `stop_cover`, Ekonex therefore publishes a separate,
+standard `Alexa.SceneController` endpoint named `Ferma <effective voice name>`. It represents an
+explicit stateless action rather than a property of the physical cover. The supported Italian
+utterance is `Alexa, attiva Ferma <nome>` (or `Alexa, accendi Ferma <nome>`), not the unavailable
+native phrase `Alexa, ferma <nome>`. The scene has a deterministic endpoint ID
+`<cover endpointId>_stop`; the original cover endpoint ID and its Open/Close/position capabilities
+remain unchanged. It has no `EndpointHealth` property, and successful activation returns the
+required `Alexa.SceneController.ActivationStarted` event.
+
+The auxiliary scene is created only while the synchronized feature bit for `stop_cover` is
+present. Feature gain, rename and removal use the existing fingerprint ledger and
+`AddOrUpdateReport`/`DeleteReport`; tenant isolation, OAuth, audit and the typed EVCP `stop`
+dispatcher remain unchanged. The Alexa app renders it as a separate scene/action, not as a third
+button on the cover. Amazon recommends no more than 12 default scenes for a user-friendly skill;
+deployments with many stoppable covers should validate the resulting experience during Alexa
+certification testing.
+
 ## Manual acceptance
 
 1. Pair HA and opt in one entity for every supported domain.
 2. Enable the development skill, log in, choose the tenant and grant consent.
 3. Discover devices; verify only that tenant's current M5 inventory appears.
 4. Exercise power, brightness/color, cover position, thermostat target/mode,
-   fan percentage and scene activation; verify HA and the Alexa response state.
+   fan percentage and scene activation; for a stoppable moving cover say
+   `Alexa, attiva Ferma <nome>` and verify only `cover.stop_cover` executes.
 5. Rename an entity in HA, let M5 synchronize, rediscover and verify the same
    endpoint has the new friendly name.
 6. Remove Ekonex exposure, let M5 tombstone it, rediscover, and verify discovery

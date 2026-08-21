@@ -195,6 +195,24 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert discrete_actions.count("Alexa.Actions.Open") == 1
     assert discrete_actions.count("Alexa.Actions.Close") == 1
 
+    entity.supported_features = 15
+    await session.commit()
+    assert await gateway.reconcile_discovery(installation) == 1
+    stop_added = json.loads(requests[-1].content)
+    assert stop_added["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert [item["endpointId"] for item in stop_added["event"]["payload"]["endpoints"]] == [
+        f"{endpoint_value}_stop"
+    ]
+
+    entity.supported_features = 7
+    await session.commit()
+    assert await gateway.reconcile_discovery(installation) == 1
+    stop_removed = json.loads(requests[-1].content)
+    assert stop_removed["event"]["header"]["name"] == "DeleteReport"
+    assert stop_removed["event"]["payload"]["endpoints"] == [
+        {"endpointId": f"{endpoint_value}_stop"}
+    ]
+
     entity.alexa_cover_mode = "hybrid"
     await session.commit()
     assert await gateway.reconcile_discovery(installation) == 1
@@ -213,8 +231,22 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert "amazon-access-secret" not in str(deleted).replace(
         deleted["event"]["payload"]["scope"]["token"], ""
     )
-    delivery = (await session.scalars(select(AlexaDiscoveryDelivery))).one()
+    delivery = (
+        await session.scalars(
+            select(AlexaDiscoveryDelivery).where(
+                AlexaDiscoveryDelivery.alexa_endpoint_id == endpoint_value
+            )
+        )
+    ).one()
     assert delivery.removed_at is not None
+    stop_delivery = (
+        await session.scalars(
+            select(AlexaDiscoveryDelivery).where(
+                AlexaDiscoveryDelivery.alexa_endpoint_id == f"{endpoint_value}_stop"
+            )
+        )
+    ).one()
+    assert stop_delivery.removed_at is not None
     audits = list(
         (
             await session.scalars(
@@ -222,7 +254,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
             )
         ).all()
     )
-    assert [event.result for event in audits] == ["success"] * 5
+    assert [event.result for event in audits] == ["success"] * 7
     assert all("token" not in json.dumps(event.payload_redacted_json) for event in audits)
     await client.aclose()
 

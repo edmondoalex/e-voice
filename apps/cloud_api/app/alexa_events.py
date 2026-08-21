@@ -214,7 +214,7 @@ class AlexaEventGateway:
 
     async def reconcile_discovery(self, installation: Installation) -> int:
         """Publish only changed endpoint representations for one installation."""
-        from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
+        from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoints
         from .entity_names import unambiguous_voice_entities
 
         entities = list(
@@ -233,11 +233,11 @@ class AlexaEventGateway:
         )
         current: dict[str, tuple[Entity, dict[str, Any], str]] = {}
         for entity in entities:
-            endpoint = discovery_endpoint(entity)
-            fingerprint = hashlib.sha256(
-                json.dumps(endpoint, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            current[str(endpoint["endpointId"])] = (entity, endpoint, fingerprint)
+            for endpoint in discovery_endpoints(entity):
+                fingerprint = hashlib.sha256(
+                    json.dumps(endpoint, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                current[str(endpoint["endpointId"])] = (entity, endpoint, fingerprint)
         links = list(
             (
                 await self._session.scalars(
