@@ -181,8 +181,8 @@ def test_state_properties_omit_other_invalid_numeric_attributes() -> None:
 @pytest.mark.parametrize(
     ("state", "expected"),
     [
-        ("open", "Position.Up"),
-        ("closed", "Position.Down"),
+        ("open", "position.open"),
+        ("closed", "position.closed"),
         ("unknown", None),
         ("opening", None),
         ("closing", None),
@@ -226,6 +226,35 @@ def test_unknown_assumed_state_cover_omits_mode_property() -> None:
         item["namespace"] == "Alexa.ModeController" and item["name"] == "mode"
         for item in state_properties(entity)
     )
+
+
+@pytest.mark.parametrize(
+    ("device_class", "category"),
+    [
+        ("blind", "INTERIOR_BLIND"),
+        ("shade", "INTERIOR_BLIND"),
+        ("curtain", "INTERIOR_BLIND"),
+        ("window", "EXTERIOR_BLIND"),
+        ("awning", "EXTERIOR_BLIND"),
+        ("shutter", "EXTERIOR_BLIND"),
+        ("door", "DOOR"),
+        (None, "OTHER"),
+    ],
+)
+def test_cover_display_category_matches_home_assistant(
+    device_class: str | None, category: str
+) -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.category",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        attributes_json={"device_class": device_class} if device_class else {},
+    )
+
+    assert discovery_endpoint(entity)["displayCategories"] == [category]
 
 
 async def test_report_state_response_omits_null_brightness(
@@ -572,10 +601,10 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
         state="closed",
     )
     assert any(item["interface"] == "Alexa.ModeController" for item in capabilities(binary))
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, binary) == {
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.open"}, binary) == {
         "operation": "open"
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, binary) == {
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, binary) == {
         "operation": "close"
     }
 
@@ -602,8 +631,9 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         item for item in discrete["capabilities"] if item["interface"] == "Alexa.ModeController"
     )
     assert {item["value"] for item in mode["configuration"]["supportedModes"]} == {
-        "Position.Up",
-        "Position.Down",
+        "position.open",
+        "position.closed",
+        "position.custom",
     }
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
     playback = next(
@@ -618,10 +648,13 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     }
     assert _command("Alexa.PlaybackController", "Pause", {}, entity) == {"operation": "stop"}
     assert _command("Alexa.PlaybackController", "Stop", {}, entity) == {"operation": "stop"}
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, entity) == {
+        "operation": "stop"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.open"}, entity) == {
         "operation": "open"
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity) == {
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, entity) == {
         "operation": "close"
     }
 
@@ -670,9 +703,11 @@ def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
 @pytest.mark.parametrize(
     ("namespace", "name", "payload", "operation"),
     [
-        ("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, "open"),
+        ("Alexa.ModeController", "SetMode", {"mode": "position.open"}, "open"),
         ("Alexa.PlaybackController", "Pause", {}, "stop"),
-        ("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, "close"),
+        ("Alexa.PlaybackController", "Stop", {}, "stop"),
+        ("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, "stop"),
+        ("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, "close"),
     ],
 )
 def test_assumed_state_discrete_cover_commands_are_stateless(
@@ -797,10 +832,10 @@ async def test_cover_directive_logging_is_allowlisted(
     )
     client = await _client(session)
     body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
-    body["directive"]["header"]["instance"] = "Blinds.Position"  # type: ignore[index]
+    body["directive"]["header"]["instance"] = "cover.position"  # type: ignore[index]
     body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
     body["directive"]["payload"] = {  # type: ignore[index]
-        "mode": "Position.Up",
+        "mode": "position.open",
         "scope": {"type": "BearerToken", "token": "never-log-payload-token"},
         "private_value": "never-log-private-payload",
     }
@@ -815,8 +850,8 @@ async def test_cover_directive_logging_is_allowlisted(
     record = next(message for message in alexa_messages if "alexa_directive_received" in message)
     assert "Alexa.ModeController" in record
     assert "SetMode" in record
-    assert "Blinds.Position" in record
-    assert "Position.Up" in record
+    assert "cover.position" in record
+    assert "position.open" in record
     assert endpoint_id(entity) in record
     alexa_log = "\n".join(alexa_messages)
     assert "never-log-access-token" not in alexa_log
@@ -835,7 +870,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     entity.ha_registry_id = "stable-discrete-cover"
     entity.supported_features = 15
     entity.alexa_cover_mode = "discrete"
-    entity.attributes_json = {"current_position": 45}
+    entity.attributes_json = {"current_position": 45, "device_class": "blind"}
     await session.commit()
     token = await _access(session, seeded_domain, "eaa_discrete_cover_json")
     client = await _client(session)
@@ -849,6 +884,10 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     endpoint = body["event"]["payload"]["endpoints"][0]
     assert endpoint["endpointId"] == endpoint_id(entity)
     assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    assert all(
+        capability["interface"] != "Alexa.PowerController"
+        for capability in endpoint["capabilities"]
+    )
     controllers = [
         capability
         for capability in endpoint["capabilities"]
@@ -857,46 +896,42 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     ]
     assert [controller["interface"] for controller in controllers] == ["Alexa.ModeController"]
     controller = controllers[0]
-    assert controller["instance"] == "Blinds.Position"
+    assert controller["instance"] == "cover.position"
     assert controller["capabilityResources"] == {
-        "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+        "friendlyNames": [
+            {"@type": "text", "value": {"text": "Position", "locale": "en-US"}},
+            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+        ]
     }
     assert controller["configuration"] == {
         "ordered": False,
         "supportedModes": [
             {
-                "value": "Position.Up",
+                "value": "position.open",
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                        {"@type": "text", "value": {"text": "apri", "locale": "it-IT"}},
-                        {"@type": "text", "value": {"text": "su", "locale": "it-IT"}},
                     ]
                 },
             },
             {
-                "value": "Position.Down",
+                "value": "position.closed",
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                        {"@type": "text", "value": {"text": "chiudi", "locale": "it-IT"}},
-                        {"@type": "text", "value": {"text": "giù", "locale": "it-IT"}},
+                    ]
+                },
+            },
+            {
+                "value": "position.custom",
+                "modeResources": {
+                    "friendlyNames": [
+                        {"@type": "text", "value": {"text": "Custom", "locale": "en-US"}},
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Preset"}},
                     ]
                 },
             },
         ],
-    }
-    italian_names = {
-        mode["value"]: [
-            friendly["value"]["text"]
-            for friendly in mode["modeResources"]["friendlyNames"]
-            if friendly["@type"] == "text" and friendly["value"]["locale"] == "it-IT"
-        ]
-        for mode in controller["configuration"]["supportedModes"]
-    }
-    assert italian_names == {
-        "Position.Up": ["apri", "su"],
-        "Position.Down": ["chiudi", "giù"],
     }
     playback = next(
         capability
@@ -910,21 +945,28 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
         "instance": "cover.stop",
         "supportedOperations": ["Stop"],
     }
-    mappings = controller["semantics"]["actionMappings"]
-    actions = [action for mapping in mappings for action in mapping["actions"]]
-    assert actions.count("Alexa.Actions.Open") == 1
-    assert actions.count("Alexa.Actions.Close") == 1
-    assert len(actions) == len(set(actions))
+    assert controller["semantics"]["actionMappings"] == [
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+            "directive": {"name": "SetMode", "payload": {"mode": "position.closed"}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+            "directive": {"name": "SetMode", "payload": {"mode": "position.open"}},
+        },
+    ]
     assert controller["semantics"]["stateMappings"] == [
         {
             "@type": "StatesToValue",
             "states": ["Alexa.States.Closed"],
-            "value": "Position.Down",
+            "value": "position.closed",
         },
         {
             "@type": "StatesToValue",
             "states": ["Alexa.States.Open"],
-            "value": "Position.Up",
+            "value": "position.open",
         },
     ]
     await client.aclose()
@@ -955,8 +997,8 @@ async def test_discover_response_omits_stop_mode_without_stop_feature(
         if capability["interface"] == "Alexa.ModeController"
     )
     assert [mode["value"] for mode in controller["configuration"]["supportedModes"]] == [
-        "Position.Up",
-        "Position.Down",
+        "position.open",
+        "position.closed",
     ]
     assert all(
         capability["interface"] != "Alexa.PlaybackController"
@@ -987,10 +1029,10 @@ async def test_assumed_state_cover_dispatches_mode_and_playback_directives(
     client = await _client(session)
 
     directives = [
-        ("Alexa.ModeController", "SetMode", "Blinds.Position", {"mode": "Position.Up"}),
+        ("Alexa.ModeController", "SetMode", "cover.position", {"mode": "position.open"}),
         ("Alexa.PlaybackController", "Pause", "cover.stop", {}),
         ("Alexa.PlaybackController", "Stop", "cover.stop", {}),
-        ("Alexa.ModeController", "SetMode", "Blinds.Position", {"mode": "Position.Down"}),
+        ("Alexa.ModeController", "SetMode", "cover.position", {"mode": "position.closed"}),
     ]
     for namespace, name, instance, payload in directives:
         body = _directive(token, namespace, name, endpoint_id(entity))
