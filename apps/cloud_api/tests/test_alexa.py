@@ -603,6 +603,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     )
     assert {item["value"] for item in mode["configuration"]["supportedModes"]} == {
         "Position.Up",
+        "Position.Stopped",
         "Position.Down",
     }
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) == {
@@ -857,6 +858,15 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
                 },
             },
             {
+                "value": "Position.Stopped",
+                "modeResources": {
+                    "friendlyNames": [
+                        {"@type": "text", "value": {"text": "stop", "locale": "en-US"}},
+                        {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
+                    ]
+                },
+            },
+            {
                 "value": "Position.Down",
                 "modeResources": {
                     "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}]
@@ -881,6 +891,35 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
             "value": "Position.Up",
         },
     ]
-    assert "Position.Stopped" not in json.dumps(endpoint)
-    assert '"@type": "text"' not in json.dumps(endpoint)
+    await client.aclose()
+
+
+async def test_discover_response_omits_stop_mode_without_stop_feature(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-discrete-cover-without-stop"
+    entity.supported_features = 3
+    entity.alexa_cover_mode = "discrete"
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_discrete_cover_without_stop")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+
+    assert response.status_code == 200
+    endpoint = response.json()["event"]["payload"]["endpoints"][0]
+    controller = next(
+        capability
+        for capability in endpoint["capabilities"]
+        if capability["interface"] == "Alexa.ModeController"
+    )
+    assert [mode["value"] for mode in controller["configuration"]["supportedModes"]] == [
+        "Position.Up",
+        "Position.Down",
+    ]
     await client.aclose()
