@@ -14,7 +14,9 @@ from apps.cloud_api.app.alexa import (
     _digest,
     capabilities,
     discovery_endpoint,
+    discovery_endpoints,
     endpoint_id,
+    stop_scene_endpoint_id,
 )
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
@@ -628,3 +630,91 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert "Position.Stopped" not in json.dumps(endpoint)
     assert '"@type": "text"' not in json.dumps(endpoint)
     await client.aclose()
+
+
+async def test_stop_scene_discovery_and_activation_dispatch_only_typed_stop(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-stoppable-cover"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    entity.voice_name = "tapparella ufficio"
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_stop_scene")
+    client = await _client(session)
+
+    discovery = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    endpoints = discovery.json()["event"]["payload"]["endpoints"]
+    assert {item["endpointId"] for item in endpoints} == {
+        endpoint_id(entity),
+        stop_scene_endpoint_id(entity),
+    }
+    stop_scene = next(item for item in endpoints if item["endpointId"].endswith("_stop"))
+    assert stop_scene == {
+        "endpointId": stop_scene_endpoint_id(entity),
+        "manufacturerName": "Ekonex",
+        "friendlyName": "Ferma tapparella ufficio",
+        "description": "Cover stop scene connected by Ekonex",
+        "displayCategories": ["SCENE_TRIGGER"],
+        "cookie": {},
+        "capabilities": [
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.SceneController",
+                "version": "3",
+                "supportsDeactivation": False,
+            },
+            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
+        ],
+    }
+    assert all(item["interface"] != "Alexa.EndpointHealth" for item in stop_scene["capabilities"])
+
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    activate = _directive(
+        token, "Alexa.SceneController", "Activate", stop_scene_endpoint_id(entity)
+    )
+    activate["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    response = await client.post("/alexa/v1/directive", json=activate)
+    assert response.status_code == 200
+    assert response.json()["event"]["header"]["name"] == "ActivationStarted"
+    assert response.json()["event"]["payload"]["cause"] == {"type": "VOICE_INTERACTION"}
+    await_args = dispatched.await_args
+    assert await_args is not None
+    assert await_args.args[3] == {"operation": "stop"}
+    assert dispatched.await_count == 1
+
+    entity.supported_features = 7
+    await session.commit()
+    unsupported = _directive(
+        token, "Alexa.SceneController", "Activate", stop_scene_endpoint_id(entity)
+    )
+    unsupported["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    assert (await client.post("/alexa/v1/directive", json=unsupported)).status_code == 404
+    foreign_endpoint = f"ev1_{seeded_domain.entity_b_id.hex}_stop"  # type: ignore[attr-defined]
+    foreign = _directive(token, "Alexa.SceneController", "Activate", foreign_endpoint)
+    foreign["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    assert (await client.post("/alexa/v1/directive", json=foreign)).status_code == 404
+    assert dispatched.await_count == 1
+    await client.aclose()
+
+
+def test_cover_without_stop_feature_has_no_auxiliary_scene() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.no_stop",
+        ha_domain="cover",
+        supported_features=7,
+        alexa_cover_mode="hybrid",
+    )
+    assert [item["endpointId"] for item in discovery_endpoints(entity)] == [endpoint_id(entity)]

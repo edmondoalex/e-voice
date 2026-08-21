@@ -4,6 +4,27 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-21 — Alexa-compliant cover stop action
+
+Status: Ready for review
+
+### Scope
+
+- Documented that Alexa Smart Home has no native, self-service Stop directive for window
+  treatments and rejected media, cooking, non-standard mode and preview-only custom-capability
+  substitutions.
+- Added a deterministic auxiliary `SceneController` endpoint only for covers that advertise the
+  real HA stop feature, using the explicit Italian invocation `Alexa, attiva Ferma <nome>`.
+- Routed scene activation exclusively to the existing typed EVCP `stop` operation and returned
+  Amazon's required `ActivationStarted` response.
+- Reused the existing Discovery delivery ledger for add, rename and delete lifecycle without
+  changing the physical cover endpoint identity.
+
+### Scope guard
+
+- No custom Alexa interface, `Position.Stopped`, database migration, Connector, Lambda, OAuth,
+  physical cover endpoint ID, percentage or Open/Close change.
+
 ## 2026-08-20 — Alexa discrete cover Discovery correction
 
 Status: Ready for review
@@ -30,7 +51,7 @@ Status: Ready for review
 - Added tenant-scoped persisted Discrete, Percentage and Hybrid Alexa exposure modes for covers,
   with a safe feature-derived automatic default and clear portal validation.
 - Made Discovery capabilities, reported properties and directive mapping use the same selected
-  mode, while advertising stop only when e-Control reports that operation as supported.
+  Open/Close/position mode; Stop handling is documented by the later dedicated entry.
 - Preserved endpoint identity and reused the existing Discovery fingerprint/proactive
   reconciliation so a meaningful mode change emits `AddOrUpdateReport`.
 

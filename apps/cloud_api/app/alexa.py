@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode
+from .cover_modes import effective_cover_mode, supports_stop
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -417,6 +417,32 @@ def endpoint_id(entity: Entity) -> str:
     return f"ev1_{entity.id.hex}"
 
 
+def stop_scene_endpoint_id(entity: Entity) -> str:
+    """Return the deterministic auxiliary scene identity without changing the cover endpoint."""
+    return f"{endpoint_id(entity)}_stop"
+
+
+def stop_scene_endpoint(entity: Entity) -> dict[str, Any]:
+    """Map a real HA stop feature to a standards-compliant, separate Alexa scene."""
+    return {
+        "endpointId": stop_scene_endpoint_id(entity),
+        "manufacturerName": "Ekonex",
+        "friendlyName": f"Ferma {effective_voice_name(entity)}",
+        "description": "Cover stop scene connected by Ekonex",
+        "displayCategories": ["SCENE_TRIGGER"],
+        "cookie": {},
+        "capabilities": [
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.SceneController",
+                "version": "3",
+                "supportsDeactivation": False,
+            },
+            _capability("Alexa"),
+        ],
+    }
+
+
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     category = {
         "light": "LIGHT",
@@ -436,6 +462,14 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
         "cookie": {},
         "capabilities": capabilities(entity),
     }
+
+
+def discovery_endpoints(entity: Entity) -> list[dict[str, Any]]:
+    """Return the physical endpoint and any valid standard auxiliary action endpoints."""
+    endpoints = [discovery_endpoint(entity)]
+    if entity.ha_domain == "cover" and supports_stop(entity):
+        endpoints.append(stop_scene_endpoint(entity))
+    return endpoints
 
 
 def _property(
@@ -698,7 +732,9 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         entities = unambiguous_voice_entities(
             [entity for entity in entities if alexa_entity_eligible(entity)]
         )
-        published = [(entity, discovery_endpoint(entity)) for entity in entities]
+        published = [
+            (entity, endpoint) for entity in entities for endpoint in discovery_endpoints(entity)
+        ]
         response = _event(
             {
                 "namespace": "Alexa.Discovery",
@@ -720,8 +756,10 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
+        is_stop_scene = endpoint_value.endswith("_stop")
+        entity_endpoint_value = endpoint_value[:-5] if is_stop_scene else endpoint_value
         try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
+            entity_uuid = UUID(hex=entity_endpoint_value[4:])
         except ValueError as exc:
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity = await database.scalar(
@@ -733,9 +771,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 Entity.deleted_at.is_(None),
             )
         )
-        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+        if (
+            entity is None
+            or entity.ha_registry_id is None
+            or not alexa_entity_eligible(entity)
+            or (is_stop_scene and (entity.ha_domain != "cover" or not supports_stop(entity)))
+        ):
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
-        if header["namespace"] == "Alexa" and header["name"] == "ReportState":
+        if not is_stop_scene and header["namespace"] == "Alexa" and header["name"] == "ReportState":
             response = _event(
                 {
                     "namespace": "Alexa",
@@ -749,10 +792,23 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 state_properties(entity),
             )
         else:
-            spec = _command(
-                header["namespace"], header["name"], directive.get("payload", {}), entity
+            spec = (
+                {"operation": "stop"}
+                if is_stop_scene
+                and header["namespace"] == "Alexa.SceneController"
+                and header["name"] == "Activate"
+                else _command(
+                    header["namespace"], header["name"], directive.get("payload", {}), entity
+                )
             )
-            advertised = {cap["interface"] for cap in capabilities(entity)}
+            advertised = {
+                cap["interface"]
+                for cap in (
+                    stop_scene_endpoint(entity)["capabilities"]
+                    if is_stop_scene
+                    else capabilities(entity)
+                )
+            }
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
                     {
@@ -792,18 +848,34 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         {"endpointId": endpoint_value},
                     )
                 else:
-                    response = _event(
-                        {
-                            "namespace": "Alexa",
-                            "name": "Response",
-                            "payloadVersion": "3",
-                            "messageId": str(uuid4()),
-                            "correlationToken": correlation,
-                        },
-                        {},
-                        {"endpointId": endpoint_value},
-                        state_properties(entity),
-                    )
+                    if header["namespace"] == "Alexa.SceneController":
+                        response = _event(
+                            {
+                                "namespace": "Alexa.SceneController",
+                                "name": "ActivationStarted",
+                                "payloadVersion": "3",
+                                "messageId": str(uuid4()),
+                                "correlationToken": correlation,
+                            },
+                            {
+                                "cause": {"type": "VOICE_INTERACTION"},
+                                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                            },
+                            {"endpointId": endpoint_value},
+                        )
+                    else:
+                        response = _event(
+                            {
+                                "namespace": "Alexa",
+                                "name": "Response",
+                                "payloadVersion": "3",
+                                "messageId": str(uuid4()),
+                                "correlationToken": correlation,
+                            },
+                            {},
+                            {"endpointId": endpoint_value},
+                            state_properties(entity),
+                        )
     _replay[replay_key] = response
     if len(_replay) > 2048:
         _replay.pop(next(iter(_replay)))
