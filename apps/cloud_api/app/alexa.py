@@ -335,7 +335,9 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "value": "Position.Up",
                     "modeResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                            {"@type": "text", "value": {"text": "apri", "locale": "it-IT"}},
+                            {"@type": "text", "value": {"text": "su", "locale": "it-IT"}},
                         ]
                     },
                 },
@@ -343,7 +345,9 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "value": "Position.Down",
                     "modeResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                            {"@type": "text", "value": {"text": "chiudi", "locale": "it-IT"}},
+                            {"@type": "text", "value": {"text": "giù", "locale": "it-IT"}},
                         ]
                     },
                 },
@@ -355,8 +359,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "value": "Position.Stopped",
                         "modeResources": {
                             "friendlyNames": [
-                                {"@type": "text", "value": {"text": "stop", "locale": "en-US"}},
                                 {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
+                                {"@type": "text", "value": {"text": "stop", "locale": "it-IT"}},
                             ]
                         },
                     },

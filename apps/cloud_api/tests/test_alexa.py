@@ -854,25 +854,46 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
             {
                 "value": "Position.Up",
                 "modeResources": {
-                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}]
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                        {"@type": "text", "value": {"text": "apri", "locale": "it-IT"}},
+                        {"@type": "text", "value": {"text": "su", "locale": "it-IT"}},
+                    ]
                 },
             },
             {
                 "value": "Position.Stopped",
                 "modeResources": {
                     "friendlyNames": [
-                        {"@type": "text", "value": {"text": "stop", "locale": "en-US"}},
                         {"@type": "text", "value": {"text": "ferma", "locale": "it-IT"}},
+                        {"@type": "text", "value": {"text": "stop", "locale": "it-IT"}},
                     ]
                 },
             },
             {
                 "value": "Position.Down",
                 "modeResources": {
-                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}]
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                        {"@type": "text", "value": {"text": "chiudi", "locale": "it-IT"}},
+                        {"@type": "text", "value": {"text": "giù", "locale": "it-IT"}},
+                    ]
                 },
             },
         ],
+    }
+    italian_names = {
+        mode["value"]: [
+            friendly["value"]["text"]
+            for friendly in mode["modeResources"]["friendlyNames"]
+            if friendly["@type"] == "text" and friendly["value"]["locale"] == "it-IT"
+        ]
+        for mode in controller["configuration"]["supportedModes"]
+    }
+    assert italian_names == {
+        "Position.Up": ["apri", "su"],
+        "Position.Stopped": ["ferma", "stop"],
+        "Position.Down": ["chiudi", "giù"],
     }
     mappings = controller["semantics"]["actionMappings"]
     actions = [action for mapping in mappings for action in mapping["actions"]]
