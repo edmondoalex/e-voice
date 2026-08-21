@@ -554,8 +554,8 @@ async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
     page = await client.get(edit_url)
     assert page.status_code == 200
     assert "Modalità Alexa tapparella/tenda" in page.text
-    assert "Discreto — apri e chiudi" in page.text
-    assert "Alexa non definisce un comando Stop per tapparelle" in page.text
+    assert "Discreto — apri / stop / chiudi" in page.text
+    assert "Discreto usa i comandi stateless apri, ferma e chiudi, senza percentuali" in page.text
     assert "Percentuale — posizione 0–100%" in page.text
     assert "Ibrido — comandi discreti e percentuali" in page.text
 
@@ -583,6 +583,9 @@ async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
     entity.supported_features = 3
     await session.commit()
     invalid_page = await client.get(edit_url)
+    assert "Discreto — apri e chiudi" in invalid_page.text
+    assert "Discreto — apri / stop / chiudi" not in invalid_page.text
+    assert "Discreto usa i comandi stateless apri e chiudi, senza percentuali" in invalid_page.text
     invalid = await client.post(
         edit_url,
         data={

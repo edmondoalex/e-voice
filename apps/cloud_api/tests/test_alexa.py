@@ -618,6 +618,12 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     }
     assert _command("Alexa.PlaybackController", "Pause", {}, entity) == {"operation": "stop"}
     assert _command("Alexa.PlaybackController", "Stop", {}, entity) == {"operation": "stop"}
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity) == {
+        "operation": "close"
+    }
 
     entity.alexa_cover_mode = "percentage"
     percentage = discovery_endpoint(entity)
