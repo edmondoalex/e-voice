@@ -184,6 +184,39 @@ async def test_reconnect_cancels_delayed_full_and_requeues_complete_inventory(
     await sync.async_stop()
 
 
+async def test_concurrent_full_and_state_update_send_monotonic_revisions(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = False
+    first_send_entered, release_first_send = asyncio.Event(), asyncio.Event()
+
+    async def ordered_send(message: dict[str, object]) -> None:
+        if not first_send_entered.is_set():
+            first_send_entered.set()
+            await release_first_send.wait()
+
+    websocket.send_json.side_effect = ordered_send
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+    item = sync._serialize(entry)
+    assert item is not None
+    full = asyncio.create_task(sync._send_full())
+    await first_send_entered.wait()
+    state = asyncio.create_task(sync._send("state_update", [item]))
+    await asyncio.sleep(0)
+
+    assert websocket.send_json.await_count == 1
+    release_first_send.set()
+    assert await full is True
+    assert await state is True
+    revisions = [
+        call.args[0]["payload"]["revision"] for call in websocket.send_json.await_args_list
+    ]
+    assert revisions == [1, 2]
+
+
 async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant) -> None:
     entry = registered_light(hass)
     websocket = AsyncMock()

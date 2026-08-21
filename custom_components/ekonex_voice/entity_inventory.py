@@ -69,6 +69,7 @@ class EntityInventorySynchronizer:
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self._send_lock = asyncio.Lock()
         self._generation = 0
         self.last_full_revision: int | None = None
         self.last_full_entity_count: int | None = None
@@ -206,6 +207,15 @@ class EntityInventorySynchronizer:
         message_type: str,
         items: list[dict[str, object]],
         generation: int | None = None,
+    ) -> bool:
+        async with self._send_lock:
+            return await self._send_locked(message_type, items, generation)
+
+    async def _send_locked(
+        self,
+        message_type: str,
+        items: list[dict[str, object]],
+        generation: int | None,
     ) -> bool:
         websocket, session_id = self._websocket, self._session_id
         if (
