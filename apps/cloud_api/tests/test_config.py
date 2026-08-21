@@ -14,6 +14,17 @@ def test_settings_read_prefixed_environment(monkeypatch: MonkeyPatch) -> None:
     assert settings.api_port == 9000
 
 
+def test_discovery_diagnostic_endpoint_is_empty_or_canonical(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "EKONEX_ALEXA_DISCOVERY_DIAGNOSTIC_ENDPOINT_ID",
+        "ev1_11111111222233334444555555555555",
+    )
+    assert (
+        Settings(_env_file=None).alexa_discovery_diagnostic_endpoint_id
+        == "ev1_11111111222233334444555555555555"
+    )
+
+
 def test_production_rejects_development_pairing_portal_secrets() -> None:
     with pytest.raises(ValueError, match="pairing portal secrets"):
         Settings(environment="production", _env_file=None)

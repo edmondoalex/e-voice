@@ -74,6 +74,60 @@ The expected invariant is always `Position.Stopped -> stop -> cover.stop_cover`,
 `opening` or `closing`. The logs intentionally exclude tokens, authorization headers, complete
 payloads and arbitrary attributes.
 
+## Capture the real Discover.Response structure
+
+This diagnostic is disabled unless one exact Alexa endpoint ID is configured. Obtain the test
+cover's entity UUID from the admin portal's latest Discovery snapshot, or query only that entity on
+the VPS (replace the entity ID):
+
+```bash
+docker compose exec postgres psql -U ekonex -d ekonex_voice -Atc \
+  "select 'ev1_' || replace(id::text, '-', '') from entities where ha_entity_id = 'cover.test_cover' and deleted_at is null;"
+```
+
+Set the single returned value in `.env` without printing any other environment variables:
+
+```bash
+EKONEX_ALEXA_DISCOVERY_DIAGNOSTIC_ENDPOINT_ID=ev1_<32-lowercase-hex-characters>
+```
+
+Recreate only the API container and confirm the exact target:
+
+```bash
+docker compose up -d --no-deps --force-recreate api
+docker compose exec api python -c \
+  "from apps.cloud_api.app.config import get_settings; print(get_settings().alexa_discovery_diagnostic_endpoint_id)"
+```
+
+In the Alexa app, delete the test cover if required, then run **Discover Devices**. This sends a
+real `Alexa.Discovery/Discover` request. Read the one allowlisted record:
+
+```bash
+docker compose logs --since 10m --no-color api \
+  | grep 'alexa_discovery_diagnostic'
+```
+
+The JSON contains only `endpointId`, `displayCategories`, interface/instance data,
+`supportedModes`, `capabilityResources`, `semantics`, `stateMappings`, `retrievable`,
+`proactivelyReported`, and these comparison fields:
+
+- `endpointFingerprint`: SHA-256 of the complete endpoint representation actually returned;
+- `structureFingerprint`: SHA-256 of the allowlisted structure with endpoint ID normalized;
+- `postPr43StructureFingerprint`: fixed historical post-PR #43 value
+  `9b9f863c7af0263a6d7014ed2c44148e0bd95ce2b7e4006e99c23c152957617a`;
+- `matchesPostPr43Structure`: must be `true` for the historical three-mode representation.
+
+To compare a captured record locally, save only the JSON portion after
+`alexa_discovery_diagnostic ` and run:
+
+```bash
+jq '{endpointFingerprint,structureFingerprint,postPr43StructureFingerprint,matchesPostPr43Structure,endpointId,displayCategories,interfaces}' \
+  /tmp/alexa-discovery-diagnostic.json
+```
+
+After capture, remove `EKONEX_ALEXA_DISCOVERY_DIAGNOSTIC_ENDPOINT_ID` from `.env` and recreate the
+API container. An empty value emits no Discovery diagnostic records.
+
 ## Rollback
 
 Restore the saved Lambda zip (and prior alias version, if applicable), restore the recorded VPS

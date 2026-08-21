@@ -42,6 +42,81 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
+POST_PR43_DISCOVERY_STRUCTURE_SHA256 = (
+    "9b9f863c7af0263a6d7014ed2c44148e0bd95ce2b7e4006e99c23c152957617a"
+)
+
+
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _safe_discovery_structure(endpoint: dict[str, Any]) -> dict[str, Any]:
+    """Extract only allowlisted Alexa Discovery routing fields."""
+    safe_capabilities: list[dict[str, Any]] = []
+    for capability in endpoint.get("capabilities", []):
+        if not isinstance(capability, dict):
+            continue
+        properties = capability.get("properties")
+        semantics = capability.get("semantics")
+        configuration = capability.get("configuration")
+        safe_capabilities.append(
+            {
+                "interface": capability.get("interface"),
+                "instance": capability.get("instance"),
+                "supportedModes": (
+                    configuration.get("supportedModes") if isinstance(configuration, dict) else None
+                ),
+                "capabilityResources": capability.get("capabilityResources"),
+                "semantics": semantics,
+                "stateMappings": (
+                    semantics.get("stateMappings") if isinstance(semantics, dict) else None
+                ),
+                "retrievable": (
+                    properties.get("retrievable") if isinstance(properties, dict) else None
+                ),
+                "proactivelyReported": (
+                    properties.get("proactivelyReported") if isinstance(properties, dict) else None
+                ),
+            }
+        )
+    return {
+        "endpointId": endpoint.get("endpointId"),
+        "displayCategories": endpoint.get("displayCategories"),
+        "interfaces": safe_capabilities,
+    }
+
+
+def _log_target_discovery(published: list[tuple[Entity, dict[str, Any]]]) -> None:
+    """Log one explicitly selected cover endpoint without credentials or cookies."""
+    target = get_settings().alexa_discovery_diagnostic_endpoint_id
+    if not target:
+        return
+    for entity, endpoint in published:
+        if entity.ha_domain != "cover" or endpoint.get("endpointId") != target:
+            continue
+        structure = _safe_discovery_structure(endpoint)
+        normalized = {**structure, "endpointId": "<endpointId>"}
+        structure_fingerprint = _canonical_sha256(normalized)
+        logger.info(
+            "alexa_discovery_diagnostic %s",
+            json.dumps(
+                {
+                    **structure,
+                    "endpointFingerprint": _canonical_sha256(endpoint),
+                    "structureFingerprint": structure_fingerprint,
+                    "postPr43StructureFingerprint": POST_PR43_DISCOVERY_STRUCTURE_SHA256,
+                    "matchesPostPr43Structure": (
+                        structure_fingerprint == POST_PR43_DISCOVERY_STRUCTURE_SHA256
+                    ),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        return
 
 
 def _safe_cover_stop_diagnostic(
@@ -740,6 +815,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             },
             {"endpoints": [endpoint for _, endpoint in published]},
         )
+        _log_target_discovery(published)
         try:
             await record_discovery(database, link.tenant_id, link.id, installations, published)
         except SQLAlchemyError:

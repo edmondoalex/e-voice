@@ -12,12 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import (
+    POST_PR43_DISCOVERY_STRUCTURE_SHA256,
+    _canonical_sha256,
     _command,
     _digest,
+    _safe_discovery_structure,
     capabilities,
     discovery_endpoint,
     endpoint_id,
 )
+from apps.cloud_api.app.config import get_settings
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -606,3 +610,45 @@ async def test_opening_and_closing_position_stopped_dispatch_only_stop(
     assert '"dispatch_outcome":"success"' in caplog.text
     assert token not in caplog.text
     await client.aclose()
+
+
+async def test_discovery_logs_only_selected_cover_allowlist_and_historical_comparison(
+    session: AsyncSession,
+    seeded_domain: object,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-discovery-diagnostic"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    await session.commit()
+    target = endpoint_id(entity)
+    token = await _access(session, seeded_domain, "eaa_discovery_diagnostic")
+    monkeypatch.setenv("EKONEX_ALEXA_DISCOVERY_DIAGNOSTIC_ENDPOINT_ID", target)
+    get_settings.cache_clear()
+    client = await _client(session)
+
+    try:
+        with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.alexa"):
+            response = await client.post(
+                "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+            )
+    finally:
+        get_settings.cache_clear()
+        await client.aclose()
+
+    assert response.status_code == 200
+    endpoint = response.json()["event"]["payload"]["endpoints"][0]
+    safe = _safe_discovery_structure(endpoint)
+    normalized = {**safe, "endpointId": "<endpointId>"}
+    assert _canonical_sha256(normalized) == POST_PR43_DISCOVERY_STRUCTURE_SHA256
+    assert "alexa_discovery_diagnostic" in caplog.text
+    assert f'"endpointId":"{target}"' in caplog.text
+    assert '"matchesPostPr43Structure":true' in caplog.text
+    assert '"stateMappings":null' in caplog.text
+    assert token not in caplog.text
+    assert '"cookie"' not in caplog.text
+    assert '"friendlyName"' not in caplog.text
