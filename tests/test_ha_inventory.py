@@ -148,6 +148,24 @@ async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant)
     assert message["payload"]["entities"][0]["state"] is None
 
 
+async def test_unknown_assumed_state_cover_remains_available(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create("cover", "test", "stateless-cover")
+    hass.states.async_set(
+        entry.entity_id,
+        "unknown",
+        {"assumed_state": True, "is_closed": None, "supported_features": 11},
+    )
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    item = sync._serialize(entry)
+
+    assert item is not None
+    assert item["state"] is None
+    assert item["available"] is True
+    assert item["supported_features"] == 11
+
+
 async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(
     hass: HomeAssistant,
 ) -> None:

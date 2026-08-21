@@ -12,7 +12,7 @@ from homeassistant.components.climate.const import ClimateEntityFeature
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.components.fan import FanEntityFeature
 from homeassistant.components.light.const import ColorMode
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
@@ -95,7 +95,7 @@ class EkonexVoiceCommandExecutor:
         state = self._hass.states.get(entry.entity_id)
         if state is None:
             return CommandResult(command_id, "target_not_found", "ENTITY_NOT_FOUND")
-        if state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+        if state.state == STATE_UNAVAILABLE:
             return CommandResult(command_id, "unavailable", "ENTITY_UNAVAILABLE")
         try:
             domain, service, data = _map_command(entry.domain, state, command)
