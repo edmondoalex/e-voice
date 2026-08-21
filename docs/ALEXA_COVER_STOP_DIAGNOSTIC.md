@@ -118,6 +118,24 @@ The allowlisted logs contain no token. Still inspect the files locally before sh
 backend mapping is `Position.Up -> open`, `Position.Down -> close`, and—only in B on a STOP-capable
 cover—`Position.Stopped -> stop`. Any other mode is rejected and never dispatched.
 
+## Verified real-world result
+
+The controlled AWS/Alexa test with the experimental three-mode discovery produced this result:
+
+- Alexa app `Position.Up`: sent `Alexa.ModeController/SetMode`, invoked Lambda and completed.
+- Alexa app `Position.Down`: sent `Alexa.ModeController/SetMode`, invoked Lambda and completed.
+- Alexa app `Position.Stopped`: sent `Alexa.ModeController/SetMode`, invoked Lambda and completed;
+  the cover also stopped physically.
+- Voice `Alexa, apri <nome cover>`: Alexa replied `non so come regolare quella impostazione`.
+  Lambda was not invoked and no new `alexa_directive_received` record appeared.
+- The other tested voice commands had the same pre-Lambda failure: no invocation and no diagnostic
+  directive record.
+
+This isolates the failure before the skill endpoint. `Position.Stopped` is executable through the
+Alexa app, but including it in the `Blinds.Position` `ModeController` prevents or breaks Alexa Smart
+Home voice routing before Lambda. The experimental representation must therefore not be promoted
+to normal behavior; retain the canonical two-mode representation outside this diagnostic branch.
+
 ## Immediate rollback
 
 Restore the Lambda first:

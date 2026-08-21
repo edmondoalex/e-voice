@@ -14,6 +14,10 @@ Status: Draft diagnostic only; not for merge or permanent production enablement
   discrete/hybrid covers whose synchronized HA features include Stop.
 - Added allowlisted structured Lambda and backend routing logs without directive credentials.
 - Added A/B tests and an exact temporary VPS/Lambda deploy, evidence collection and rollback runbook.
+- Recorded the real AWS/Alexa result: all three modes, including `Position.Stopped`, execute from
+  the Alexa app, while voice requests fail before Lambda with no diagnostic directive record.
+- Confirmed that adding `Position.Stopped` to `Blinds.Position` prevents or breaks Alexa Smart Home
+  voice routing despite app control working, so the experiment must not become normal behavior.
 
 ### Scope guard
 
