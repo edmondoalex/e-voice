@@ -614,9 +614,10 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         "interface": "Alexa.PlaybackController",
         "version": "3",
         "instance": "cover.stop",
-        "supportedOperations": ["Pause"],
+        "supportedOperations": ["Stop"],
     }
     assert _command("Alexa.PlaybackController", "Pause", {}, entity) == {"operation": "stop"}
+    assert _command("Alexa.PlaybackController", "Stop", {}, entity) == {"operation": "stop"}
 
     entity.alexa_cover_mode = "percentage"
     percentage = discovery_endpoint(entity)
@@ -901,7 +902,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
         "interface": "Alexa.PlaybackController",
         "version": "3",
         "instance": "cover.stop",
-        "supportedOperations": ["Pause"],
+        "supportedOperations": ["Stop"],
     }
     mappings = controller["semantics"]["actionMappings"]
     actions = [action for mapping in mappings for action in mapping["actions"]]
@@ -982,6 +983,7 @@ async def test_assumed_state_cover_dispatches_mode_and_playback_directives(
     directives = [
         ("Alexa.ModeController", "SetMode", "Blinds.Position", {"mode": "Position.Up"}),
         ("Alexa.PlaybackController", "Pause", "cover.stop", {}),
+        ("Alexa.PlaybackController", "Stop", "cover.stop", {}),
         ("Alexa.ModeController", "SetMode", "Blinds.Position", {"mode": "Position.Down"}),
     ]
     for namespace, name, instance, payload in directives:
@@ -995,6 +997,7 @@ async def test_assumed_state_cover_dispatches_mode_and_playback_directives(
 
     assert [call.args[3] for call in dispatched.await_args_list] == [
         {"operation": "open"},
+        {"operation": "stop"},
         {"operation": "stop"},
         {"operation": "close"},
     ]

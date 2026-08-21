@@ -402,7 +402,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
         if entity.supported_features & COVER_STOP:
             result.append(
                 _capability("Alexa.PlaybackController")
-                | {"instance": "cover.stop", "supportedOperations": ["Pause"]}
+                | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
             )
     elif entity.ha_domain == "climate":
         result.append(
@@ -638,7 +638,7 @@ def _command(
             else None
         )
         return {"operation": operation} if operation is not None else None
-    if namespace == "Alexa.PlaybackController" and name == "Pause":
+    if namespace == "Alexa.PlaybackController" and name in {"Pause", "Stop"}:
         if entity is None or entity.ha_domain != "cover":
             return None
         return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
