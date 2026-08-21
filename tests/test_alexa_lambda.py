@@ -223,6 +223,40 @@ def test_cover_directive_logging_is_structured_and_excludes_authorization(
     assert ACCESS_TOKEN not in caplog.text
 
 
+def test_lambda_diagnostic_logger_emits_info_with_root_at_default_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EKONEX_VOICE_BACKEND_URL", "https://voice.e-control.tech")
+    lambda_logger = logging.getLogger("aws_lambda.alexa_smart_home.lambda_function")
+    records: list[logging.LogRecord] = []
+
+    class RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = RecordingHandler()
+    root_logger = logging.getLogger()
+    previous_root_level = root_logger.level
+    root_logger.setLevel(logging.WARNING)
+    root_logger.addHandler(handler)
+    try:
+        with patch(
+            "aws_lambda.alexa_smart_home.lambda_function.urlopen",
+            return_value=FakeResponse(discover_response()),
+        ):
+            lambda_handler(discovery(), None)
+    finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(previous_root_level)
+
+    diagnostic_records = [
+        record for record in records if record.getMessage().startswith("alexa_directive_received ")
+    ]
+    assert lambda_logger.level == logging.INFO
+    assert len(diagnostic_records) == 1
+    assert ACCESS_TOKEN not in diagnostic_records[0].getMessage()
+
+
 def test_non_accept_grant_authorization_without_scope_is_rejected() -> None:
     directive = accept_grant()
     directive["directive"]["header"]["name"] = "UnsupportedAuthorization"

@@ -59,6 +59,12 @@ model.
 
 ## Deploy diagnostic Lambda logging
 
+The diagnostic module logger is explicitly set to `INFO`; AWS Lambda's root logger otherwise
+defaults to `WARNING`, which suppresses `logger.info` calls even though platform `START`, `END` and
+`REPORT` records still appear. The configuration is scoped to this Lambda module and does not
+enable INFO logging for imported libraries. Records continue to propagate to Lambda's existing
+CloudWatch handler.
+
 Back up the currently deployed package first:
 
 ```bash

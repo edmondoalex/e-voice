@@ -12,6 +12,10 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+# AWS Lambda installs the CloudWatch handler on the root logger, whose default
+# level does not enable application INFO records. Configure only this module's
+# diagnostic logger; records still propagate to Lambda's existing handler.
+logger.setLevel(logging.INFO)
 
 BACKEND_URL_ENV = "EKONEX_VOICE_BACKEND_URL"
 BACKEND_TIMEOUT_ENV = "EKONEX_VOICE_BACKEND_TIMEOUT_SECONDS"
