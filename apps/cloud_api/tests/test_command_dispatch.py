@@ -1,6 +1,7 @@
 """M6 cloud command authorization, routing and correlation tests."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -102,17 +103,56 @@ async def test_session_registry_correlates_result_and_deduplicates_command_id() 
     websocket.send_json.assert_awaited_once()
 
 
-async def test_session_registry_has_bounded_cloud_timeout() -> None:
+async def test_session_registry_has_bounded_cloud_timeout(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     registry = ConnectorSessionRegistry()
     installation_id, session_id = uuid4(), uuid4()
     websocket = AsyncMock()
     websocket.client_state = WebSocketState.CONNECTED
+    websocket.application_state = WebSocketState.CONNECTED
     await registry.replace(installation_id, SessionHandle(session_id, websocket))
-    outcome = await registry.dispatch(
-        installation_id, uuid4(), "stable-light", {"operation": "power_on"}, 0.001
-    )
+    with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.evcp"):
+        outcome = await registry.dispatch(
+            installation_id, uuid4(), "stable-light", {"operation": "power_on"}, 0.001
+        )
     assert outcome.status == "timeout"
     assert outcome.error_code == "COMMAND_TIMEOUT"
+    assert '"stage":"sending"' in caplog.text
+    assert '"transport_ready":true' in caplog.text
+    assert '"stage":"timeout"' in caplog.text
+
+
+async def test_dispatch_diagnostics_distinguish_offline_lookup_and_timeout(
+    session: AsyncSession,
+    seeded_domain: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_registry_id = "dry-cover-registry-id"
+    entity.ha_domain = "cover"
+    entity.available = True
+    entity.state = None
+    entity.attributes_json = {}
+    await session.commit()
+    registry = ConnectorSessionRegistry()
+
+    with caplog.at_level(logging.INFO):
+        outcome = await CommandDispatchService(session, registry).dispatch(
+            installation_id,
+            entity.ha_registry_id,
+            command_adapter.validate_python({"operation": "open"}),
+        )
+
+    assert outcome.status == "unavailable"
+    assert outcome.error_code == "INSTALLATION_OFFLINE"
+    assert '"stage":"session_unavailable"' in caplog.text
+    assert '"stage":"connector_result"' in caplog.text
+    assert '"status":"unavailable"' in caplog.text
+    assert "token" not in caplog.text.lower()
+    assert "authorization" not in caplog.text.lower()
 
 
 async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:

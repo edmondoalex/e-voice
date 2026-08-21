@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol
 from uuid import UUID, uuid4
@@ -14,6 +16,8 @@ from .domain.models import AuditEvent, Entity, Installation
 from .evcp import CommandResultPayload
 
 COMMAND_TIMEOUT_SECONDS = 8.0
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class StrictCommand(BaseModel):
@@ -140,8 +144,14 @@ class CommandDispatchService:
         installation = await self._session.get(Installation, installation_id)
         entity = await self._entity(installation_id, registry_id)
         if installation is None:
+            _log_dispatch(
+                installation_id, request_id, registry_id, command.operation, "installation_missing"
+            )
             return DispatchOutcome(request_id, "target_not_found", "ENTITY_NOT_FOUND")
         if entity is None:
+            _log_dispatch(
+                installation_id, request_id, registry_id, command.operation, "entity_missing"
+            )
             return await self._record(
                 installation,
                 registry_id,
@@ -149,6 +159,9 @@ class CommandDispatchService:
                 DispatchOutcome(request_id, "target_not_found", "ENTITY_NOT_FOUND"),
             )
         if entity.deleted_at is not None:
+            _log_dispatch(
+                installation_id, request_id, registry_id, command.operation, "entity_not_exposed"
+            )
             return await self._record(
                 installation,
                 registry_id,
@@ -156,6 +169,9 @@ class CommandDispatchService:
                 DispatchOutcome(request_id, "target_not_exposed", "ENTITY_NOT_EXPOSED"),
             )
         if not entity.available:
+            _log_dispatch(
+                installation_id, request_id, registry_id, command.operation, "entity_unavailable"
+            )
             return await self._record(
                 installation,
                 registry_id,
@@ -168,6 +184,15 @@ class CommandDispatchService:
             registry_id,
             command.model_dump(mode="json"),
             COMMAND_TIMEOUT_SECONDS,
+        )
+        _log_dispatch(
+            installation_id,
+            request_id,
+            registry_id,
+            command.operation,
+            "connector_result",
+            status=result.status,
+            error_code=result.error_code,
         )
         return await self._record(
             installation,
@@ -205,3 +230,32 @@ class CommandDispatchService:
         )
         await self._session.commit()
         return outcome
+
+
+def _log_dispatch(
+    installation_id: UUID,
+    command_id: UUID,
+    registry_id: str,
+    operation: str,
+    stage: str,
+    *,
+    status: str | None = None,
+    error_code: str | None = None,
+) -> None:
+    """Log an allowlisted command-dispatch diagnostic event."""
+    logger.info(
+        "evcp_command_dispatch %s",
+        json.dumps(
+            {
+                "installation_id": str(installation_id),
+                "command_id": str(command_id),
+                "registry_id": registry_id,
+                "operation": operation,
+                "stage": stage,
+                "status": status,
+                "error_code": error_code,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )

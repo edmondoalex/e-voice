@@ -121,6 +121,26 @@ async def test_cover_position_stopped_calls_only_stop_cover(
 
 
 @pytest.mark.parametrize(
+    ("operation", "service"),
+    [("open", "open_cover"), ("close", "close_cover"), ("stop", "stop_cover")],
+)
+async def test_available_stateless_cover_accepts_dry_contact_commands(
+    hass: HomeAssistant, operation: str, service: str
+) -> None:
+    entry, executor = exposed_entity(hass, "cover", {"supported_features": 15})
+    hass.states.async_set(entry.entity_id, "unknown", {"supported_features": 15})
+    call = AsyncMock()
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            f"dry-{operation}", entry.id, {"operation": operation}
+        )
+
+    assert result.status == "success"
+    call.assert_awaited_once_with("cover", service, {"entity_id": entry.entity_id}, blocking=True)
+
+
+@pytest.mark.parametrize(
     ("domain", "attributes", "command"),
     [
         (

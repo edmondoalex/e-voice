@@ -30,6 +30,7 @@ LIVENESS_TIMEOUT_SECONDS = 75.0
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class StrictModel(BaseModel):
@@ -249,6 +250,13 @@ class ConnectorSessionRegistry:
                 return completed
             handle = self._sessions.get(installation_id)
             if handle is None:
+                _log_command_transport(
+                    installation_id,
+                    command_id,
+                    registry_id,
+                    str(command.get("operation", "")),
+                    "session_unavailable",
+                )
                 return CommandResultPayload(
                     session_id=uuid4(),
                     command_id=command_id,
@@ -264,22 +272,54 @@ class ConnectorSessionRegistry:
             else:
                 should_send = False
         if should_send:
-            await handle.websocket.send_json(
-                _response(
-                    "command",
-                    command_id,
-                    {
-                        "session_id": str(handle.session_id),
-                        "command_id": str(command_id),
-                        "registry_id": registry_id,
-                        "command": command,
-                    },
-                )
+            _log_command_transport(
+                installation_id,
+                command_id,
+                registry_id,
+                str(command.get("operation", "")),
+                "sending",
+                session_id=handle.session_id,
+                transport_ready=(
+                    handle.websocket.client_state == WebSocketState.CONNECTED
+                    and handle.websocket.application_state == WebSocketState.CONNECTED
+                ),
             )
+            try:
+                await handle.websocket.send_json(
+                    _response(
+                        "command",
+                        command_id,
+                        {
+                            "session_id": str(handle.session_id),
+                            "command_id": str(command_id),
+                            "registry_id": registry_id,
+                            "command": command,
+                        },
+                    )
+                )
+            except Exception:
+                _log_command_transport(
+                    installation_id,
+                    command_id,
+                    registry_id,
+                    str(command.get("operation", "")),
+                    "send_failed",
+                    session_id=handle.session_id,
+                    transport_ready=False,
+                )
+                raise
         try:
             async with asyncio.timeout(timeout_seconds):
                 result = await asyncio.shield(future)
         except TimeoutError:
+            _log_command_transport(
+                installation_id,
+                command_id,
+                registry_id,
+                str(command.get("operation", "")),
+                "timeout",
+                session_id=handle.session_id,
+            )
             result = CommandResultPayload(
                 session_id=handle.session_id,
                 command_id=command_id,
@@ -317,6 +357,35 @@ class ConnectorSessionRegistry:
 
 
 sessions = ConnectorSessionRegistry()
+
+
+def _log_command_transport(
+    installation_id: UUID,
+    command_id: UUID,
+    registry_id: str,
+    operation: str,
+    stage: str,
+    *,
+    session_id: UUID | None = None,
+    transport_ready: bool | None = None,
+) -> None:
+    """Log only allowlisted EVCP command transport metadata."""
+    logger.info(
+        "evcp_command_transport %s",
+        json.dumps(
+            {
+                "installation_id": str(installation_id),
+                "command_id": str(command_id),
+                "registry_id": registry_id,
+                "operation": operation,
+                "stage": stage,
+                "session_id": str(session_id) if session_id is not None else None,
+                "transport_ready": transport_ready,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
 
 
 class InventoryAccumulator:

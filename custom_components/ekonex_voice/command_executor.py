@@ -98,7 +98,12 @@ class EkonexVoiceCommandExecutor:
         state = self._hass.states.get(entry.entity_id)
         if state is None:
             return CommandResult(command_id, "target_not_found", "ENTITY_NOT_FOUND")
-        if state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+        if state.state == STATE_UNAVAILABLE or (
+            state.state == STATE_UNKNOWN
+            and not (
+                entry.domain == "cover" and command.get("operation") in {"open", "close", "stop"}
+            )
+        ):
             return CommandResult(command_id, "unavailable", "ENTITY_UNAVAILABLE")
         try:
             domain, service, data = _map_command(entry.domain, state, command)

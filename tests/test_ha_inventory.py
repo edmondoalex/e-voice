@@ -70,6 +70,23 @@ async def test_initial_inventory_sync_sends_selected_entities(hass: HomeAssistan
     await sync.async_stop()
 
 
+async def test_stateless_cover_is_available_with_null_state_and_no_position(
+    hass: HomeAssistant,
+) -> None:
+    entry = er.async_get(hass).async_get_or_create(
+        "cover", "test", "dry-contact-cover", suggested_object_id="dry_contact"
+    )
+    hass.states.async_set(entry.entity_id, "unknown", {"supported_features": 15})
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    item = sync._serialize(entry)
+
+    assert item is not None
+    assert item["available"] is True
+    assert item["state"] is None
+    assert item["attributes"] == {}
+
+
 async def test_zero_selected_entities_sends_explicit_empty_snapshot(
     hass: HomeAssistant,
 ) -> None:
