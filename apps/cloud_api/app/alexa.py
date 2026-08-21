@@ -772,9 +772,23 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 state_properties(entity),
             )
         else:
-            spec = _command(
-                header["namespace"], header["name"], directive.get("payload", {}), entity
-            )
+            command_payload = directive.get("payload", {})
+            if entity.ha_domain == "cover":
+                logger.info(
+                    "alexa_directive_received %s",
+                    {
+                        "namespace": header["namespace"],
+                        "name": header["name"],
+                        "instance": header.get("instance"),
+                        "payload_mode": (
+                            command_payload.get("mode")
+                            if isinstance(command_payload, dict)
+                            else None
+                        ),
+                        "endpoint_id": endpoint_value,
+                    },
+                )
+            spec = _command(header["namespace"], header["name"], command_payload, entity)
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(

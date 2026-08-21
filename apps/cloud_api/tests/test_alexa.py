@@ -1,11 +1,13 @@
 """M7 Alexa account-linking, discovery, mapping and isolation tests."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -674,6 +676,58 @@ async def test_discovered_cover_executes_advertised_range_directives(
     assert invalid.json()["event"]["header"]["name"] == "ErrorResponse"
     assert invalid.json()["event"]["payload"]["type"] == "INVALID_DIRECTIVE"
     assert dispatched.await_count == 1
+    await client.aclose()
+
+
+async def test_cover_directive_logging_is_allowlisted(
+    session: AsyncSession,
+    seeded_domain: object,
+    monkeypatch: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_registry_id = "stable-cover-log"
+    entity.supported_features = 11
+    entity.alexa_cover_mode = "discrete"
+    await session.commit()
+    token = await _access(session, seeded_domain, "never-log-access-token")
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        sessions,
+        "dispatch",
+        AsyncMock(
+            return_value=CommandResultPayload(
+                session_id=entity.id, command_id=entity.id, status="success"
+            )
+        ),
+    )
+    client = await _client(session)
+    body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
+    body["directive"]["header"]["instance"] = "Blinds.Position"  # type: ignore[index]
+    body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    body["directive"]["payload"] = {  # type: ignore[index]
+        "mode": "Position.Up",
+        "scope": {"type": "BearerToken", "token": "never-log-payload-token"},
+        "private_value": "never-log-private-payload",
+    }
+    caplog.set_level(logging.INFO, logger="apps.cloud_api.app.alexa")
+
+    response = await client.post("/alexa/v1/directive", json=body)
+
+    assert response.status_code == 200
+    record = next(
+        record for record in caplog.records if "alexa_directive_received" in record.message
+    )
+    assert "Alexa.ModeController" in record.message
+    assert "SetMode" in record.message
+    assert "Blinds.Position" in record.message
+    assert "Position.Up" in record.message
+    assert endpoint_id(entity) in record.message
+    assert "never-log-access-token" not in caplog.text
+    assert "never-log-payload-token" not in caplog.text
+    assert "never-log-private-payload" not in caplog.text
+    assert "BearerToken" not in caplog.text
     await client.aclose()
 
 
