@@ -651,7 +651,6 @@ async def test_discovery_logs_only_selected_cover_allowlist_and_historical_compa
     session: AsyncSession,
     seeded_domain: object,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
     assert entity is not None
@@ -665,13 +664,27 @@ async def test_discovery_logs_only_selected_cover_allowlist_and_historical_compa
     monkeypatch.setenv("EKONEX_ALEXA_DISCOVERY_DIAGNOSTIC_ENDPOINT_ID", target)
     get_settings.cache_clear()
     client = await _client(session)
+    alexa_logger = logging.getLogger("apps.cloud_api.app.alexa")
+    monkeypatch.setattr(alexa_logger, "disabled", False)
+    records: list[logging.LogRecord] = []
+
+    class RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = RecordingHandler()
+    root_logger = logging.getLogger()
+    previous_root_level = root_logger.level
+    root_logger.setLevel(logging.WARNING)
+    root_logger.addHandler(handler)
 
     try:
-        with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.alexa"):
-            response = await client.post(
-                "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
-            )
+        response = await client.post(
+            "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+        )
     finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(previous_root_level)
         get_settings.cache_clear()
         await client.aclose()
 
@@ -679,11 +692,14 @@ async def test_discovery_logs_only_selected_cover_allowlist_and_historical_compa
     endpoint = response.json()["event"]["payload"]["endpoints"][0]
     safe = _safe_discovery_structure(endpoint)
     normalized = {**safe, "endpointId": "<endpointId>"}
+    log_text = "\n".join(record.getMessage() for record in records)
     assert _canonical_sha256(normalized) == POST_PR43_DISCOVERY_STRUCTURE_SHA256
-    assert "alexa_discovery_diagnostic" in caplog.text
-    assert f'"endpointId":"{target}"' in caplog.text
-    assert '"matchesPostPr43Structure":true' in caplog.text
-    assert '"stateMappings":null' in caplog.text
-    assert token not in caplog.text
-    assert '"cookie"' not in caplog.text
-    assert '"friendlyName"' not in caplog.text
+    assert alexa_logger.level == logging.INFO
+    assert alexa_logger.propagate is True
+    assert "alexa_discovery_diagnostic" in log_text
+    assert f'"endpointId":"{target}"' in log_text
+    assert '"matchesPostPr43Structure":true' in log_text
+    assert '"stateMappings":null' in log_text
+    assert token not in log_text
+    assert '"cookie"' not in log_text
+    assert '"friendlyName"' not in log_text

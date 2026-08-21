@@ -43,6 +43,7 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 POST_PR43_DISCOVERY_STRUCTURE_SHA256 = (
     "9b9f863c7af0263a6d7014ed2c44148e0bd95ce2b7e4006e99c23c152957617a"
 )
