@@ -20,6 +20,7 @@ from apps.cloud_api.app.alexa import (
     capabilities,
     discovery_endpoint,
     endpoint_id,
+    state_properties,
 )
 from apps.cloud_api.app.config import get_settings
 from apps.cloud_api.app.database import get_database_session
@@ -83,6 +84,40 @@ def _directive(
             "scope": {"type": "BearerToken", "token": token},
         }
     return value
+
+
+def _property_value(entity: Entity, namespace: str, name: str) -> object | None:
+    return next(
+        (
+            item["value"]
+            for item in state_properties(entity)
+            if item["namespace"] == namespace and item["name"] == name
+        ),
+        None,
+    )
+
+
+@pytest.mark.parametrize("brightness", [None, "unknown", True, float("nan"), float("inf")])
+def test_light_state_properties_omit_null_and_invalid_brightness(brightness: object) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.invalid_brightness",
+        ha_domain="light",
+        attributes_json={"brightness": brightness},
+    )
+
+    assert _property_value(entity, "Alexa.BrightnessController", "brightness") is None
+
+
+def test_light_state_properties_convert_valid_numeric_brightness() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.valid_brightness",
+        ha_domain="light",
+        attributes_json={"brightness": 128},
+    )
+
+    assert _property_value(entity, "Alexa.BrightnessController", "brightness") == 50
 
 
 async def test_oauth_authorization_code_is_one_use_and_refresh_rotates(
