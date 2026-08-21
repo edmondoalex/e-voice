@@ -94,12 +94,21 @@ async def test_latest_authenticated_session_replaces_previous() -> None:
     installation_id = uuid4()
     first_socket = AsyncMock()
     first_socket.client_state = WebSocketState.CONNECTED
+    first_socket.application_state = WebSocketState.CONNECTED
+
+    async def close_first(*, code: int, reason: str) -> None:
+        first_socket.client_state = WebSocketState.DISCONNECTED
+
+    first_socket.close.side_effect = close_first
     second_socket = AsyncMock()
     second_socket.client_state = WebSocketState.CONNECTED
+    second_socket.application_state = WebSocketState.CONNECTED
     first = SessionHandle(uuid4(), first_socket)
     second = SessionHandle(uuid4(), second_socket)
     await registry.replace(installation_id, first)
     await registry.replace(installation_id, second)
     first_socket.close.assert_awaited_once_with(code=4008, reason="SESSION_REPLACED")
+    assert first_socket.client_state is WebSocketState.DISCONNECTED
+    assert list(registry._sessions.values()) == [second]
     await registry.remove(installation_id, first.session_id)
     await registry.remove(installation_id, second.session_id)

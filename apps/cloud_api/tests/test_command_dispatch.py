@@ -132,6 +132,7 @@ async def test_session_registry_correlates_result_and_deduplicates_command_id() 
     installation_id, session_id, command_id = uuid4(), uuid4(), uuid4()
     websocket = AsyncMock()
     websocket.client_state = WebSocketState.CONNECTED
+    websocket.application_state = WebSocketState.CONNECTED
     await registry.replace(installation_id, SessionHandle(session_id, websocket))
     command: dict[str, object] = {"operation": "power_on"}
     pending = asyncio.create_task(
@@ -216,12 +217,14 @@ async def test_dispatch_diagnostics_distinguish_offline_lookup_and_timeout(
     assert "authorization" not in diagnostics.lower()
 
 
-async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:
+async def test_reconnect_drains_old_session_command_without_waiter_leak() -> None:
     registry = ConnectorSessionRegistry()
     installation_id, command_id = uuid4(), uuid4()
+    first_session, second_session = uuid4(), uuid4()
     first, second = AsyncMock(), AsyncMock()
     first.client_state = second.client_state = WebSocketState.CONNECTED
-    await registry.replace(installation_id, SessionHandle(uuid4(), first))
+    first.application_state = second.application_state = WebSocketState.CONNECTED
+    await registry.replace(installation_id, SessionHandle(first_session, first))
     pending = asyncio.create_task(
         registry.dispatch(
             installation_id,
@@ -232,9 +235,131 @@ async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -
         )
     )
     await asyncio.sleep(0)
-    await registry.replace(installation_id, SessionHandle(uuid4(), second))
-    assert (await pending).status == "stale_session"
+    reconnect = asyncio.create_task(
+        registry.replace(installation_id, SessionHandle(second_session, second))
+    )
+    await asyncio.sleep(0)
+    assert not reconnect.done()
+    result = CommandResultPayload(
+        session_id=first_session,
+        command_id=command_id,
+        status="success",
+    )
+    assert await registry.resolve(installation_id, first_session, result)
+    assert (await pending).status == "success"
+    await reconnect
     assert not registry._pending
+
+
+async def test_reconnect_cannot_replace_session_during_atomic_command_send() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, command_id = uuid4(), uuid4()
+    first_session, second_session = uuid4(), uuid4()
+    first, second = AsyncMock(), AsyncMock()
+    first.client_state = first.application_state = WebSocketState.CONNECTED
+    second.client_state = second.application_state = WebSocketState.CONNECTED
+    sending, release_send = asyncio.Event(), asyncio.Event()
+
+    async def blocked_send(message: dict[str, object]) -> None:
+        sending.set()
+        await release_send.wait()
+
+    first.send_json.side_effect = blocked_send
+    await registry.replace(installation_id, SessionHandle(first_session, first))
+    command = asyncio.create_task(
+        registry.dispatch(
+            installation_id,
+            command_id,
+            "stable-cover",
+            {"operation": "stop"},
+            1.0,
+        )
+    )
+    await sending.wait()
+    reconnect = asyncio.create_task(
+        registry.replace(installation_id, SessionHandle(second_session, second))
+    )
+    await asyncio.sleep(0)
+
+    assert not reconnect.done()
+    assert registry._sessions[installation_id].session_id == first_session
+    release_send.set()
+    for _ in range(10):
+        if installation_id in registry._transitioning:
+            break
+        await asyncio.sleep(0)
+    assert installation_id in registry._transitioning
+    blocked = await registry.dispatch(
+        installation_id,
+        uuid4(),
+        "stable-cover",
+        {"operation": "open"},
+        1.0,
+    )
+    assert blocked.status == "unavailable"
+    assert blocked.error_code == "SESSION_NOT_READY"
+    result = CommandResultPayload(
+        session_id=first_session,
+        command_id=command_id,
+        status="success",
+    )
+    assert await registry.resolve(installation_id, first_session, result)
+
+    outcome = await command
+    await reconnect
+    assert outcome.status == "success"
+    first.send_json.assert_awaited_once()
+    second.send_json.assert_not_awaited()
+    assert registry._sessions[installation_id].session_id == second_session
+    assert not registry._pending
+
+
+async def test_dispatch_fails_closed_when_registered_session_is_not_ready() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, session_id = uuid4(), uuid4()
+    websocket = AsyncMock()
+    websocket.client_state = WebSocketState.CONNECTED
+    websocket.application_state = WebSocketState.DISCONNECTED
+    await registry.replace(installation_id, SessionHandle(session_id, websocket))
+
+    outcome = await registry.dispatch(
+        installation_id,
+        uuid4(),
+        "stable-cover",
+        {"operation": "open"},
+        1.0,
+    )
+
+    assert outcome.status == "unavailable"
+    assert outcome.error_code == "SESSION_NOT_READY"
+    websocket.send_json.assert_not_awaited()
+    assert not registry._pending
+
+
+async def test_reconnect_activates_new_session_after_old_command_timeout() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id = uuid4()
+    first_session, second_session = uuid4(), uuid4()
+    first, second = AsyncMock(), AsyncMock()
+    first.client_state = first.application_state = WebSocketState.CONNECTED
+    second.client_state = second.application_state = WebSocketState.CONNECTED
+    await registry.replace(installation_id, SessionHandle(first_session, first))
+
+    command = asyncio.create_task(
+        registry.dispatch(
+            installation_id,
+            uuid4(),
+            "stable-cover",
+            {"operation": "close"},
+            0.001,
+        )
+    )
+    await asyncio.sleep(0)
+    await registry.replace(installation_id, SessionHandle(second_session, second))
+
+    assert (await command).status == "timeout"
+    assert registry._sessions[installation_id].session_id == second_session
+    assert installation_id not in registry._transitioning
 
 
 def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> None:
