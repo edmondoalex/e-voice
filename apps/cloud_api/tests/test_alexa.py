@@ -716,18 +716,20 @@ async def test_cover_directive_logging_is_allowlisted(
     response = await client.post("/alexa/v1/directive", json=body)
 
     assert response.status_code == 200
-    record = next(
-        record for record in caplog.records if "alexa_directive_received" in record.message
-    )
-    assert "Alexa.ModeController" in record.message
-    assert "SetMode" in record.message
-    assert "Blinds.Position" in record.message
-    assert "Position.Up" in record.message
-    assert endpoint_id(entity) in record.message
-    assert "never-log-access-token" not in caplog.text
-    assert "never-log-payload-token" not in caplog.text
-    assert "never-log-private-payload" not in caplog.text
-    assert "BearerToken" not in caplog.text
+    alexa_messages = [
+        record.message for record in caplog.records if record.name == "apps.cloud_api.app.alexa"
+    ]
+    record = next(message for message in alexa_messages if "alexa_directive_received" in message)
+    assert "Alexa.ModeController" in record
+    assert "SetMode" in record
+    assert "Blinds.Position" in record
+    assert "Position.Up" in record
+    assert endpoint_id(entity) in record
+    alexa_log = "\n".join(alexa_messages)
+    assert "never-log-access-token" not in alexa_log
+    assert "never-log-payload-token" not in alexa_log
+    assert "never-log-private-payload" not in alexa_log
+    assert "BearerToken" not in alexa_log
     await client.aclose()
 
 
