@@ -1,8 +1,10 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
-from unittest.mock import AsyncMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from aiohttp import ClientConnectionResetError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -96,6 +98,72 @@ async def test_reconnect_sends_full_resync_from_cloud_revision(hass: HomeAssista
     assert first.send_json.await_args.args[0]["payload"]["revision"] == 1
     assert second.send_json.await_args.args[0]["type"] == "inventory_full"
     assert second.send_json.await_args.args[0]["payload"]["revision"] == 2
+    await sync.async_stop()
+
+
+async def test_closing_socket_during_inventory_full_is_contained(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = False
+    websocket.send_json.side_effect = ClientConnectionResetError(
+        "Cannot write to closing transport"
+    )
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+
+    assert await sync._send_full() is False
+    assert sync.send_failure_count == 1
+    assert sync.last_error_code == "send_failed"
+    assert sync._websocket is None
+    websocket.close.assert_awaited_once_with()
+
+
+async def test_delayed_full_transport_failure_has_no_unretrieved_exception(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = False
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
+    websocket.send_json.side_effect = ClientConnectionResetError(
+        "Cannot write to closing transport"
+    )
+
+    sync._registry_changed(MagicMock())
+    task = sync._resync_task
+    assert task is not None
+    await task
+
+    assert task.exception() is None
+    assert sync.send_failure_count == 1
+    assert sync._websocket is None
+    await sync.async_stop()
+
+
+async def test_reconnect_cancels_delayed_full_and_requeues_complete_inventory(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    first, second = AsyncMock(), AsyncMock()
+    first.closed = second.closed = False
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    await sync.async_start(first, str(uuid4()), cloud_revision=0)
+
+    sync._registry_changed(MagicMock())
+    delayed = sync._resync_task
+    assert delayed is not None
+    await asyncio.sleep(0)
+    await sync.async_start(second, str(uuid4()), cloud_revision=10)
+
+    assert delayed.cancelled()
+    assert first.send_json.await_count == 1
+    sent = second.send_json.await_args.args[0]
+    assert sent["type"] == "inventory_full"
+    assert sent["payload"]["revision"] == 11
+    assert [item["registry_id"] for item in sent["payload"]["entities"]] == [entry.id]
     await sync.async_stop()
 
 

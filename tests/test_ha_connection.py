@@ -6,6 +6,7 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from aiohttp import WSMessage, WSMsgType
 from homeassistant.core import HomeAssistant
 
@@ -139,3 +140,26 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
     await connection._handle_command(websocket, "different-session", payload)
     executor.async_execute.assert_not_awaited()
     assert websocket.send_json.await_args.args[0]["payload"]["status"] == "stale_session"
+
+
+async def test_command_fails_closed_when_websocket_is_already_closed(
+    hass: HomeAssistant,
+) -> None:
+    executor = AsyncMock()
+    connection = EkonexVoiceConnection(
+        hass, AsyncMock(), "installation-1", command_executor=executor
+    )
+    websocket = AsyncMock()
+    websocket.closed = True
+    payload = {
+        "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
+        "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
+        "registry_id": "stable-light",
+        "command": {"operation": "power_on"},
+    }
+
+    with pytest.raises(EkonexVoiceCannotConnect, match="cloud_closed"):
+        await connection._handle_command(websocket, payload["session_id"], payload)
+
+    executor.async_execute.assert_not_awaited()
+    websocket.send_json.assert_not_awaited()

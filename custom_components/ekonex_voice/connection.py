@@ -240,6 +240,8 @@ class EkonexVoiceConnection:
             requested_session, command_id, registry_id, command = parse_command(payload)
         except (ValueError, TypeError):
             raise EkonexVoiceProtocolError("invalid_command") from None
+        if websocket.closed is True:
+            raise EkonexVoiceCannotConnect("cloud_closed")
         if requested_session != session_id:
             result = CommandResult(command_id, "stale_session", "STALE_SESSION")
         elif self._command_executor is None:

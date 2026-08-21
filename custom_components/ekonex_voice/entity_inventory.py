@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aiohttp import ClientWebSocketResponse
+from aiohttp.client_exceptions import ClientError
 from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
     EVENT_STATE_CHANGED,
@@ -44,6 +45,10 @@ COALESCE_SECONDS = 0.25
 _LOGGER = logging.getLogger(__name__)
 
 
+class InventoryTransportError(ConnectionError):
+    """The active EVCP inventory transport became unavailable."""
+
+
 class EntityInventorySynchronizer:
     """Send deterministic snapshots and coalesced deltas for one EVCP session."""
 
@@ -64,6 +69,7 @@ class EntityInventorySynchronizer:
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self._generation = 0
         self.last_full_revision: int | None = None
         self.last_full_entity_count: int | None = None
         self.last_state_entity_count: int | None = None
@@ -117,19 +123,21 @@ class EntityInventorySynchronizer:
         self._unsubscribers.append(
             self._hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed)
         )
-        await self._send_full()
+        if not await self._send_full(self._generation):
+            await self.async_stop()
+            raise InventoryTransportError("inventory_transport_unavailable")
 
     async def async_stop(self) -> None:
+        self._generation += 1
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        for task in (self._flush_task, self._resync_task):
-            if task is not None and not task.done():
+        tasks = [task for task in (self._flush_task, self._resync_task) if task is not None]
+        for task in tasks:
+            if not task.done():
                 task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._flush_task = self._resync_task = None
         self._pending.clear()
         self._websocket = None
@@ -141,22 +149,39 @@ class EntityInventorySynchronizer:
             self._pending.add(entity_id)
             if self._flush_task is None or self._flush_task.done():
                 self._flush_task = self._hass.async_create_background_task(
-                    self._flush_states(), "ekonex_voice_state_coalesce", eager_start=True
+                    self._flush_states(self._generation),
+                    "ekonex_voice_state_coalesce",
+                    eager_start=True,
                 )
+                self._flush_task.add_done_callback(self._background_task_done)
 
     @callback
     def _registry_changed(self, event: Event[Any]) -> None:
         if self._resync_task is None or self._resync_task.done():
             self._resync_task = self._hass.async_create_background_task(
-                self._delayed_full(), "ekonex_voice_inventory_resync", eager_start=True
+                self._delayed_full(self._generation),
+                "ekonex_voice_inventory_resync",
+                eager_start=True,
             )
+            self._resync_task.add_done_callback(self._background_task_done)
 
-    async def _delayed_full(self) -> None:
-        await asyncio.sleep(COALESCE_SECONDS)
-        await self._send_full()
+    @staticmethod
+    def _background_task_done(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            _LOGGER.exception("Entity synchronization background task failed")
 
-    async def _flush_states(self) -> None:
+    async def _delayed_full(self, generation: int | None = None) -> None:
         await asyncio.sleep(COALESCE_SECONDS)
+        await self._send_full(generation)
+
+    async def _flush_states(self, generation: int | None = None) -> None:
+        await asyncio.sleep(COALESCE_SECONDS)
+        if generation is not None and generation != self._generation:
+            return
         entity_ids, self._pending = sorted(self._pending), set()
         registry = er.async_get(self._hass)
         items = [
@@ -165,28 +190,46 @@ class EntityInventorySynchronizer:
             if (item := self._serialize(registry.async_get(entity_id))) is not None
         ]
         if items:
-            await self._send("state_update", items)
+            await self._send("state_update", items, generation)
 
-    async def _send_full(self) -> None:
+    async def _send_full(self, generation: int | None = None) -> bool:
         registry = er.async_get(self._hass)
         items = [
             item
             for entry in sorted(registry.entities.values(), key=lambda value: value.id)
             if (item := self._serialize(entry)) is not None
         ]
-        await self._send("inventory_full", items)
+        return await self._send("inventory_full", items, generation)
 
-    async def _send(self, message_type: str, items: list[dict[str, object]]) -> None:
-        if self._websocket is None or self._session_id is None:
-            return
+    async def _send(
+        self,
+        message_type: str,
+        items: list[dict[str, object]],
+        generation: int | None = None,
+    ) -> bool:
+        websocket, session_id = self._websocket, self._session_id
+        if (
+            websocket is None
+            or session_id is None
+            or websocket.closed is True
+            or (generation is not None and generation != self._generation)
+        ):
+            return False
         self._revision += 1
         chunks = _chunks(items)
         try:
             for index, chunk in enumerate(chunks):
+                if (
+                    websocket is not self._websocket
+                    or session_id != self._session_id
+                    or websocket.closed is True
+                    or (generation is not None and generation != self._generation)
+                ):
+                    return False
                 message = envelope(
                     message_type,
                     {
-                        "session_id": self._session_id,
+                        "session_id": session_id,
                         "revision": self._revision,
                         "batch_index": index,
                         "batch_count": len(chunks),
@@ -195,8 +238,8 @@ class EntityInventorySynchronizer:
                 )
                 if len(json.dumps(message, separators=(",", ":")).encode()) > MAX_MESSAGE_BYTES:
                     raise ValueError("inventory_message_too_large")
-                await self._websocket.send_json(message)
-        except Exception:
+                await websocket.send_json(message)
+        except (ClientError, ConnectionError, OSError, RuntimeError):
             self.send_failure_count += 1
             self.last_error_code = "send_failed"
             _LOGGER.warning(
@@ -205,7 +248,15 @@ class EntityInventorySynchronizer:
                 self._revision,
                 len(chunks),
             )
-            raise
+            if websocket is self._websocket:
+                self._websocket = None
+                self._session_id = None
+            if websocket.closed is not True:
+                try:
+                    await websocket.close()
+                except (ClientError, ConnectionError, OSError, RuntimeError):
+                    pass
+            return False
         self.last_error_code = None
         if message_type == "inventory_full":
             self.last_full_revision = self._revision
@@ -223,6 +274,7 @@ class EntityInventorySynchronizer:
                 self._revision,
                 len(items),
             )
+        return True
 
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:
