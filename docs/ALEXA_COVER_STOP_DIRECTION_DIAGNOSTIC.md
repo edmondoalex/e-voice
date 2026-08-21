@@ -79,4 +79,3 @@ payloads and arbitrary attributes.
 Restore the saved Lambda zip (and prior alias version, if applicable), restore the recorded VPS
 commit, rebuild the API, and restore the previous Home Assistant integration files. Run discovery
 again if the restored version publishes a different cover capability.
-
