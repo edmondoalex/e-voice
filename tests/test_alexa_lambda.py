@@ -228,6 +228,7 @@ def test_lambda_diagnostic_logger_emits_info_with_root_at_default_warning(
 ) -> None:
     monkeypatch.setenv("EKONEX_VOICE_BACKEND_URL", "https://voice.e-control.tech")
     lambda_logger = logging.getLogger("aws_lambda.alexa_smart_home.lambda_function")
+    monkeypatch.setattr(lambda_logger, "disabled", False)
     records: list[logging.LogRecord] = []
 
     class RecordingHandler(logging.Handler):
@@ -253,6 +254,7 @@ def test_lambda_diagnostic_logger_emits_info_with_root_at_default_warning(
         record for record in records if record.getMessage().startswith("alexa_directive_received ")
     ]
     assert lambda_logger.level == logging.INFO
+    assert lambda_logger.propagate is True
     assert len(diagnostic_records) == 1
     assert ACCESS_TOKEN not in diagnostic_records[0].getMessage()
 
