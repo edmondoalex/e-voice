@@ -4,6 +4,22 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-21 — Experimental Alexa cover STOP diagnostic
+
+Status: Draft diagnostic only; not for merge or permanent production enablement
+
+### Scope
+
+- Added an off-by-default feature flag that temporarily restores `Position.Stopped` only for
+  discrete/hybrid covers whose synchronized HA features include Stop.
+- Added allowlisted structured Lambda and backend routing logs without directive credentials.
+- Added A/B tests and an exact temporary VPS/Lambda deploy, evidence collection and rollback runbook.
+
+### Scope guard
+
+- No account linking, EVCP, Connector, database, tenant authorization or endpoint identity changes.
+- The canonical main behavior remains unchanged with the flag disabled.
+
 ## 2026-08-20 — Alexa discrete cover Discovery correction
 
 Status: Ready for review

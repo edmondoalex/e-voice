@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
@@ -186,9 +187,45 @@ def test_missing_token_fails_without_calling_backend(caplog: pytest.LogCaptureFi
     assert ACCESS_TOKEN not in caplog.text
 
 
+def test_cover_directive_logging_is_structured_and_excludes_authorization(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("EKONEX_VOICE_BACKEND_URL", "https://voice.e-control.tech")
+    lambda_logger = logging.getLogger("aws_lambda.alexa_smart_home.lambda_function")
+    monkeypatch.setattr(lambda_logger, "disabled", False)
+    directive = {
+        "directive": {
+            "header": {
+                "namespace": "Alexa.ModeController",
+                "name": "SetMode",
+                "instance": "Blinds.Position",
+                "payloadVersion": "3",
+                "messageId": "cover-diagnostic-request",
+            },
+            "endpoint": {
+                "endpointId": "ev1_safe",
+                "scope": {"type": "BearerToken", "token": ACCESS_TOKEN},
+            },
+            "payload": {"mode": "Position.Stopped"},
+        }
+    }
+    expected = discover_response()
+    with (
+        caplog.at_level(logging.INFO, logger=lambda_logger.name),
+        patch(
+            "aws_lambda.alexa_smart_home.lambda_function.urlopen",
+            return_value=FakeResponse(expected),
+        ),
+    ):
+        lambda_handler(directive, None)
+    assert '"endpoint_id":"ev1_safe"' in caplog.text
+    assert '"mode":"Position.Stopped"' in caplog.text
+    assert ACCESS_TOKEN not in caplog.text
+
+
 def test_non_accept_grant_authorization_without_scope_is_rejected() -> None:
     directive = accept_grant()
-    directive["directive"]["header"]["name"] = "UnsupportedAuthorization"  # type: ignore[index]
+    directive["directive"]["header"]["name"] = "UnsupportedAuthorization"
     with patch("aws_lambda.alexa_smart_home.lambda_function.urlopen") as open_backend:
         response = lambda_handler(directive, None)
     open_backend.assert_not_called()

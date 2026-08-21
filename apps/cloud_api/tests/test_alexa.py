@@ -1,17 +1,21 @@
 """M7 Alexa account-linking, discovery, mapping and isolation tests."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import (
     _command,
     _digest,
+    _safe_cover_diagnostic,
     capabilities,
     discovery_endpoint,
     endpoint_id,
@@ -594,6 +598,93 @@ def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
     assert "Position.Stopped" not in modes
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
     assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
+
+
+def test_experimental_cover_stop_mode_is_feature_flagged_and_feature_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.diagnostic",
+        ha_domain="cover",
+        supported_features=15,
+        alexa_cover_mode="discrete",
+    )
+
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa.get_settings",
+        lambda: SimpleNamespace(alexa_experimental_cover_stop_mode=False),
+    )
+    off = discovery_endpoint(entity)
+    off_controller = next(
+        item for item in off["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    assert [mode["value"] for mode in off_controller["configuration"]["supportedModes"]] == [
+        "Position.Up",
+        "Position.Down",
+    ]
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
+
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa.get_settings",
+        lambda: SimpleNamespace(alexa_experimental_cover_stop_mode=True),
+    )
+    on = discovery_endpoint(entity)
+    on_controller = next(
+        item for item in on["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    assert [mode["value"] for mode in on_controller["configuration"]["supportedModes"]] == [
+        "Position.Up",
+        "Position.Down",
+        "Position.Stopped",
+    ]
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) == {
+        "operation": "stop"
+    }
+
+    entity.supported_features = 7
+    without_stop = discovery_endpoint(entity)
+    controller = next(
+        item for item in without_stop["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    assert "Position.Stopped" not in {
+        mode["value"] for mode in controller["configuration"]["supportedModes"]
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
+
+
+def test_cover_diagnostic_log_allowlists_payload_and_excludes_tokens(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.office",
+        ha_domain="cover",
+        state="opening",
+    )
+    with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.alexa"):
+        _safe_cover_diagnostic(
+            phase="before_dispatch",
+            header={"namespace": "Alexa.ModeController", "name": "SetMode"},
+            directive_payload={
+                "mode": "Position.Stopped",
+                "scope": {"token": "secret-never-log"},
+            },
+            endpoint_id_value="ev1_safe",
+            entity=entity,
+            operation="stop",
+        )
+    assert '"mode":"Position.Stopped"' in caplog.text
+    assert '"operation":"stop"' in caplog.text
+    assert '"state_before":"opening"' in caplog.text
+    assert "secret-never-log" not in caplog.text
 
 
 def test_cover_auto_default_is_derived_conservatively_from_real_features() -> None:

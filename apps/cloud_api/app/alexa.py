@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode
+from .cover_modes import effective_cover_mode, supports_stop
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -43,6 +43,49 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
+
+
+def _experimental_cover_stop(entity: Entity) -> bool:
+    return get_settings().alexa_experimental_cover_stop_mode and supports_stop(entity)
+
+
+def _safe_cover_diagnostic(
+    *,
+    phase: str,
+    header: dict[str, Any],
+    directive_payload: dict[str, Any],
+    endpoint_id_value: str,
+    entity: Entity,
+    operation: str | None,
+    outcome: str | None = None,
+) -> None:
+    """Log only allowlisted cover-routing fields, never directive credentials."""
+    payload = {
+        key: directive_payload[key]
+        for key in ("mode", "rangeValue", "rangeValueDelta")
+        if key in directive_payload
+    }
+    logger.info(
+        "alexa_cover_diagnostic %s",
+        json.dumps(
+            {
+                "event_time": datetime.now(UTC).isoformat(),
+                "phase": phase,
+                "namespace": header.get("namespace"),
+                "name": header.get("name"),
+                "endpoint_id": endpoint_id_value,
+                "instance": header.get("instance"),
+                "payload": payload,
+                "entity_id": entity.ha_entity_id,
+                "state_before": entity.state,
+                "operation": operation,
+                "outcome": outcome,
+                "state_after": None,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
 
 
 def alexa_entity_eligible(entity: Entity) -> bool:
@@ -348,6 +391,17 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
+            if _experimental_cover_stop(entity):
+                supported_modes.append(
+                    {
+                        "value": "Position.Stopped",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "text", "value": {"text": "Ferma", "locale": "it-IT"}}
+                            ]
+                        },
+                    }
+                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
@@ -612,11 +666,12 @@ def _command(
     if namespace == "Alexa.ModeController" and name == "SetMode":
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
-        return (
-            {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
-            if payload.get("mode") in {"Position.Up", "Position.Down"}
-            else None
-        )
+        mode = payload.get("mode")
+        if mode == "Position.Stopped" and _experimental_cover_stop(entity):
+            return {"operation": "stop"}
+        if mode in {"Position.Up", "Position.Down"}:
+            return {"operation": "open" if mode == "Position.Up" else "close"}
+        return None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
@@ -790,12 +845,31 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
             else:
                 command = command_adapter.validate_python(spec)
+                if entity.ha_domain == "cover":
+                    _safe_cover_diagnostic(
+                        phase="before_dispatch",
+                        header=header,
+                        directive_payload=directive.get("payload", {}),
+                        endpoint_id_value=endpoint_value,
+                        entity=entity,
+                        operation=command.operation,
+                    )
                 outcome = await CommandDispatchService(database, sessions).dispatch(
                     entity.installation_id,
                     entity.ha_registry_id,
                     command,
                     command_id=UUID(message_id) if _is_uuid(message_id) else uuid4(),
                 )
+                if entity.ha_domain == "cover":
+                    _safe_cover_diagnostic(
+                        phase="after_dispatch",
+                        header=header,
+                        directive_payload=directive.get("payload", {}),
+                        endpoint_id_value=endpoint_value,
+                        entity=entity,
+                        operation=command.operation,
+                        outcome=outcome.status,
+                    )
                 if outcome.status != "success":
                     error_type = {
                         "unavailable": "ENDPOINT_UNREACHABLE",
