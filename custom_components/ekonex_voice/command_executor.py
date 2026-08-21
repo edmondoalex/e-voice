@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Literal
@@ -17,6 +18,8 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
 from .entity_inventory import EntityInventorySynchronizer
+
+_LOGGER = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT_SECONDS = 8.0
 RESULT_CACHE_SIZE = 256
@@ -100,9 +103,12 @@ class EkonexVoiceCommandExecutor:
         try:
             domain, service, data = _map_command(entry.domain, state, command)
         except UnsupportedCommand:
+            _log_cover_stop(entry.entity_id, state.state, command, None, "unsupported_command")
             return CommandResult(command_id, "unsupported_command", "OPERATION_NOT_SUPPORTED")
         except InvalidArgument:
+            _log_cover_stop(entry.entity_id, state.state, command, None, "invalid_argument")
             return CommandResult(command_id, "invalid_argument", "INVALID_PARAMETER")
+        _log_cover_stop(entry.entity_id, state.state, command, service, "before_service_call")
         try:
             async with asyncio.timeout(self._timeout):
                 await self._hass.services.async_call(
@@ -112,10 +118,39 @@ class EkonexVoiceCommandExecutor:
                     blocking=True,
                 )
         except TimeoutError:
+            _log_cover_stop(entry.entity_id, state.state, command, service, "timeout")
             return CommandResult(command_id, "timeout", "COMMAND_TIMEOUT")
         except Exception:  # HA action exceptions must not cross the protocol boundary.
+            _log_cover_stop(entry.entity_id, state.state, command, service, "execution_failed")
             return CommandResult(command_id, "execution_failed", "SERVICE_CALL_FAILED")
+        _log_cover_stop(entry.entity_id, state.state, command, service, "success")
         return CommandResult(command_id, "success")
+
+
+def _log_cover_stop(
+    entity_id: str,
+    state_before: str,
+    command: dict[str, object],
+    service: str | None,
+    outcome: str,
+) -> None:
+    """Log only allowlisted HA cover STOP execution fields."""
+    if command.get("operation") != "stop":
+        return
+    _LOGGER.info(
+        "ha_cover_stop_diagnostic %s",
+        json.dumps(
+            {
+                "entity_id": entity_id,
+                "state_before": state_before,
+                "evcp_operation": "stop",
+                "ha_service": service,
+                "dispatch_outcome": outcome,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
 
 
 class UnsupportedCommand(Exception):

@@ -12,11 +12,29 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 BACKEND_URL_ENV = "EKONEX_VOICE_BACKEND_URL"
 BACKEND_TIMEOUT_ENV = "EKONEX_VOICE_BACKEND_TIMEOUT_SECONDS"
 DIRECTIVE_PATH = "/alexa/v1/directive"
 MAX_RESPONSE_BYTES = 1_048_576
+
+
+def _safe_directive_log(directive: dict[str, Any], header: dict[str, Any]) -> str:
+    """Serialize only fields needed to identify Alexa cover routing."""
+    endpoint = directive.get("endpoint")
+    payload = directive.get("payload")
+    return json.dumps(
+        {
+            "namespace": header.get("namespace"),
+            "name": header.get("name"),
+            "instance": header.get("instance"),
+            "payload_mode": payload.get("mode") if isinstance(payload, dict) else None,
+            "endpoint_id": endpoint.get("endpointId") if isinstance(endpoint, dict) else None,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _directive_parts(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -127,6 +145,7 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
             "Alexa directive missing authorization namespace=%s name=%s", namespace, name
         )
         return _error_response(header, "INVALID_AUTHORIZATION_CREDENTIAL")
+    logger.info("alexa_directive_received %s", _safe_directive_log(directive, header))
     try:
         endpoint = _backend_endpoint()
         timeout = _timeout_seconds()

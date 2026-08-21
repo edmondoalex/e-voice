@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
@@ -183,6 +184,42 @@ def test_missing_token_fails_without_calling_backend(caplog: pytest.LogCaptureFi
         response = lambda_handler(discovery(None), None)
     open_backend.assert_not_called()
     assert response["event"]["payload"]["type"] == "INVALID_AUTHORIZATION_CREDENTIAL"
+    assert ACCESS_TOKEN not in caplog.text
+
+
+def test_cover_stop_directive_logging_is_allowlisted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("EKONEX_VOICE_BACKEND_URL", "https://voice.e-control.tech")
+    directive = {
+        "directive": {
+            "header": {
+                "namespace": "Alexa.ModeController",
+                "name": "SetMode",
+                "instance": "Blinds.Position",
+                "payloadVersion": "3",
+                "messageId": "stop-diagnostic",
+            },
+            "endpoint": {
+                "endpointId": "ev1_safe",
+                "scope": {"type": "BearerToken", "token": ACCESS_TOKEN},
+            },
+            "payload": {"mode": "Position.Stopped"},
+        }
+    }
+    with (
+        caplog.at_level(logging.INFO, logger="aws_lambda.alexa_smart_home.lambda_function"),
+        patch(
+            "aws_lambda.alexa_smart_home.lambda_function.urlopen",
+            return_value=FakeResponse(discover_response()),
+        ),
+    ):
+        lambda_handler(directive, None)
+
+    assert "alexa_directive_received" in caplog.text
+    assert '"namespace":"Alexa.ModeController"' in caplog.text
+    assert '"payload_mode":"Position.Stopped"' in caplog.text
+    assert '"endpoint_id":"ev1_safe"' in caplog.text
     assert ACCESS_TOKEN not in caplog.text
 
 

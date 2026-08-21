@@ -4,6 +4,17 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-21 — Alexa cover STOP direction diagnostic
+
+Status: Draft diagnostic branch only; not for merge
+
+- Branched exactly from post-PR #43 commit `138fab2cdbdf7736f74ec0d7ac90ae0386af46d7` and retained
+  the historical three-mode `Blinds.Position` Discovery unchanged.
+- Added allowlisted Lambda, backend and Home Assistant logs to distinguish the received directive,
+  synchronized/live opening or closing state, chosen EVCP operation, HA service and result.
+- Added regressions proving `Position.Stopped` selects only `stop` and `cover.stop_cover` while both
+  opening and closing, never open, close or set-position behavior.
+
 ## 2026-08-20 — Per-entity Alexa cover modes
 
 Status: Ready for review

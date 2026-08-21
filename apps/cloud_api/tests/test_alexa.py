@@ -1,11 +1,13 @@
 """M7 Alexa account-linking, discovery, mapping and isolation tests."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -556,4 +558,51 @@ async def test_discovered_cover_executes_advertised_range_directives(
     assert invalid.json()["event"]["header"]["name"] == "ErrorResponse"
     assert invalid.json()["event"]["payload"]["type"] == "INVALID_DIRECTIVE"
     assert dispatched.await_count == 1
+    await client.aclose()
+
+
+async def test_opening_and_closing_position_stopped_dispatch_only_stop(
+    session: AsyncSession,
+    seeded_domain: object,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_entity_id = "cover.diagnostic"
+    entity.ha_registry_id = "stable-cover-stop"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_cover_stop")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)
+    client = await _client(session)
+
+    with caplog.at_level(logging.INFO, logger="apps.cloud_api.app.alexa"):
+        for state_before in ("opening", "closing"):
+            entity.state = state_before
+            await session.commit()
+            body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
+            body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+            body["directive"]["header"]["instance"] = "Blinds.Position"  # type: ignore[index]
+            body["directive"]["payload"] = {"mode": "Position.Stopped"}  # type: ignore[index]
+            response = await client.post("/alexa/v1/directive", json=body)
+            assert response.json()["event"]["header"]["name"] == "Response"
+
+    commands = [call.args[3] for call in dispatched.await_args_list]
+    assert commands == [{"operation": "stop"}, {"operation": "stop"}]
+    assert all(
+        command.get("operation") not in {"open", "close", "set_position"} for command in commands
+    )
+    assert '"state_before":"opening"' in caplog.text
+    assert '"state_before":"closing"' in caplog.text
+    assert '"evcp_operation":"stop"' in caplog.text
+    assert '"dispatch_outcome":"success"' in caplog.text
+    assert token not in caplog.text
     await client.aclose()

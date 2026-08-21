@@ -1,5 +1,6 @@
 """M6 explicit Home Assistant command mapper tests."""
 
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -90,6 +91,33 @@ async def test_explicit_mapper_success(
     call.assert_awaited_once_with(
         domain, expected_service, {"entity_id": entry.entity_id, **expected_data}, blocking=True
     )
+
+
+@pytest.mark.parametrize("state_before", ["opening", "closing"])
+async def test_cover_position_stopped_calls_only_stop_cover(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    state_before: str,
+) -> None:
+    entry, executor = exposed_entity(hass, "cover", {"supported_features": 15})
+    hass.states.async_set(entry.entity_id, state_before, {"supported_features": 15})
+    call = AsyncMock()
+    with (
+        caplog.at_level(logging.INFO, logger="custom_components.ekonex_voice.command_executor"),
+        patch("homeassistant.core.ServiceRegistry.async_call", new=call),
+    ):
+        result = await executor.async_execute(
+            f"stop-{state_before}", entry.id, {"operation": "stop"}
+        )
+
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "cover", "stop_cover", {"entity_id": entry.entity_id}, blocking=True
+    )
+    assert call.await_args.args[1] not in {"open_cover", "close_cover", "set_cover_position"}
+    assert f'"state_before":"{state_before}"' in caplog.text
+    assert '"ha_service":"stop_cover"' in caplog.text
+    assert '"dispatch_outcome":"success"' in caplog.text
 
 
 @pytest.mark.parametrize(

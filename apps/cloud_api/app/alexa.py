@@ -44,6 +44,36 @@ _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 
 
+def _safe_cover_stop_diagnostic(
+    *,
+    header: dict[str, Any],
+    payload: dict[str, Any],
+    endpoint_id_value: str,
+    entity: Entity,
+    operation: str,
+    dispatch_outcome: str,
+) -> None:
+    """Log only allowlisted cover STOP routing fields."""
+    logger.info(
+        "alexa_cover_stop_diagnostic %s",
+        json.dumps(
+            {
+                "namespace": header.get("namespace"),
+                "name": header.get("name"),
+                "instance": header.get("instance"),
+                "payload_mode": payload.get("mode"),
+                "endpoint_id": endpoint_id_value,
+                "entity_id": entity.ha_entity_id,
+                "state_before": entity.state,
+                "evcp_operation": operation,
+                "dispatch_outcome": dispatch_outcome,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
+
+
 def alexa_entity_eligible(entity: Entity) -> bool:
     """Return whether an entity has a safe, publishable Alexa representation."""
     return entity.ha_domain in SUPPORTED_DOMAINS and (
@@ -751,9 +781,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 state_properties(entity),
             )
         else:
-            spec = _command(
-                header["namespace"], header["name"], directive.get("payload", {}), entity
-            )
+            payload = directive.get("payload", {})
+            spec = _command(header["namespace"], header["name"], payload, entity)
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
@@ -769,12 +798,31 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
             else:
                 command = command_adapter.validate_python(spec)
+                is_cover_stop = entity.ha_domain == "cover" and command.operation == "stop"
+                if is_cover_stop:
+                    _safe_cover_stop_diagnostic(
+                        header=header,
+                        payload=payload,
+                        endpoint_id_value=endpoint_value,
+                        entity=entity,
+                        operation=command.operation,
+                        dispatch_outcome="before_dispatch",
+                    )
                 outcome = await CommandDispatchService(database, sessions).dispatch(
                     entity.installation_id,
                     entity.ha_registry_id,
                     command,
                     command_id=UUID(message_id) if _is_uuid(message_id) else uuid4(),
                 )
+                if is_cover_stop:
+                    _safe_cover_stop_diagnostic(
+                        header=header,
+                        payload=payload,
+                        endpoint_id_value=endpoint_value,
+                        entity=entity,
+                        operation=command.operation,
+                        dispatch_outcome=outcome.status,
+                    )
                 if outcome.status != "success":
                     error_type = {
                         "unavailable": "ENDPOINT_UNREACHABLE",
