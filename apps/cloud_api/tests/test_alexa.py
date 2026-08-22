@@ -226,9 +226,42 @@ def test_unknown_assumed_state_cover_omits_mode_property() -> None:
         item["namespace"] == "Alexa.ModeController" and item["name"] == "mode"
         for item in state_properties(entity)
     )
-    assert not any(
-        item["namespace"] == "Alexa.PowerController" for item in state_properties(entity)
+    power = next(
+        item for item in state_properties(entity) if item["namespace"] == "Alexa.PowerController"
     )
+    assert power["value"] == "ON"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("off", "OFF"),
+        ("open", "ON"),
+        ("closed", "ON"),
+        ("opening", "ON"),
+        ("closing", "ON"),
+        ("unknown", "ON"),
+        ("unavailable", "ON"),
+        (None, "ON"),
+    ],
+)
+def test_discrete_cover_power_state_matches_home_assistant(
+    state: str | None, expected: str
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.power_state",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state=state,
+    )
+
+    power = next(
+        item for item in state_properties(entity) if item["namespace"] == "Alexa.PowerController"
+    )
+
+    assert power["value"] == expected
 
 
 @pytest.mark.parametrize(
@@ -895,6 +928,13 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     endpoint = body["event"]["payload"]["endpoints"][0]
     assert endpoint["endpointId"] == endpoint_id(entity)
     assert endpoint["displayCategories"] == ["OTHER"]
+    assert [capability["interface"] for capability in endpoint["capabilities"]] == [
+        "Alexa.PowerController",
+        "Alexa.ModeController",
+        "Alexa.PlaybackController",
+        "Alexa.EndpointHealth",
+        "Alexa",
+    ]
     power = next(
         capability
         for capability in endpoint["capabilities"]
@@ -904,6 +944,11 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
         "type": "AlexaInterface",
         "interface": "Alexa.PowerController",
         "version": "3",
+        "properties": {
+            "supported": [{"name": "powerState"}],
+            "proactivelyReported": True,
+            "retrievable": True,
+        },
     }
     controllers = [
         capability

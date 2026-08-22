@@ -274,7 +274,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
         if mode == "discrete":
-            result.append(_capability("Alexa.PowerController"))
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "Blind.Lift",
@@ -424,6 +424,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.PlaybackController")
                 | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
             )
+        if mode == "discrete":
+            result = result[2:] + [result[1], result[0]]
     elif entity.ha_domain == "climate":
         result.append(
             _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
@@ -520,6 +522,14 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
         props.append(
             _property(
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
+            )
+        )
+    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
+        props.append(
+            _property(
+                "Alexa.PowerController",
+                "powerState",
+                "OFF" if entity.state == "off" else "ON",
             )
         )
     brightness = _numeric_attribute(attributes, "brightness")
