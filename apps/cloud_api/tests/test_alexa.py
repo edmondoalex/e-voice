@@ -241,7 +241,8 @@ def test_unknown_assumed_state_cover_omits_mode_property() -> None:
         ("awning", "EXTERIOR_BLIND"),
         ("shutter", "EXTERIOR_BLIND"),
         ("door", "DOOR"),
-        (None, "OTHER"),
+        ("invalid", "INTERIOR_BLIND"),
+        (None, "INTERIOR_BLIND"),
     ],
 )
 def test_cover_display_category_matches_home_assistant(
@@ -880,7 +881,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     entity.ha_registry_id = "stable-discrete-cover"
     entity.supported_features = 15
     entity.alexa_cover_mode = "discrete"
-    entity.attributes_json = {"current_position": 45, "device_class": "blind"}
+    entity.attributes_json = {"current_position": 45}
     await session.commit()
     token = await _access(session, seeded_domain, "eaa_discrete_cover_json")
     client = await _client(session)
@@ -899,10 +900,10 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
         for capability in endpoint["capabilities"]
         if capability["interface"] == "Alexa.PowerController"
     )
-    assert power["properties"] == {
-        "supported": [{"name": "powerState"}],
-        "proactivelyReported": True,
-        "retrievable": True,
+    assert power == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.PowerController",
+        "version": "3",
     }
     controllers = [
         capability

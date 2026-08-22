@@ -274,7 +274,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
         if mode == "discrete":
-            result.append(_capability("Alexa.PowerController", ["powerState"]))
+            result.append(_capability("Alexa.PowerController"))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "Blind.Lift",
@@ -450,7 +450,7 @@ def endpoint_id(entity: Entity) -> str:
 def _cover_display_category(entity: Entity) -> str:
     device_class = (entity.attributes_json or {}).get("device_class")
     if not isinstance(device_class, str):
-        return "OTHER"
+        return "INTERIOR_BLIND"
     return {
         "garage": "GARAGE_DOOR",
         "gate": "GARAGE_DOOR",
@@ -461,7 +461,7 @@ def _cover_display_category(entity: Entity) -> str:
         "window": "EXTERIOR_BLIND",
         "awning": "EXTERIOR_BLIND",
         "shutter": "EXTERIOR_BLIND",
-    }.get(device_class, "OTHER")
+    }.get(device_class, "INTERIOR_BLIND")
 
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
