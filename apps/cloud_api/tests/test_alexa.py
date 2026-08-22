@@ -673,7 +673,6 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert {item["value"] for item in mode["configuration"]["supportedModes"]} == {
         "position.open",
         "position.closed",
-        "position.custom",
     }
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
     playback = next(
@@ -974,15 +973,6 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                    ]
-                },
-            },
-            {
-                "value": "position.custom",
-                "modeResources": {
-                    "friendlyNames": [
-                        {"@type": "text", "value": {"text": "Custom", "locale": "en-US"}},
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Preset"}},
                     ]
                 },
             },
