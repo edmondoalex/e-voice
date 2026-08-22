@@ -180,6 +180,30 @@ async def test_missing_disabled_and_unavailable_entities_never_execute(
     assert disabled.status == "target_not_found"
 
 
+@pytest.mark.parametrize(
+    ("operation", "service"),
+    [("open", "open_cover"), ("close", "close_cover"), ("stop", "stop_cover")],
+)
+async def test_unknown_assumed_state_cover_remains_commandable(
+    hass: HomeAssistant, operation: str, service: str
+) -> None:
+    entry, executor = exposed_entity(hass, "cover")
+    hass.states.async_set(
+        entry.entity_id,
+        "unknown",
+        {"assumed_state": True, "is_closed": None, "supported_features": 11},
+    )
+    call = AsyncMock()
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            f"unknown-cover-{operation}", entry.id, {"operation": operation}
+        )
+
+    assert result.status == "success"
+    call.assert_awaited_once_with("cover", service, {"entity_id": entry.entity_id}, blocking=True)
+
+
 async def test_duplicate_id_rename_timeout_and_failure_mapping(hass: HomeAssistant) -> None:
     entry, executor = exposed_entity(hass, "switch")
     registry = er.async_get(hass)

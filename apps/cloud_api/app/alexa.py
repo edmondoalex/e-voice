@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import effective_cover_mode
+from .cover_modes import COVER_STOP, effective_cover_mode
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -273,6 +273,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
+        if mode == "discrete":
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "Blind.Lift",
@@ -332,29 +334,51 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
         if mode in {"discrete", "hybrid"}:
             supported_modes = [
                 {
-                    "value": "Position.Up",
+                    "value": "position.open",
                     "modeResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
                         ]
                     },
                 },
                 {
-                    "value": "Position.Down",
+                    "value": "position.closed",
                     "modeResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
                         ]
                     },
                 },
             ]
+            if entity.supported_features & COVER_STOP:
+                supported_modes.append(
+                    {
+                        "value": "position.custom",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {
+                                    "@type": "text",
+                                    "value": {"text": "Custom", "locale": "en-US"},
+                                },
+                                {
+                                    "@type": "asset",
+                                    "value": {"assetId": "Alexa.Setting.Preset"},
+                                },
+                            ]
+                        },
+                    }
+                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
-                    "instance": "Blinds.Position",
+                    "instance": "cover.position",
                     "capabilityResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                            {
+                                "@type": "text",
+                                "value": {"text": "Position", "locale": "en-US"},
+                            },
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                         ]
                     },
                     "configuration": {
@@ -365,18 +389,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "actionMappings": [
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {"mode": "Position.Up"},
+                                    "payload": {"mode": "position.closed"},
                                 },
                             },
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {"mode": "Position.Down"},
+                                    "payload": {"mode": "position.open"},
                                 },
                             },
                         ],
@@ -384,16 +408,21 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Closed"],
-                                "value": "Position.Down",
+                                "value": "position.closed",
                             },
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Open"],
-                                "value": "Position.Up",
+                                "value": "position.open",
                             },
                         ],
                     },
                 }
+            )
+        if entity.supported_features & COVER_STOP:
+            result.append(
+                _capability("Alexa.PlaybackController")
+                | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
             )
     elif entity.ha_domain == "climate":
         result.append(
@@ -418,11 +447,30 @@ def endpoint_id(entity: Entity) -> str:
     return f"ev1_{entity.id.hex}"
 
 
+def _cover_display_category(entity: Entity) -> str:
+    if entity.ha_entity_id == "cover.buspro_cover_porta_ufficio":
+        return "INTERIOR_BLIND"
+    device_class = (entity.attributes_json or {}).get("device_class")
+    if not isinstance(device_class, str):
+        return "OTHER"
+    return {
+        "garage": "GARAGE_DOOR",
+        "gate": "GARAGE_DOOR",
+        "door": "DOOR",
+        "blind": "INTERIOR_BLIND",
+        "shade": "INTERIOR_BLIND",
+        "curtain": "INTERIOR_BLIND",
+        "window": "EXTERIOR_BLIND",
+        "awning": "EXTERIOR_BLIND",
+        "shutter": "EXTERIOR_BLIND",
+    }.get(device_class, "OTHER")
+
+
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     category = {
         "light": "LIGHT",
         "switch": "SWITCH",
-        "cover": "INTERIOR_BLIND",
+        "cover": _cover_display_category(entity),
         "climate": "THERMOSTAT",
         "fan": "FAN",
         "scene": "SCENE_TRIGGER",
@@ -476,6 +524,14 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
+    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
+        props.append(
+            _property(
+                "Alexa.PowerController",
+                "powerState",
+                "OFF" if entity.state == "off" else "ON",
+            )
+        )
     brightness = _numeric_attribute(attributes, "brightness")
     if entity.ha_domain == "light" and brightness is not None:
         props.append(
@@ -525,6 +581,13 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
     if entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
+        discrete_position = (
+            "position.open"
+            if entity.state == "open"
+            else "position.closed"
+            if entity.state == "closed"
+            else None
+        )
         if mode in {"percentage", "hybrid"} and current_position is not None:
             props.append(
                 _property(
@@ -534,13 +597,13 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     instance="Blind.Lift",
                 )
             )
-        if mode in {"discrete", "hybrid"}:
+        if mode in {"discrete", "hybrid"} and discrete_position is not None:
             props.append(
                 _property(
                     "Alexa.ModeController",
                     "mode",
-                    "Position.Up" if entity.state == "open" else "Position.Down",
-                    instance="Blinds.Position",
+                    discrete_position,
+                    instance="cover.position",
                 )
             )
     if entity.ha_domain == "fan":
@@ -578,6 +641,14 @@ def _command(
         ("Alexa.SceneController", "Activate"): {"operation": "activate"},
     }
     if (namespace, name) in mapping:
+        if entity is not None and entity.ha_domain == "cover":
+            if effective_cover_mode(entity) != "discrete":
+                return None
+            if (namespace, name) == ("Alexa.PowerController", "TurnOn"):
+                return {"operation": "open"}
+            if (namespace, name) == ("Alexa.PowerController", "TurnOff"):
+                return {"operation": "close"}
+            return None
         return mapping[(namespace, name)]
     if namespace == "Alexa.BrightnessController" and name == "SetBrightness":
         return {
@@ -612,11 +683,21 @@ def _command(
     if namespace == "Alexa.ModeController" and name == "SetMode":
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
-        return (
-            {"operation": "open" if payload.get("mode") == "Position.Up" else "close"}
-            if payload.get("mode") in {"Position.Up", "Position.Down"}
+        mode_value = payload.get("mode")
+        operation = (
+            {
+                "position.open": "open",
+                "position.closed": "close",
+                "position.custom": "stop" if entity.supported_features & COVER_STOP else None,
+            }.get(mode_value)
+            if isinstance(mode_value, str)
             else None
         )
+        return {"operation": operation} if operation is not None else None
+    if namespace == "Alexa.PlaybackController" and name in {"Pause", "Stop"}:
+        if entity is None or entity.ha_domain != "cover":
+            return None
+        return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
@@ -772,9 +853,23 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 state_properties(entity),
             )
         else:
-            spec = _command(
-                header["namespace"], header["name"], directive.get("payload", {}), entity
-            )
+            command_payload = directive.get("payload", {})
+            if entity.ha_domain == "cover":
+                logger.info(
+                    "alexa_directive_received %s",
+                    {
+                        "namespace": header["namespace"],
+                        "name": header["name"],
+                        "instance": header.get("instance"),
+                        "payload_mode": (
+                            command_payload.get("mode")
+                            if isinstance(command_payload, dict)
+                            else None
+                        ),
+                        "endpoint_id": endpoint_value,
+                    },
+                )
+            spec = _command(header["namespace"], header["name"], command_payload, entity)
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(

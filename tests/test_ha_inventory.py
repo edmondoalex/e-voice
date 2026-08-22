@@ -1,5 +1,6 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
+import asyncio
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -99,6 +100,38 @@ async def test_reconnect_sends_full_resync_from_cloud_revision(hass: HomeAssista
     await sync.async_stop()
 
 
+async def test_concurrent_full_and_state_update_send_monotonic_revisions(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    first_send_entered, release_first_send = asyncio.Event(), asyncio.Event()
+
+    async def ordered_send(message: dict[str, object]) -> None:
+        if not first_send_entered.is_set():
+            first_send_entered.set()
+            await release_first_send.wait()
+
+    websocket.send_json.side_effect = ordered_send
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+    item = sync._serialize(entry)
+    assert item is not None
+    full = asyncio.create_task(sync._send_full())
+    await first_send_entered.wait()
+    state = asyncio.create_task(sync._send("state_update", [item]))
+    await asyncio.sleep(0)
+
+    assert websocket.send_json.await_count == 1
+    release_first_send.set()
+    await full
+    await state
+    revisions = [
+        call.args[0]["payload"]["revision"] for call in websocket.send_json.await_args_list
+    ]
+    assert revisions == [1, 2]
+
+
 async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant) -> None:
     entry = registered_light(hass)
     websocket = AsyncMock()
@@ -113,6 +146,24 @@ async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant)
     assert message["type"] == "state_update"
     assert message["payload"]["entities"][0]["available"] is False
     assert message["payload"]["entities"][0]["state"] is None
+
+
+async def test_unknown_assumed_state_cover_remains_available(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create("cover", "test", "stateless-cover")
+    hass.states.async_set(
+        entry.entity_id,
+        "unknown",
+        {"assumed_state": True, "is_closed": None, "supported_features": 11},
+    )
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    item = sync._serialize(entry)
+
+    assert item is not None
+    assert item["state"] is None
+    assert item["available"] is True
+    assert item["supported_features"] == 11
 
 
 async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(
