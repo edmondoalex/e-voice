@@ -448,6 +448,8 @@ def endpoint_id(entity: Entity) -> str:
 
 
 def _cover_display_category(entity: Entity) -> str:
+    if entity.ha_entity_id == "cover.buspro_cover_porta_ufficio":
+        return "INTERIOR_BLIND"
     device_class = (entity.attributes_json or {}).get("device_class")
     if not isinstance(device_class, str):
         return "OTHER"

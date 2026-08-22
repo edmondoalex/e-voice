@@ -294,6 +294,28 @@ def test_cover_display_category_matches_home_assistant(
     assert discovery_endpoint(entity)["displayCategories"] == [category]
 
 
+def test_office_test_cover_temporarily_uses_interior_blind_category() -> None:
+    target = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.buspro_cover_porta_ufficio",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+    )
+    other = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.other_without_device_class",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+    )
+
+    assert discovery_endpoint(target)["displayCategories"] == ["INTERIOR_BLIND"]
+    assert discovery_endpoint(other)["displayCategories"] == ["OTHER"]
+
+
 async def test_report_state_response_omits_null_brightness(
     session: AsyncSession, seeded_domain: object
 ) -> None:
