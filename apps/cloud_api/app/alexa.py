@@ -358,7 +358,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "friendlyNames": [
                             {
                                 "@type": "text",
-                                "value": {"text": "Position", "locale": "en-US"},
+                                "value": {"text": "Posizione", "locale": "it-IT"},
                             },
                             {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                         ]
