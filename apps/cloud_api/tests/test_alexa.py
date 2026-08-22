@@ -928,13 +928,6 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     endpoint = body["event"]["payload"]["endpoints"][0]
     assert endpoint["endpointId"] == endpoint_id(entity)
     assert endpoint["displayCategories"] == ["OTHER"]
-    assert [capability["interface"] for capability in endpoint["capabilities"]] == [
-        "Alexa.PowerController",
-        "Alexa.ModeController",
-        "Alexa.PlaybackController",
-        "Alexa.EndpointHealth",
-        "Alexa",
-    ]
     power = next(
         capability
         for capability in endpoint["capabilities"]

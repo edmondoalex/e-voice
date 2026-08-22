@@ -424,8 +424,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.PlaybackController")
                 | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
             )
-        if mode == "discrete":
-            result = result[2:] + [result[1], result[0]]
     elif entity.ha_domain == "climate":
         result.append(
             _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
