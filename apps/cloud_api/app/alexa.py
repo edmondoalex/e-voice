@@ -350,6 +350,24 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
+            if entity.supported_features & COVER_STOP:
+                supported_modes.append(
+                    {
+                        "value": "position.custom",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {
+                                    "@type": "text",
+                                    "value": {"text": "Custom", "locale": "en-US"},
+                                },
+                                {
+                                    "@type": "asset",
+                                    "value": {"assetId": "Alexa.Setting.Preset"},
+                                },
+                            ]
+                        },
+                    }
+                )
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
