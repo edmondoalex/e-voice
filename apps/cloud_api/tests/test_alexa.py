@@ -953,7 +953,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert controller["instance"] == "cover.position"
     assert controller["capabilityResources"] == {
         "friendlyNames": [
-            {"@type": "text", "value": {"text": "Posizione", "locale": "it-IT"}},
+            {"@type": "text", "value": {"text": "Position", "locale": "en-US"}},
             {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
         ]
     }
