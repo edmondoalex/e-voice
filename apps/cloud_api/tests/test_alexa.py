@@ -226,6 +226,9 @@ def test_unknown_assumed_state_cover_omits_mode_property() -> None:
         item["namespace"] == "Alexa.ModeController" and item["name"] == "mode"
         for item in state_properties(entity)
     )
+    assert not any(
+        item["namespace"] == "Alexa.PowerController" for item in state_properties(entity)
+    )
 
 
 @pytest.mark.parametrize(
@@ -607,6 +610,8 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, binary) == {
         "operation": "close"
     }
+    assert _command("Alexa.PowerController", "TurnOn", {}, binary) == {"operation": "open"}
+    assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
 
 
 def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -> None:
@@ -626,6 +631,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     discrete = discovery_endpoint(entity)
     discrete_interfaces = {item["interface"] for item in discrete["capabilities"]}
     assert "Alexa.ModeController" in discrete_interfaces
+    assert "Alexa.PowerController" in discrete_interfaces
     assert "Alexa.RangeController" not in discrete_interfaces
     mode = next(
         item for item in discrete["capabilities"] if item["interface"] == "Alexa.ModeController"
@@ -663,6 +669,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     percentage_interfaces = {item["interface"] for item in percentage["capabilities"]}
     assert "Alexa.RangeController" in percentage_interfaces
     assert "Alexa.ModeController" not in percentage_interfaces
+    assert "Alexa.PowerController" not in percentage_interfaces
 
     entity.alexa_cover_mode = "hybrid"
     hybrid = discovery_endpoint(entity)
@@ -675,6 +682,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         "Alexa.ModeController",
         "Alexa.RangeController",
     }
+    assert not any(item["interface"] == "Alexa.PowerController" for item in hybrid["capabilities"])
     assert "semantics" not in next(
         item for item in hybrid_controllers if item["interface"] == "Alexa.RangeController"
     )
@@ -704,10 +712,12 @@ def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
     ("namespace", "name", "payload", "operation"),
     [
         ("Alexa.ModeController", "SetMode", {"mode": "position.open"}, "open"),
+        ("Alexa.PowerController", "TurnOn", {}, "open"),
         ("Alexa.PlaybackController", "Pause", {}, "stop"),
         ("Alexa.PlaybackController", "Stop", {}, "stop"),
         ("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, "stop"),
         ("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, "close"),
+        ("Alexa.PowerController", "TurnOff", {}, "close"),
     ],
 )
 def test_assumed_state_discrete_cover_commands_are_stateless(
@@ -884,10 +894,16 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     endpoint = body["event"]["payload"]["endpoints"][0]
     assert endpoint["endpointId"] == endpoint_id(entity)
     assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
-    assert all(
-        capability["interface"] != "Alexa.PowerController"
+    power = next(
+        capability
         for capability in endpoint["capabilities"]
+        if capability["interface"] == "Alexa.PowerController"
     )
+    assert power["properties"] == {
+        "supported": [{"name": "powerState"}],
+        "proactivelyReported": True,
+        "retrievable": True,
+    }
     controllers = [
         capability
         for capability in endpoint["capabilities"]

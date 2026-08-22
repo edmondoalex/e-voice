@@ -273,6 +273,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
+        if mode == "discrete":
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "Blind.Lift",
@@ -629,6 +631,14 @@ def _command(
         ("Alexa.SceneController", "Activate"): {"operation": "activate"},
     }
     if (namespace, name) in mapping:
+        if entity is not None and entity.ha_domain == "cover":
+            if effective_cover_mode(entity) != "discrete":
+                return None
+            if (namespace, name) == ("Alexa.PowerController", "TurnOn"):
+                return {"operation": "open"}
+            if (namespace, name) == ("Alexa.PowerController", "TurnOff"):
+                return {"operation": "close"}
+            return None
         return mapping[(namespace, name)]
     if namespace == "Alexa.BrightnessController" and name == "SetBrightness":
         return {
