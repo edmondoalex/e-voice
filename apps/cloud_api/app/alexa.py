@@ -450,7 +450,7 @@ def endpoint_id(entity: Entity) -> str:
 def _cover_display_category(entity: Entity) -> str:
     device_class = (entity.attributes_json or {}).get("device_class")
     if not isinstance(device_class, str):
-        return "INTERIOR_BLIND"
+        return "OTHER"
     return {
         "garage": "GARAGE_DOOR",
         "gate": "GARAGE_DOOR",
@@ -461,7 +461,7 @@ def _cover_display_category(entity: Entity) -> str:
         "window": "EXTERIOR_BLIND",
         "awning": "EXTERIOR_BLIND",
         "shutter": "EXTERIOR_BLIND",
-    }.get(device_class, "INTERIOR_BLIND")
+    }.get(device_class, "OTHER")
 
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:

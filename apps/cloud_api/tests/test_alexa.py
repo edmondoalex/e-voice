@@ -241,8 +241,8 @@ def test_unknown_assumed_state_cover_omits_mode_property() -> None:
         ("awning", "EXTERIOR_BLIND"),
         ("shutter", "EXTERIOR_BLIND"),
         ("door", "DOOR"),
-        ("invalid", "INTERIOR_BLIND"),
-        (None, "INTERIOR_BLIND"),
+        ("invalid", "OTHER"),
+        (None, "OTHER"),
     ],
 )
 def test_cover_display_category_matches_home_assistant(
@@ -894,7 +894,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert body["event"]["header"]["name"] == "Discover.Response"
     endpoint = body["event"]["payload"]["endpoints"][0]
     assert endpoint["endpointId"] == endpoint_id(entity)
-    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    assert endpoint["displayCategories"] == ["OTHER"]
     power = next(
         capability
         for capability in endpoint["capabilities"]
