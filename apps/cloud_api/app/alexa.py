@@ -744,7 +744,11 @@ def _command(
             return None
         mode_value = payload.get("mode")
         if _is_office_test_cover(entity):
-            operation = {"Position.Up": "open", "Position.Down": "close"}.get(mode_value)
+            operation = (
+                {"Position.Up": "open", "Position.Down": "close"}.get(mode_value)
+                if isinstance(mode_value, str)
+                else None
+            )
             return {"operation": operation} if operation is not None else None
         operation = (
             {
