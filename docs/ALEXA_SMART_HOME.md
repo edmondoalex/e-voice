@@ -137,7 +137,7 @@ independently of HA pairing.
 | --- | --- | --- |
 | light | Power, Brightness; Color/ColorTemperature only when M5 attributes support them | on/off, brightness, RGB, Kelvin |
 | switch | PowerController | on/off |
-| cover | Per-entity Discrete: PowerController + ModeController `cover.position`, and PlaybackController when STOP is supported; Percentage: RangeController `Blind.Lift`; Hybrid: range + mode | stateless open/close/stop and/or absolute/relative position |
+| cover | Per-entity Discrete: PowerController + ModeController `Blinds.Position`, and PlaybackController when STOP is supported; Percentage: RangeController `Blind.Lift`; Hybrid: range + mode | stateless open/close/stop and/or absolute/relative position |
 | climate | ThermostatController | target temperature, thermostat mode |
 | fan | PowerController, PercentageController | on/off, percentage |
 | scene | SceneController | activate |
@@ -168,9 +168,9 @@ proactive reconciliation emits `AddOrUpdateReport` only when needed. The impleme
 Amazon's current blinds/shades device template and generic-controller semantic uniqueness rules.
 Apply Alembic migration `20260820_0011` before deploying.
 
-Discrete covers use the Home Assistant-aligned `cover.position` ModeController representation:
-`position.open` and `position.closed`, plus `position.custom` when STOP is supported. Open and
-close remain stateless commands. A STOP-capable cover also exposes
+Discrete covers use Amazon's official blinds ModeController representation: `Blinds.Position`
+with `Position.Up` and `Position.Down`. Open and close remain stateless commands. A STOP-capable
+cover also exposes
 `Alexa.PlaybackController/Stop`; discrete covers expose PowerController with TurnOn mapped to open
 and TurnOff mapped to close. Unknown or transitional HA states do not produce an invented mode
 property. Endpoint IDs are always derived from the immutable cloud entity UUID; there are no

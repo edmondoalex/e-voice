@@ -333,9 +333,23 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 }
             result.append(range_capability)
         if mode in {"discrete", "hybrid"}:
+            discrete = mode == "discrete"
+            open_mode = "Position.Up" if discrete else "position.open"
+            close_mode = "Position.Down" if discrete else "position.closed"
+            capability_friendly_names = (
+                [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+                if discrete
+                else [
+                    {
+                        "@type": "text",
+                        "value": {"text": "Position", "locale": "en-US"},
+                    },
+                    {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                ]
+            )
             supported_modes = [
                 {
-                    "value": "position.open",
+                    "value": open_mode,
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
@@ -343,7 +357,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
                 {
-                    "value": "position.closed",
+                    "value": close_mode,
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
@@ -351,7 +365,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
-            if entity.supported_features & COVER_STOP:
+            if not discrete and entity.supported_features & COVER_STOP:
                 supported_modes.append(
                     {
                         "value": "position.custom",
@@ -372,19 +386,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
-                    "instance": "cover.position",
-                    "capabilityResources": {
-                        "friendlyNames": [
-                            {
-                                "@type": "text",
-                                "value": {"text": "Position", "locale": "en-US"},
-                            },
-                            {
-                                "@type": "asset",
-                                "value": {"assetId": "Alexa.Setting.Opening"},
-                            },
-                        ]
-                    },
+                    "instance": "Blinds.Position" if discrete else "cover.position",
+                    "capabilityResources": {"friendlyNames": capability_friendly_names},
                     "configuration": {
                         "ordered": False,
                         "supportedModes": supported_modes,
@@ -393,18 +396,26 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "actionMappings": [
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+                                "actions": (
+                                    ["Alexa.Actions.Close", "Alexa.Actions.Lower"]
+                                    if discrete
+                                    else ["Alexa.Actions.Lower", "Alexa.Actions.Close"]
+                                ),
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {"mode": "position.closed"},
+                                    "payload": {"mode": close_mode},
                                 },
                             },
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                                "actions": (
+                                    ["Alexa.Actions.Open", "Alexa.Actions.Raise"]
+                                    if discrete
+                                    else ["Alexa.Actions.Raise", "Alexa.Actions.Open"]
+                                ),
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {"mode": "position.open"},
+                                    "payload": {"mode": open_mode},
                                 },
                             },
                         ],
@@ -412,12 +423,12 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Closed"],
-                                "value": "position.closed",
+                                "value": close_mode,
                             },
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Open"],
-                                "value": "position.open",
+                                "value": open_mode,
                             },
                         ],
                     },
@@ -584,9 +595,9 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
         mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
         discrete_position = (
-            "position.open"
+            "Position.Up"
             if entity.state == "open"
-            else "position.closed"
+            else "Position.Down"
             if entity.state == "closed"
             else None
         )
@@ -599,12 +610,21 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     instance="Blind.Lift",
                 )
             )
-        if mode in {"discrete", "hybrid"} and discrete_position is not None:
+        if mode == "discrete" and discrete_position is not None:
             props.append(
                 _property(
                     "Alexa.ModeController",
                     "mode",
                     discrete_position,
+                    instance="Blinds.Position",
+                )
+            )
+        elif mode == "hybrid" and discrete_position is not None:
+            props.append(
+                _property(
+                    "Alexa.ModeController",
+                    "mode",
+                    "position.open" if entity.state == "open" else "position.closed",
                     instance="cover.position",
                 )
             )
@@ -686,15 +706,22 @@ def _command(
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
         mode_value = payload.get("mode")
-        operation = (
+        mode_mapping = (
             {
+                "Position.Up": "open",
+                "Position.Down": "close",
                 "position.open": "open",
                 "position.closed": "close",
                 "position.custom": "stop" if entity.supported_features & COVER_STOP else None,
-            }.get(mode_value)
-            if isinstance(mode_value, str)
-            else None
+            }
+            if effective_cover_mode(entity) == "discrete"
+            else {
+                "position.open": "open",
+                "position.closed": "close",
+                "position.custom": "stop" if entity.supported_features & COVER_STOP else None,
+            }
         )
+        operation = mode_mapping.get(mode_value) if isinstance(mode_value, str) else None
         return {"operation": operation} if operation is not None else None
     if namespace == "Alexa.PlaybackController" and name in {"Pause", "Stop"}:
         if entity is None or entity.ha_domain != "cover":
