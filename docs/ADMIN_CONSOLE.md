@@ -26,6 +26,9 @@ system. Open `/dashboard` after logging in at `/login`.
   Home Assistant entity and operation identifiers. They also include the current Home Assistant,
   Connector and EVCP compatibility metadata for each referenced installation. Export responses are
   admin-only, tenant-scoped, marked `no-store` and delivered as attachments.
+  Temporary `alexa.event_gateway.add_or_update` events expose the credential-redacted serialized
+  AddOrUpdateReport, Amazon HTTP status/body and transport error. Filter source
+  `alexa_event_gateway` and use the event's correlation/message ID or endpoint ID to find a send.
 - `/system` reports tenant object counts, retained samples, the authoritative PostgreSQL
   database size in MB, retention policy, and last/next maintenance execution.
 

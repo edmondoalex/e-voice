@@ -148,7 +148,10 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
                 },
             )
         requests.append(request)
-        return httpx.Response(202)
+        return httpx.Response(
+            202,
+            json={"accepted": True, "credentials": {"token": "amazon-access-secret"}},
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     gateway = AlexaEventGateway(
@@ -172,6 +175,35 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert forced["event"]["header"]["name"] == "AddOrUpdateReport"
     assert forced["event"]["payload"]["endpoints"][0]["endpointId"] == endpoint_value
     assert len(requests) == 2
+    assert requests[-1].headers["content-type"] == "application/json"
+    diagnostic = (
+        await session.scalars(
+            select(AuditEvent).where(AuditEvent.event_type == "alexa.event_gateway.add_or_update")
+        )
+    ).all()[-1]
+    diagnostic_payload = diagnostic.payload_redacted_json
+    message_id = forced["event"]["header"]["messageId"]
+    assert diagnostic.source == "alexa_event_gateway"
+    assert diagnostic.result == "success"
+    assert diagnostic.request_id == message_id
+    assert diagnostic_payload["correlation_id"] == message_id
+    assert diagnostic_payload["message_id"] == message_id
+    assert diagnostic_payload["endpoint_id"] == endpoint_value
+    assert diagnostic_payload["endpoint_ids"] == [endpoint_value]
+    assert diagnostic_payload["request_payload"]["event"]["payload"]["scope"]["token"] == (
+        "[REDACTED]"
+    )
+    assert (
+        diagnostic_payload["request_payload"]["event"]["payload"]["endpoints"]
+        == (forced["event"]["payload"]["endpoints"])
+    )
+    assert diagnostic_payload["http_status"] == 202
+    assert diagnostic_payload["response_body"] == {
+        "accepted": True,
+        "credentials": {"token": "[REDACTED]"},
+    }
+    assert diagnostic_payload["error"] is None
+    assert "amazon-access-secret" not in json.dumps(diagnostic_payload)
 
     entity.state = "on"
     await session.commit()
@@ -233,8 +265,17 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
             )
         ).all()
     )
-    assert [event.result for event in audits] == ["success"] * 6
-    assert all("token" not in json.dumps(event.payload_redacted_json) for event in audits)
+    reports = [event for event in audits if event.event_type.startswith("alexa.discovery.")]
+    diagnostics = [
+        event for event in audits if event.event_type == "alexa.event_gateway.add_or_update"
+    ]
+    assert [event.result for event in reports] == ["success"] * 6
+    assert [event.result for event in diagnostics] == ["success"] * 5
+    assert all("token" not in json.dumps(event.payload_redacted_json) for event in reports)
+    assert all(
+        "amazon-access-secret" not in json.dumps(event.payload_redacted_json)
+        for event in diagnostics
+    )
     await client.aclose()
 
 
@@ -286,5 +327,20 @@ async def test_proactive_discovery_gateway_error_is_secret_free_and_retryable(
     assert await gateway.reconcile_discovery(installation) == 0
     assert event_attempts == 3
     assert (await session.scalars(select(AlexaDiscoveryDelivery))).all() == []
+    diagnostic = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.event_gateway.add_or_update")
+    )
+    assert diagnostic is not None
+    assert diagnostic.result == "error"
+    assert diagnostic.payload_redacted_json["http_status"] is None
+    assert diagnostic.payload_redacted_json["response_body"] is None
+    assert diagnostic.payload_redacted_json["error_type"] == "ConnectError"
+    assert diagnostic.payload_redacted_json["error"] == "gateway unavailable"
+    assert diagnostic.payload_redacted_json["attempts"] == 3
+    assert (
+        diagnostic.payload_redacted_json["request_payload"]["event"]["payload"]["scope"]["token"]
+        == "[REDACTED]"
+    )
+    assert "never-log-amazon" not in json.dumps(diagnostic.payload_redacted_json)
     assert "never-log-amazon" not in caplog.text
     await client.aclose()
