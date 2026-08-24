@@ -17,6 +17,15 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from .connector_compatibility import (
+    MINIMUM_SUPPORTED_CONNECTOR_VERSION,
+    RECOMMENDED_CONNECTOR_VERSION,
+    REQUIRED_CONNECTOR_CAPABILITIES,
+    REQUIRED_EVCP_PROTOCOL_VERSION,
+    ConnectorCompatibilityStatus,
+    connector_compatibility,
+    effective_connector_capabilities,
+)
 from .database import get_database_session
 from .domain.models import AuditEvent, ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
@@ -40,7 +49,8 @@ class HelloPayload(StrictModel):
     installation_id: UUID
     connector_version: str = Field(min_length=1, max_length=50)
     ha_version: str = Field(min_length=1, max_length=50)
-    protocol_versions: list[Literal[1]] = Field(min_length=1, max_length=1)
+    protocol_versions: list[int] = Field(min_length=1, max_length=16)
+    capabilities: dict[str, bool] = Field(default_factory=dict, max_length=32)
 
 
 class HeartbeatPayload(StrictModel):
@@ -178,6 +188,7 @@ database_dependency = Depends(get_database_session)
 class SessionHandle:
     session_id: UUID
     websocket: WebSocket
+    capabilities: dict[str, bool] = field(default_factory=dict)
     connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -391,19 +402,15 @@ class ConnectorSessionRegistry:
                 should_send = False
             if should_send:
                 try:
-                    await handle.websocket.send_json(
-                        _response(
-                            "command",
-                            command_id,
-                            {
-                                "session_id": str(handle.session_id),
-                                "command_id": str(command_id),
-                                "registry_id": registry_id,
-                                "correlation_id": str(correlation_id) if correlation_id else None,
-                                "command": command,
-                            },
-                        )
-                    )
+                    payload: dict[str, object] = {
+                        "session_id": str(handle.session_id),
+                        "command_id": str(command_id),
+                        "registry_id": registry_id,
+                        "command": command,
+                    }
+                    if handle.capabilities.get("supports_correlation_id"):
+                        payload["correlation_id"] = str(correlation_id) if correlation_id else None
+                    await handle.websocket.send_json(_response("command", command_id, payload))
                     pending.sent = True
                 except Exception:
                     self._pending.pop(key, None)
@@ -597,6 +604,44 @@ def _add_session_activity(
     )
 
 
+def _add_connector_version_activity(
+    database: AsyncSession,
+    installation: Installation,
+    *,
+    event_type: str,
+    status: ConnectorCompatibilityStatus,
+    reason: str,
+    protocol_versions: list[int],
+    selected_protocol: int | None,
+    capabilities: dict[str, bool],
+    missing_capabilities: tuple[str, ...],
+) -> None:
+    database.add(
+        AuditEvent(
+            tenant_id=installation.tenant_id,
+            installation_id=installation.id,
+            source="connector",
+            event_type=event_type,
+            payload_redacted_json={
+                "connector_version": installation.connector_version,
+                "ha_version": installation.ha_version,
+                "protocol_versions": protocol_versions,
+                "selected_protocol": selected_protocol,
+                "capabilities": capabilities,
+                "missing_capabilities": list(missing_capabilities),
+                "minimum_supported_connector_version": MINIMUM_SUPPORTED_CONNECTOR_VERSION,
+                "recommended_connector_version": RECOMMENDED_CONNECTOR_VERSION,
+                "required_evcp_protocol_version": REQUIRED_EVCP_PROTOCOL_VERSION,
+                "required_capabilities": sorted(REQUIRED_CONNECTOR_CAPABILITIES),
+                "compatibility_status": status.value,
+                "reason": reason,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+            result=status.value.casefold().replace("/", "_"),
+        )
+    )
+
+
 class InventoryAccumulator:
     """Bound in-flight full snapshots by authenticated session and revision."""
 
@@ -769,8 +814,62 @@ async def connector_websocket(
         installation.connector_version = hello.payload.connector_version
         installation.ha_version = hello.payload.ha_version
         installation.last_seen_at = datetime.now(UTC)
+        effective_capabilities = effective_connector_capabilities(
+            hello.payload.connector_version, hello.payload.capabilities
+        )
+        compatibility = connector_compatibility(
+            hello.payload.connector_version,
+            hello.payload.protocol_versions,
+            effective_capabilities,
+        )
+        installation.connector_protocol_version = compatibility.selected_protocol
+        installation.connector_capabilities_json = effective_capabilities
+        installation.connector_compatibility_status = compatibility.status.value
+        installation.connector_compatibility_reason = compatibility.reason
+        _add_connector_version_activity(
+            database,
+            installation,
+            event_type="connector.version_detected",
+            status=compatibility.status,
+            reason=compatibility.reason,
+            protocol_versions=hello.payload.protocol_versions,
+            selected_protocol=compatibility.selected_protocol,
+            capabilities=effective_capabilities,
+            missing_capabilities=compatibility.missing_capabilities,
+        )
+        if compatibility.status is ConnectorCompatibilityStatus.INCOMPATIBLE:
+            _add_connector_version_activity(
+                database,
+                installation,
+                event_type="connector.version_incompatible",
+                status=compatibility.status,
+                reason=compatibility.reason,
+                protocol_versions=hello.payload.protocol_versions,
+                selected_protocol=compatibility.selected_protocol,
+                capabilities=effective_capabilities,
+                missing_capabilities=compatibility.missing_capabilities,
+            )
+        elif compatibility.status is ConnectorCompatibilityStatus.UPDATE_AVAILABLE:
+            _add_connector_version_activity(
+                database,
+                installation,
+                event_type="connector.update_available",
+                status=compatibility.status,
+                reason=compatibility.reason,
+                protocol_versions=hello.payload.protocol_versions,
+                selected_protocol=compatibility.selected_protocol,
+                capabilities=effective_capabilities,
+                missing_capabilities=compatibility.missing_capabilities,
+            )
         await database.commit()
-        session_handle = SessionHandle(session_id=session_id, websocket=websocket)
+        if compatibility.status is ConnectorCompatibilityStatus.INCOMPATIBLE:
+            await _safe_close(websocket, 4010, "CONNECTOR_VERSION_INCOMPATIBLE")
+            return
+        session_handle = SessionHandle(
+            session_id=session_id,
+            websocket=websocket,
+            capabilities=effective_capabilities,
+        )
         registration_diagnostic = await sessions.replace(installation_id, session_handle)
         registered = True
         _add_session_activity(

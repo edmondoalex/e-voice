@@ -22,6 +22,12 @@ from .alexa_events import reconcile_discovery_safely
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
+from .connector_compatibility import (
+    MINIMUM_SUPPORTED_CONNECTOR_VERSION,
+    RECOMMENDED_CONNECTOR_VERSION,
+    REQUIRED_EVCP_PROTOCOL_VERSION,
+    ConnectorCompatibilityStatus,
+)
 from .cover_modes import COVER_STOP, effective_cover_mode, validate_cover_mode
 from .database import get_database_session
 from .domain.enums import TenantRole
@@ -124,7 +130,7 @@ aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;bord
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
-.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.warn{{color:var(--removed)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}.compat-badge{{display:inline-block;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800}}.compat-ok{{background:#dcfae6;color:var(--ok)}}.compat-update{{background:#fef0c7;color:#93370d}}.compat-bad{{background:#fee4e2;color:var(--bad)}}.compat-offline{{background:#eaecf0;color:var(--off)}}.compat-alert{{border:2px solid var(--bad);background:#fff5f4}}.global-warning{{border-left:6px solid var(--bad);background:#fff5f4;margin-bottom:16px}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 </style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
@@ -246,6 +252,39 @@ def _online(item: Installation) -> bool:
     )
 
 
+def _compatibility_status(item: Installation) -> ConnectorCompatibilityStatus:
+    if not _online(item):
+        return ConnectorCompatibilityStatus.UNKNOWN_OFFLINE
+    if item.connector_compatibility_status is None:
+        return ConnectorCompatibilityStatus.UNKNOWN_OFFLINE
+    try:
+        return ConnectorCompatibilityStatus(item.connector_compatibility_status)
+    except (TypeError, ValueError):
+        return ConnectorCompatibilityStatus.UNKNOWN_OFFLINE
+
+
+def _compatibility_badge(item: Installation) -> str:
+    status_value = _compatibility_status(item)
+    css = {
+        ConnectorCompatibilityStatus.OK: "compat-ok",
+        ConnectorCompatibilityStatus.UPDATE_AVAILABLE: "compat-update",
+        ConnectorCompatibilityStatus.INCOMPATIBLE: "compat-bad",
+        ConnectorCompatibilityStatus.UNKNOWN_OFFLINE: "compat-offline",
+    }[status_value]
+    return f'<span class="compat-badge {css}">{_e(status_value.value)}</span>'
+
+
+def _connector_compatibility_card(item: Installation) -> str:
+    status_value = _compatibility_status(item)
+    alert = " compat-alert" if status_value is ConnectorCompatibilityStatus.INCOMPATIBLE else ""
+    warning = (
+        "<p><b>I comandi possono non funzionare.</b></p>"
+        if status_value is ConnectorCompatibilityStatus.INCOMPATIBLE
+        else ""
+    )
+    return f"""<section class="card{alert}"><h2>Compatibilità Connector Home Assistant</h2><p><b>Connector Home Assistant:</b> {_e(item.connector_version or "—")}</p><p><b>Versione richiesta:</b> &gt;= {_e(MINIMUM_SUPPORTED_CONNECTOR_VERSION)}</p><p><b>Versione raccomandata:</b> {_e(RECOMMENDED_CONNECTOR_VERSION)}</p><p><b>Protocollo EVCP:</b> {_e(item.connector_protocol_version or "—")} (richiesto: {_e(REQUIRED_EVCP_PROTOCOL_VERSION)})</p><p><b>Stato:</b> {_compatibility_badge(item)}</p><p class="muted">Motivo: {_e(item.connector_compatibility_reason or "connector_metadata_missing")}</p>{warning}</section>"""
+
+
 async def _database_size_mb(session: AsyncSession) -> float | None:
     """Read PostgreSQL's authoritative database size and convert bytes to decimal MB."""
     if session.get_bind().dialect.name != "postgresql":
@@ -280,11 +319,19 @@ async def dashboard(
         or 0
     )
     rows = "".join(
-        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{_e(item.last_seen_at)}</td></tr>'
+        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{_compatibility_badge(item)}</td><td>{_e(item.last_seen_at)}</td></tr>'
         for item in items
     )
+    incompatible_count = sum(
+        _compatibility_status(item) is ConnectorCompatibilityStatus.INCOMPATIBLE for item in items
+    )
+    global_warning = (
+        f'<div class="card global-warning"><b>Attenzione: {incompatible_count} Connector incompatibile/i</b><p>I comandi possono non funzionare. Apri Impianti o Sistema per i dettagli.</p></div>'
+        if incompatible_count
+        else ""
+    )
     csrf = _csrf(context)
-    body = f'<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>e-Control</th><th>Connector</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna installazione</td></tr>"}</tbody></table>'
+    body = f'{global_warning}<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>e-Control</th><th>Connector</th><th>Compatibilità</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=6>Nessuna installazione</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout("Dashboard", body, context, csrf, "dashboard"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -309,11 +356,11 @@ async def installations_page(
         .order_by(Installation.name)
     )
     rows = "".join(
-        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{entity_count}</td><td>{_e(item.last_seen_at)}</td></tr>'
+        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{_compatibility_badge(item)}</td><td>{entity_count}</td><td>{_e(item.last_seen_at)}</td></tr>'
         for item, entity_count in result.all()
     )
     csrf = _csrf(context)
-    body = f"<table><thead><tr><th>Nome</th><th>Stato</th><th>Versione e-Control</th><th>Versione Connector</th><th>Entità esposte</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or '<tr><td colspan=6>Nessun impianto</td></tr>'}</tbody></table>"
+    body = f"<table><thead><tr><th>Nome</th><th>Stato</th><th>Versione e-Control</th><th>Versione Connector</th><th>Compatibilità</th><th>Entità esposte</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or '<tr><td colspan=7>Nessun impianto</td></tr>'}</tbody></table>"
     response = HTMLResponse(_layout("Impianti", body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -400,7 +447,7 @@ async def installation_detail(
         )
     csrf = _csrf(context)
     rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -1052,12 +1099,16 @@ async def system_stats(
     session: Annotated[AsyncSession, session_dependency],
 ) -> HTMLResponse:
     _admin(context)
-    installations = (
-        await session.scalar(
-            select(func.count(Installation.id)).where(Installation.tenant_id == context.tenant_id)
-        )
-        or 0
+    installation_items = list(
+        (
+            await session.scalars(
+                select(Installation)
+                .where(Installation.tenant_id == context.tenant_id)
+                .order_by(Installation.name)
+            )
+        ).all()
     )
+    installations = len(installation_items)
     entities = (
         await session.scalar(
             select(func.count(Entity.id))
@@ -1092,8 +1143,13 @@ async def system_stats(
     last_run = (maintenance.completed_at or maintenance.started_at) if maintenance else "Mai"
     last_result = maintenance.status.upper() if maintenance else "NON ESEGUITA"
     size_display = f"{database_size_mb:.2f} MB" if database_size_mb is not None else "n/d"
+    compatibility_rows = "".join(
+        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td>{_e(item.connector_version or "—")}</td><td>{_e(item.ha_version or "—")}</td><td>{_e(item.connector_protocol_version or "—")}</td><td>{_e(item.last_seen_at or "—")}</td><td>{_e(MINIMUM_SUPPORTED_CONNECTOR_VERSION)}</td><td>{_e(RECOMMENDED_CONNECTOR_VERSION)}</td><td>{_compatibility_badge(item)}</td></tr>'
+        for item in installation_items
+    )
+    compatibility_table = f"<h2>Compatibilità Cloud ↔ Connector</h2><table><thead><tr><th>Installation</th><th>Connector version</th><th>HA version</th><th>EVCP protocol</th><th>Last seen</th><th>Minimum supported</th><th>Recommended</th><th>Compatibility status</th></tr></thead><tbody>{compatibility_rows or '<tr><td colspan=8>Nessuna installazione</td></tr>'}</tbody></table>"
     csrf = _csrf(context)
-    body = f'<div class="cards"><div class="card"><b>{installations}</b><br>Installazioni</div><div class="card"><b>{entities}</b><br>Entità</div><div class="card"><b>{history}</b><br>Campioni storico</div><div class="card"><b>{audit}</b><br>Eventi audit</div><div class="card"><b>{_e(size_display)}</b><br>Dimensione reale DB</div></div><h2>Manutenzione automatica</h2><div class="cards"><div class="card"><b>{_e(last_run)}</b><br>Ultima pulizia</div><div class="card"><b>{_e(last_result)}</b><br>Esito ultima pulizia</div><div class="card"><b>{_e(next_run)}</b><br>Prossima pulizia prevista</div></div><h2>Retention configurata</h2><ul><li>Storico stati: {settings.state_history_retention_days} giorni</li><li>Eventi operativi: {settings.operational_event_retention_days} giorni</li><li>Audit amministrativo: {settings.admin_audit_retention_days} giorni</li><li>Tentativi login: {settings.portal_login_attempt_retention_days} giorni</li><li>Sessioni portale: eliminate dopo la scadenza</li></ul>'
+    body = f'<div class="cards"><div class="card"><b>{installations}</b><br>Installazioni</div><div class="card"><b>{entities}</b><br>Entità</div><div class="card"><b>{history}</b><br>Campioni storico</div><div class="card"><b>{audit}</b><br>Eventi audit</div><div class="card"><b>{_e(size_display)}</b><br>Dimensione reale DB</div></div>{compatibility_table}<h2>Manutenzione automatica</h2><div class="cards"><div class="card"><b>{_e(last_run)}</b><br>Ultima pulizia</div><div class="card"><b>{_e(last_result)}</b><br>Esito ultima pulizia</div><div class="card"><b>{_e(next_run)}</b><br>Prossima pulizia prevista</div></div><h2>Retention configurata</h2><ul><li>Storico stati: {settings.state_history_retention_days} giorni</li><li>Eventi operativi: {settings.operational_event_retention_days} giorni</li><li>Audit amministrativo: {settings.admin_audit_retention_days} giorni</li><li>Tentativi login: {settings.portal_login_attempt_retention_days} giorni</li><li>Sessioni portale: eliminate dopo la scadenza</li></ul>'
     response = HTMLResponse(_layout("Sistema", body, context, csrf, "system"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800

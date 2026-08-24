@@ -24,6 +24,11 @@ type Sleep = Callable[[float], Coroutine[Any, Any, None]]
 type RandomValue = Callable[[], float]
 type Connect = Callable[[], Coroutine[Any, Any, ClientWebSocketResponse]]
 _LOGGER = logging.getLogger(__name__)
+CONNECTOR_CAPABILITIES = {
+    "supports_correlation_id": True,
+    "supports_command_diagnostics": True,
+    "supports_heartbeat_diagnostics": True,
+}
 
 
 class EkonexVoiceConnection:
@@ -102,8 +107,13 @@ class EkonexVoiceConnection:
                 if self._on_auth_failure is not None:
                     self._on_auth_failure()
                 return
-            except EkonexVoiceProtocolError:
-                self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, "protocol_error"
+            except EkonexVoiceProtocolError as error:
+                error_code = (
+                    "CONNECTOR_VERSION_INCOMPATIBLE"
+                    if str(error) == "connector_version_incompatible"
+                    else "protocol_error"
+                )
+                self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, error_code
                 return
             except EkonexVoiceCannotConnect:
                 self.state, self.last_error_code = ConnectionState.BACKING_OFF, "cannot_connect"
@@ -138,6 +148,7 @@ class EkonexVoiceConnection:
                 "connector_version": self._connector_version,
                 "ha_version": self._ha_version,
                 "protocol_versions": [1],
+                "capabilities": CONNECTOR_CAPABILITIES,
             },
         )
         await websocket.send_json(hello)
@@ -261,6 +272,8 @@ class EkonexVoiceConnection:
         if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
             if websocket.close_code in {4001, 4004}:
                 raise EkonexVoiceAuthError("invalid_auth")
+            if websocket.close_code == 4010:
+                raise EkonexVoiceProtocolError("connector_version_incompatible")
             if websocket.close_code in {4002, 4003}:
                 raise EkonexVoiceProtocolError("protocol_rejected")
             raise EkonexVoiceCannotConnect("cloud_closed")

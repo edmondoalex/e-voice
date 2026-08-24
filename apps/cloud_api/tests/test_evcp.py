@@ -29,6 +29,12 @@ from apps.cloud_api.app.evcp import (
     sessions,
 )
 
+CONNECTOR_CAPABILITIES = {
+    "supports_correlation_id": True,
+    "supports_command_diagnostics": True,
+    "supports_heartbeat_diagnostics": True,
+}
+
 
 class FakeConnectorWebSocket:
     """Queue-backed WebSocket exercising the real EVCP endpoint handler."""
@@ -39,6 +45,8 @@ class FakeConnectorWebSocket:
         self.application_state = WebSocketState.CONNECTING
         self.inbound: asyncio.Queue[str | BaseException] = asyncio.Queue()
         self.outbound: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self.close_code: int | None = None
+        self.close_reason: str | None = None
 
     async def accept(self) -> None:
         self.client_state = WebSocketState.CONNECTED
@@ -54,6 +62,8 @@ class FakeConnectorWebSocket:
         await self.outbound.put(message)
 
     async def close(self, *, code: int, reason: str) -> None:
+        self.close_code = code
+        self.close_reason = reason
         self.application_state = WebSocketState.DISCONNECTED
 
 
@@ -79,9 +89,10 @@ def test_evcp_accepts_only_the_closed_m4_vocabulary() -> None:
             "timestamp": datetime.now(UTC),
             "payload": {
                 "installation_id": installation_id,
-                "connector_version": "0.1.0",
+                "connector_version": "0.1.8-beta.5",
                 "ha_version": "2026.8.0",
                 "protocol_versions": [1],
+                "capabilities": CONNECTOR_CAPABILITIES,
             },
         }
     )
@@ -151,6 +162,60 @@ async def test_latest_authenticated_session_replaces_previous() -> None:
     await registry.remove(installation_id, second.session_id)
 
 
+async def test_incompatible_connector_is_persisted_and_rejected_during_hello(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    installation = await session.get(Installation, installation_id)
+    assert installation is not None
+    installation.status = InstallationStatus.ACTIVE
+    secret = "evc_incompatible-connector-secret"
+    session.add(
+        ConnectorCredential(
+            installation_id=installation_id,
+            secret_hash=hashlib.sha256(secret.encode()).hexdigest(),
+        )
+    )
+    await session.commit()
+    websocket = FakeConnectorWebSocket(secret)
+    await websocket.inbound.put(
+        message(
+            "hello",
+            {
+                "installation_id": str(installation_id),
+                "connector_version": "0.1.7",
+                "ha_version": "2026.8.0",
+                "protocol_versions": [1],
+            },
+        )
+    )
+
+    await connector_websocket(websocket, session)  # type: ignore[arg-type]
+
+    await session.refresh(installation)
+    assert installation.connector_version == "0.1.7"
+    assert installation.connector_compatibility_status == "INCOMPATIBLE"
+    assert installation.connector_compatibility_reason == (
+        "required_connector_capabilities_missing"
+    )
+    assert websocket.close_code == 4010
+    assert websocket.close_reason == "CONNECTOR_VERSION_INCOMPATIBLE"
+    assert installation_id not in sessions._sessions
+    events = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.installation_id == installation_id)
+                .order_by(AuditEvent.created_at)
+            )
+        ).all()
+    )
+    assert [event.event_type for event in events[-2:]] == [
+        "connector.version_detected",
+        "connector.version_incompatible",
+    ]
+
+
 async def test_websocket_inventory_session_remains_routable_through_command_result(
     session: AsyncSession,
     seeded_domain: object,
@@ -184,7 +249,7 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
             "hello",
             {
                 "installation_id": str(installation_id),
-                "connector_version": "0.1.7",
+                "connector_version": "0.1.8-beta.5",
                 "ha_version": "2026.8.0",
                 "protocol_versions": [1],
             },

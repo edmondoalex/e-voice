@@ -10,7 +10,11 @@ import pytest
 from aiohttp import WSMessage, WSMsgType
 from homeassistant.core import HomeAssistant
 
-from custom_components.ekonex_voice.client import EkonexVoiceAuthError, EkonexVoiceCannotConnect
+from custom_components.ekonex_voice.client import (
+    EkonexVoiceAuthError,
+    EkonexVoiceCannotConnect,
+    EkonexVoiceProtocolError,
+)
 from custom_components.ekonex_voice.command_executor import CommandResult
 from custom_components.ekonex_voice.connection import EkonexVoiceConnection
 from custom_components.ekonex_voice.models import ConnectionState
@@ -21,8 +25,10 @@ class FakeWebSocket:
         self.closed = False
         self.close_code: int | None = None
         self.messages: asyncio.Queue[WSMessage] = asyncio.Queue()
+        self.sent_messages: list[dict[str, object]] = []
 
     async def send_json(self, message: dict[str, object]) -> None:
+        self.sent_messages.append(message)
         message_type = str(message["type"])
         payload = message["payload"]
         assert isinstance(payload, dict)
@@ -78,6 +84,15 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
     assert connection.state is ConnectionState.ONLINE
     assert delays[:2] == [0.5, 30.0]
     assert connection.retry_count == 0
+    hello = websocket.sent_messages[0]
+    assert hello["type"] == "hello"
+    assert hello["payload"]["connector_version"] == "0.1.0"  # type: ignore[index]
+    assert hello["payload"]["protocol_versions"] == [1]  # type: ignore[index]
+    assert hello["payload"]["capabilities"] == {  # type: ignore[index]
+        "supports_correlation_id": True,
+        "supports_command_diagnostics": True,
+        "supports_heartbeat_diagnostics": True,
+    }
     acknowledged = next(
         call for call in info_log.call_args_list if call.args[0] == "evcp_session_acknowledged %s"
     )
@@ -158,6 +173,18 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
     assert connect.await_count == 1
     await connection.async_stop()
     assert not connection.running
+
+
+async def test_cloud_rejects_incompatible_connector_with_explicit_error(
+    hass: HomeAssistant,
+) -> None:
+    websocket = FakeWebSocket()
+    websocket.close_code = 4010
+    await websocket.messages.put(WSMessage(WSMsgType.CLOSE, None, None))
+    connection = EkonexVoiceConnection(hass, AsyncMock(), "installation-1")
+
+    with pytest.raises(EkonexVoiceProtocolError, match="connector_version_incompatible"):
+        await connection._receive_message(websocket)  # noqa: SLF001
 
 
 async def test_command_result_is_correlated_and_stale_session_is_rejected(
