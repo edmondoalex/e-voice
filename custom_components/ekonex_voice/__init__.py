@@ -6,6 +6,7 @@ from homeassistant.const import __version__ as ha_version
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.loader import async_get_integration
 
 from .client import (
     EkonexVoiceAuthError,
@@ -22,6 +23,7 @@ from .const import (
     CONF_EXPOSED_ENTITY_REGISTRY_IDS,
     CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
+    DOMAIN,
 )
 from .entity_inventory import EntityInventorySynchronizer
 from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
@@ -29,6 +31,10 @@ from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
 
 async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) -> bool:
     """Validate and set up one cloud Connector entry."""
+    integration = await async_get_integration(hass, DOMAIN)
+    if integration.version is None:
+        raise ConfigEntryNotReady("connector_version_unavailable")
+    connector_version = str(integration.version)
     client = EkonexVoiceClient(
         async_get_clientsession(hass),
         str(entry.data[CONF_CLOUD_URL]),
@@ -59,6 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         hass,
         client.async_connect_websocket,
         expected_installation,
+        connector_version=connector_version,
         ha_version=ha_version,
         on_auth_failure=lambda: entry.async_start_reauth(hass),
         inventory=inventory,
