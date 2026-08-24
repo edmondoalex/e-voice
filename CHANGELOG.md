@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-08-24 — 0.1.8-beta.6 clean baseline
+
+Status: Prepared for review; not published
+
+### Scope
+
+- Removed every entity-specific Alexa Discovery override and restored immutable UUID-derived
+  endpoint IDs and the common cover capability path for all entities.
+- Retained EVCP correlation, heartbeat/session ownership and Cloud ↔ Connector compatibility
+  diagnostics, with beta.5 remaining supported and beta.6 recommended.
+- Made inventory/state synchronization teardown safe when the WebSocket closes during a pending
+  send, including cancellation and exception retrieval for delayed background work.
+- Switched HACS distribution to a deterministic `ekonex_voice.zip` GitHub Release asset whose
+  manifest version must match the release tag.
+
+### Scope guard
+
+- No new Alexa capability, semantic mapping, EVCP command operation or Home Assistant service
+  mapping was introduced by this baseline cleanup.
+
 ## 2026-08-20 — Alexa discrete cover Discovery correction
 
 Status: Ready for review

@@ -1,5 +1,9 @@
 # Ekonex Voice
 
+[![HACS / GitHub Release (prerelease)](https://img.shields.io/github/v/release/edmondoalex/e-voice?include_prereleases&label=HACS%20%2F%20GitHub%20Release&color=orange)](https://github.com/edmondoalex/e-voice/releases)
+
+Current distribution channel: **HACS prerelease / beta**.
+
 Ekonex Voice is a multi-tenant cloud control layer between Home Assistant and Amazon Alexa.
 
 The project currently includes:

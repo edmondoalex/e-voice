@@ -6,10 +6,15 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from aiohttp import WSMessage, WSMsgType
 from homeassistant.core import HomeAssistant
 
-from custom_components.ekonex_voice.client import EkonexVoiceAuthError, EkonexVoiceCannotConnect
+from custom_components.ekonex_voice.client import (
+    EkonexVoiceAuthError,
+    EkonexVoiceCannotConnect,
+    EkonexVoiceProtocolError,
+)
 from custom_components.ekonex_voice.command_executor import CommandResult
 from custom_components.ekonex_voice.connection import EkonexVoiceConnection
 from custom_components.ekonex_voice.models import ConnectionState
@@ -20,8 +25,10 @@ class FakeWebSocket:
         self.closed = False
         self.close_code: int | None = None
         self.messages: asyncio.Queue[WSMessage] = asyncio.Queue()
+        self.sent_messages: list[dict[str, object]] = []
 
     async def send_json(self, message: dict[str, object]) -> None:
+        self.sent_messages.append(message)
         message_type = str(message["type"])
         payload = message["payload"]
         assert isinstance(payload, dict)
@@ -53,7 +60,9 @@ class FakeWebSocket:
         self.closed = True
 
 
-async def test_transient_failure_uses_bounded_jitter_then_connects(hass: HomeAssistant) -> None:
+async def test_transient_failure_uses_bounded_jitter_then_connects(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
     websocket = FakeWebSocket()
     connect = AsyncMock(side_effect=[EkonexVoiceCannotConnect("safe"), websocket])
     delays: list[float] = []
@@ -68,11 +77,27 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(hass: HomeAss
     connection = EkonexVoiceConnection(
         hass, connect, "installation-1", sleep=record_sleep, random_value=lambda: 0.5
     )
+    info_log = MagicMock()
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
     connection.async_start()
     await online.wait()
     assert connection.state is ConnectionState.ONLINE
     assert delays[:2] == [0.5, 30.0]
     assert connection.retry_count == 0
+    hello = websocket.sent_messages[0]
+    assert hello["type"] == "hello"
+    assert hello["payload"]["connector_version"] == "0.1.0"  # type: ignore[index]
+    assert hello["payload"]["protocol_versions"] == [1]  # type: ignore[index]
+    assert hello["payload"]["capabilities"] == {  # type: ignore[index]
+        "supports_correlation_id": True,
+        "supports_command_diagnostics": True,
+        "supports_heartbeat_diagnostics": True,
+    }
+    acknowledged = next(
+        call for call in info_log.call_args_list if call.args[0] == "evcp_session_acknowledged %s"
+    )
+    assert acknowledged.args[1]["installation_id"] == "installation-1"
+    assert acknowledged.args[1]["session_id"] == "75a8dd73-7645-4e13-81c6-d90d75d8c261"
     await connection.async_stop()
     assert websocket.closed
 
@@ -92,6 +117,47 @@ async def test_invalid_auth_stops_and_requests_reauth(hass: HomeAssistant) -> No
     await connection.async_stop()
 
 
+async def test_connector_logs_heartbeat_sent_and_ack(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    websocket = FakeWebSocket()
+    heartbeat_acknowledged = asyncio.Event()
+    info_log = MagicMock()
+
+    def capture(message: str, payload: dict[str, object]) -> None:
+        if message == "heartbeat_ack %s":
+            heartbeat_acknowledged.set()
+
+    info_log.side_effect = capture
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
+
+    async def immediate_interval(delay: float) -> None:
+        return None
+
+    connection = EkonexVoiceConnection(
+        hass,
+        AsyncMock(),
+        "installation-1",
+        sleep=immediate_interval,
+    )
+    session = asyncio.create_task(connection._run_session(websocket))  # noqa: SLF001
+    await asyncio.wait_for(heartbeat_acknowledged.wait(), 1.0)
+    session.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await session
+
+    formats = [call.args[0] for call in info_log.call_args_list]
+    assert "heartbeat_sent %s" in formats
+    assert "heartbeat_ack %s" in formats
+    heartbeat_payloads = [
+        call.args[1] for call in info_log.call_args_list if call.args[0].startswith("heartbeat_")
+    ]
+    assert all(
+        payload["session_id"] == "75a8dd73-7645-4e13-81c6-d90d75d8c261"
+        for payload in heartbeat_payloads
+    )
+
+
 async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant) -> None:
     sleeping = asyncio.Event()
 
@@ -109,8 +175,20 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
     assert not connection.running
 
 
-async def test_command_result_is_correlated_and_stale_session_is_rejected(
+async def test_cloud_rejects_incompatible_connector_with_explicit_error(
     hass: HomeAssistant,
+) -> None:
+    websocket = FakeWebSocket()
+    websocket.close_code = 4010
+    await websocket.messages.put(WSMessage(WSMsgType.CLOSE, None, None))
+    connection = EkonexVoiceConnection(hass, AsyncMock(), "installation-1")
+
+    with pytest.raises(EkonexVoiceProtocolError, match="connector_version_incompatible"):
+        await connection._receive_message(websocket)  # noqa: SLF001
+
+
+async def test_command_result_is_correlated_and_stale_session_is_rejected(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executor = AsyncMock()
     executor.async_execute.return_value = CommandResult("command-1", "success")
@@ -118,24 +196,59 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
         hass, AsyncMock(), "installation-1", command_executor=executor
     )
     websocket = AsyncMock()
+    info_log = MagicMock()
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
     payload = {
         "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
         "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
+        "correlation_id": "cbb498ed-ad8e-4686-8f44-69c6bec37c1a",
         "registry_id": "stable-light",
         "command": {"operation": "power_on"},
     }
-    executor.async_execute.return_value = CommandResult(payload["command_id"], "success")
+    executor.async_execute.return_value = CommandResult(
+        payload["command_id"], "success", correlation_id=payload["correlation_id"]
+    )
     await connection._handle_command(websocket, payload["session_id"], payload)
     executor.async_execute.assert_awaited_once_with(
-        payload["command_id"], "stable-light", {"operation": "power_on"}
+        payload["command_id"],
+        "stable-light",
+        {"operation": "power_on"},
+        correlation_id=payload["correlation_id"],
     )
     sent = websocket.send_json.await_args.args[0]
     assert sent["type"] == "command_result"
     assert sent["payload"]["command_id"] == payload["command_id"]
+    assert sent["payload"]["correlation_id"] == payload["correlation_id"]
     assert sent["payload"]["status"] == "success"
+    session_check = sent["payload"]["diagnostics"][0]
+    assert session_check == {
+        "event_type": "connector.command_session_check",
+        "installation_id": "installation-1",
+        "requested_session_id": payload["session_id"],
+        "local_session_id": payload["session_id"],
+        "command_id": payload["command_id"],
+        "registry_id": "stable-light",
+        "operation": "power_on",
+        "session_match": True,
+        "timestamp": session_check["timestamp"],
+    }
+    formats = [call.args[0] for call in info_log.call_args_list]
+    assert "connector_command_session_check %s" in formats
+    assert "connector_command_result_session %s" in formats
+    serialized_logs = repr(info_log.call_args_list).casefold()
+    assert "authorization" not in serialized_logs
+    assert "token" not in serialized_logs
 
     websocket.reset_mock()
     executor.reset_mock()
     await connection._handle_command(websocket, "different-session", payload)
     executor.async_execute.assert_not_awaited()
     assert websocket.send_json.await_args.args[0]["payload"]["status"] == "stale_session"
+    stale_check = websocket.send_json.await_args.args[0]["payload"]["diagnostics"][0]
+    assert stale_check["requested_session_id"] == payload["session_id"]
+    assert stale_check["local_session_id"] == "different-session"
+    assert stale_check["session_match"] is False
+    assert (
+        websocket.send_json.await_args.args[0]["payload"]["correlation_id"]
+        == payload["correlation_id"]
+    )

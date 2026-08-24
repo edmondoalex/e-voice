@@ -180,6 +180,56 @@ async def test_missing_disabled_and_unavailable_entities_never_execute(
     assert disabled.status == "target_not_found"
 
 
+@pytest.mark.parametrize(
+    ("operation", "service"),
+    [("open", "open_cover"), ("close", "close_cover"), ("stop", "stop_cover")],
+)
+async def test_unknown_assumed_state_cover_remains_commandable(
+    hass: HomeAssistant, operation: str, service: str
+) -> None:
+    entry, executor = exposed_entity(hass, "cover")
+    hass.states.async_set(
+        entry.entity_id,
+        "unknown",
+        {"assumed_state": True, "is_closed": None, "supported_features": 11},
+    )
+    call = AsyncMock()
+
+    correlation_id = "11111111-1111-1111-1111-111111111111"
+    with (
+        patch("homeassistant.core.ServiceRegistry.async_call", new=call),
+        patch("custom_components.ekonex_voice.command_executor.asyncio.sleep", new=AsyncMock()),
+    ):
+        result = await executor.async_execute(
+            f"unknown-cover-{operation}",
+            entry.id,
+            {"operation": operation},
+            correlation_id=correlation_id,
+        )
+
+    assert result.status == "success"
+    call.assert_awaited_once_with("cover", service, {"entity_id": entry.entity_id}, blocking=True)
+    assert result.correlation_id == correlation_id
+    diagnostics = {item["event_type"]: item for item in result.diagnostics}
+    assert diagnostics["connector.command_received"]["operation"] == operation
+    assert diagnostics["connector.entity_resolved"]["ha_entity_id"] == entry.entity_id
+    assert diagnostics["homeassistant.service_call"] == {
+        "event_type": "homeassistant.service_call",
+        "command_id": f"unknown-cover-{operation}",
+        "correlation_id": correlation_id,
+        "domain": "cover",
+        "service": service,
+        "target": {"entity_id": entry.entity_id},
+        "service_data": {},
+    }
+    assert diagnostics["homeassistant.service_result"]["success"] is True
+    state_events = [
+        item for item in result.diagnostics if item["event_type"] == "entity.state_verification"
+    ]
+    assert [item["delay_ms"] for item in state_events] == [300, 1000]
+    assert all(item["state_before"] == "unknown" for item in state_events)
+
+
 async def test_duplicate_id_rename_timeout_and_failure_mapping(hass: HomeAssistant) -> None:
     entry, executor = exposed_entity(hass, "switch")
     registry = er.async_get(hass)
@@ -208,9 +258,19 @@ async def test_duplicate_id_rename_timeout_and_failure_mapping(hass: HomeAssista
         "homeassistant.core.ServiceRegistry.async_call",
         new=AsyncMock(side_effect=RuntimeError("secret")),
     ):
-        assert (
-            await executor.async_execute("failure", entry.id, {"operation": "power_off"})
-        ).status == "execution_failed"
+        failure = await executor.async_execute(
+            "failure",
+            entry.id,
+            {"operation": "power_off"},
+            correlation_id="33333333-3333-3333-3333-333333333333",
+        )
+    assert failure.status == "execution_failed"
+    service_result = next(
+        item for item in failure.diagnostics if item["event_type"] == "homeassistant.service_result"
+    )
+    assert service_result["success"] is False
+    assert service_result["exception_type"] == "RuntimeError"
+    assert service_result["exception_message"] == "secret"
 
 
 async def test_command_state_change_converges_through_m5_state_sync(

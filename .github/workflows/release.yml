@@ -1,0 +1,46 @@
+name: Publish HACS release asset
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  hacs-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          expected="${RELEASE_TAG#v}"
+          actual="$(python -c 'import json; print(json.load(open("custom_components/ekonex_voice/manifest.json", encoding="utf-8"))["version"])')"
+          test "$actual" = "$expected"
+      - name: Build and inspect HACS archive
+        run: |
+          python scripts/build_hacs_release.py ekonex_voice.zip
+          python - <<'PY'
+          import json
+          from zipfile import ZipFile
+
+          with ZipFile("ekonex_voice.zip") as archive:
+              names = set(archive.namelist())
+              assert "manifest.json" in names
+              assert "evcp.py" in names
+              assert not any(name.startswith("custom_components/") for name in names)
+              manifest = json.loads(archive.read("manifest.json"))
+              assert manifest["version"]
+          PY
+      - name: Attach archive to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" ekonex_voice.zip --clobber

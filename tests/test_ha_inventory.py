@@ -1,8 +1,10 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
-from unittest.mock import AsyncMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from aiohttp import ClientConnectionResetError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -99,6 +101,114 @@ async def test_reconnect_sends_full_resync_from_cloud_revision(hass: HomeAssista
     await sync.async_stop()
 
 
+async def test_concurrent_full_and_state_update_send_monotonic_revisions(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    first_send_entered, release_first_send = asyncio.Event(), asyncio.Event()
+
+    async def ordered_send(message: dict[str, object]) -> None:
+        if not first_send_entered.is_set():
+            first_send_entered.set()
+            await release_first_send.wait()
+
+    websocket.send_json.side_effect = ordered_send
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+    item = sync._serialize(entry)
+    assert item is not None
+    full = asyncio.create_task(sync._send_full())
+    await first_send_entered.wait()
+    state = asyncio.create_task(sync._send("state_update", [item]))
+    await asyncio.sleep(0)
+
+    assert websocket.send_json.await_count == 1
+    release_first_send.set()
+    await full
+    await state
+    revisions = [
+        call.args[0]["payload"]["revision"] for call in websocket.send_json.await_args_list
+    ]
+    assert revisions == [1, 2]
+
+
+async def test_closed_socket_is_never_used_for_inventory_send(hass: HomeAssistant) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = True
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+
+    await sync._send_full()
+
+    websocket.send_json.assert_not_awaited()
+
+
+async def test_socket_closing_during_inventory_and_state_sends_is_contained(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = False
+
+    async def close_during_send(message: dict[str, object]) -> None:
+        websocket.closed = True
+        raise ClientConnectionResetError("Cannot write to closing transport")
+
+    websocket.send_json.side_effect = close_during_send
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    sync._websocket, sync._session_id = websocket, str(uuid4())
+
+    await sync._send_full()
+    websocket.closed = False
+    item = sync._serialize(entry)
+    assert item is not None
+    await sync._send("state_update", [item])
+
+    assert sync.send_failure_count == 2
+    assert sync.last_error_code == "transport_closing"
+
+
+async def test_reconnect_cancels_delayed_full_before_using_new_socket(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    first, second = AsyncMock(), AsyncMock()
+    first.closed = second.closed = False
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    await sync.async_start(first, str(uuid4()), cloud_revision=0)
+    first.send_json.reset_mock()
+    sync._registry_changed(MagicMock())
+
+    await sync.async_start(second, str(uuid4()), cloud_revision=1)
+    await asyncio.sleep(0.3)
+
+    first.send_json.assert_not_awaited()
+    assert second.send_json.await_count == 1
+    assert second.send_json.await_args.args[0]["type"] == "inventory_full"
+    await sync.async_stop()
+
+
+async def test_stop_cancels_pending_state_flush_without_task_exception(
+    hass: HomeAssistant,
+) -> None:
+    entry = registered_light(hass)
+    websocket = AsyncMock()
+    websocket.closed = False
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
+    websocket.send_json.reset_mock()
+    sync._state_changed(MagicMock(data={"entity_id": entry.entity_id}))
+
+    await sync.async_stop()
+    await asyncio.sleep(0.3)
+
+    websocket.send_json.assert_not_awaited()
+    assert sync._flush_task is None
+    assert sync._resync_task is None
+
+
 async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant) -> None:
     entry = registered_light(hass)
     websocket = AsyncMock()
@@ -113,6 +223,24 @@ async def test_state_update_preserves_unavailable_semantics(hass: HomeAssistant)
     assert message["type"] == "state_update"
     assert message["payload"]["entities"][0]["available"] is False
     assert message["payload"]["entities"][0]["state"] is None
+
+
+async def test_unknown_assumed_state_cover_remains_available(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create("cover", "test", "stateless-cover")
+    hass.states.async_set(
+        entry.entity_id,
+        "unknown",
+        {"assumed_state": True, "is_closed": None, "supported_features": 11},
+    )
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    item = sync._serialize(entry)
+
+    assert item is not None
+    assert item["state"] is None
+    assert item["available"] is True
+    assert item["supported_features"] == 11
 
 
 async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(

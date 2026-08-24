@@ -24,6 +24,11 @@ type Sleep = Callable[[float], Coroutine[Any, Any, None]]
 type RandomValue = Callable[[], float]
 type Connect = Callable[[], Coroutine[Any, Any, ClientWebSocketResponse]]
 _LOGGER = logging.getLogger(__name__)
+CONNECTOR_CAPABILITIES = {
+    "supports_correlation_id": True,
+    "supports_command_diagnostics": True,
+    "supports_heartbeat_diagnostics": True,
+}
 
 
 class EkonexVoiceConnection:
@@ -102,8 +107,13 @@ class EkonexVoiceConnection:
                 if self._on_auth_failure is not None:
                     self._on_auth_failure()
                 return
-            except EkonexVoiceProtocolError:
-                self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, "protocol_error"
+            except EkonexVoiceProtocolError as error:
+                error_code = (
+                    "CONNECTOR_VERSION_INCOMPATIBLE"
+                    if str(error) == "connector_version_incompatible"
+                    else "protocol_error"
+                )
+                self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, error_code
                 return
             except EkonexVoiceCannotConnect:
                 self.state, self.last_error_code = ConnectionState.BACKING_OFF, "cannot_connect"
@@ -138,6 +148,7 @@ class EkonexVoiceConnection:
                 "connector_version": self._connector_version,
                 "ha_version": self._ha_version,
                 "protocol_versions": [1],
+                "capabilities": CONNECTOR_CAPABILITIES,
             },
         )
         await websocket.send_json(hello)
@@ -162,11 +173,19 @@ class EkonexVoiceConnection:
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         self.state, self.retry_count, self.next_retry_delay = ConnectionState.ONLINE, 0, None
         self.last_error_code, self.last_connected_at = None, datetime.now(UTC)
+        _LOGGER.info(
+            "evcp_session_acknowledged %s",
+            {
+                "installation_id": self._installation_id,
+                "session_id": session_id,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+        )
         if self._inventory is not None:
             await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
             sleeper = asyncio.create_task(self._sleep(float(interval)))
-            receiver = asyncio.create_task(self._receive_message(websocket))
+            receiver = asyncio.create_task(self._receive_message(websocket, session_id=session_id))
             try:
                 done, pending = await asyncio.wait(
                     {sleeper, receiver}, return_when=asyncio.FIRST_COMPLETED
@@ -186,12 +205,30 @@ class EkonexVoiceConnection:
                 await self._handle_command(websocket, session_id, inbound)
                 continue
             heartbeat = envelope("heartbeat", {"session_id": session_id})
+            _LOGGER.info(
+                "heartbeat_sent %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "message_id": heartbeat["id"],
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
             await websocket.send_json(heartbeat)
             ack = await self._receive_ack(
                 websocket, "heartbeat_ack", str(heartbeat["id"]), session_id=session_id
             )
             if set(ack) != {"session_id"} or ack.get("session_id") != session_id:
                 raise EkonexVoiceProtocolError("invalid_heartbeat_ack")
+            _LOGGER.info(
+                "heartbeat_ack %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "message_id": heartbeat["id"],
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
 
     async def _receive_ack(
         self,
@@ -202,7 +239,9 @@ class EkonexVoiceConnection:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         while True:
-            received_type, received_id, payload = await self._receive_message(websocket)
+            received_type, received_id, payload = await self._receive_message(
+                websocket, session_id=session_id
+            )
             if received_type == "command" and session_id is not None:
                 await self._handle_command(websocket, session_id, payload)
                 continue
@@ -211,16 +250,30 @@ class EkonexVoiceConnection:
             return payload
 
     async def _receive_message(
-        self, websocket: ClientWebSocketResponse
+        self,
+        websocket: ClientWebSocketResponse,
+        *,
+        session_id: str | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         try:
             async with asyncio.timeout(HEARTBEAT_TIMEOUT):
                 message = await websocket.receive()
         except TimeoutError as error:
+            _LOGGER.warning(
+                "session_timeout %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "timeout_seconds": HEARTBEAT_TIMEOUT,
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
             raise EkonexVoiceCannotConnect("cloud_timeout") from error
         if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
             if websocket.close_code in {4001, 4004}:
                 raise EkonexVoiceAuthError("invalid_auth")
+            if websocket.close_code == 4010:
+                raise EkonexVoiceProtocolError("connector_version_incompatible")
             if websocket.close_code in {4002, 4003}:
                 raise EkonexVoiceProtocolError("protocol_rejected")
             raise EkonexVoiceCannotConnect("cloud_closed")
@@ -237,13 +290,53 @@ class EkonexVoiceConnection:
         self, websocket: ClientWebSocketResponse, session_id: str, payload: dict[str, Any]
     ) -> None:
         try:
-            requested_session, command_id, registry_id, command = parse_command(payload)
+            requested_session, command_id, registry_id, correlation_id, command = parse_command(
+                payload
+            )
         except (ValueError, TypeError):
             raise EkonexVoiceProtocolError("invalid_command") from None
+        session_match = requested_session == session_id
+        session_check: dict[str, object] = {
+            "event_type": "connector.command_session_check",
+            "installation_id": self._installation_id,
+            "requested_session_id": requested_session,
+            "local_session_id": session_id,
+            "command_id": command_id,
+            "registry_id": registry_id,
+            "operation": command.get("operation"),
+            "session_match": session_match,
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        _LOGGER.info("connector_command_session_check %s", session_check)
         if requested_session != session_id:
-            result = CommandResult(command_id, "stale_session", "STALE_SESSION")
+            result = CommandResult(command_id, "stale_session", "STALE_SESSION", correlation_id)
         elif self._command_executor is None:
-            result = CommandResult(command_id, "unsupported_command", "OPERATION_NOT_SUPPORTED")
+            result = CommandResult(
+                command_id,
+                "unsupported_command",
+                "OPERATION_NOT_SUPPORTED",
+                correlation_id,
+            )
         else:
-            result = await self._command_executor.async_execute(command_id, registry_id, command)
+            result = await self._command_executor.async_execute(
+                command_id, registry_id, command, correlation_id=correlation_id
+            )
+        result = CommandResult(
+            result.command_id,
+            result.status,
+            result.error_code,
+            result.correlation_id,
+            (session_check, *result.diagnostics[:14]),
+        )
+        _LOGGER.info(
+            "connector_command_result_session %s",
+            {
+                "local_session_id": session_id,
+                "result_session_id": session_id,
+                "command_id": result.command_id,
+                "status": result.status,
+                "error_code": result.error_code,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+        )
         await websocket.send_json(envelope("command_result", result.payload(session_id)))

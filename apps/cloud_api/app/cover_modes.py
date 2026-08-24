@@ -11,6 +11,7 @@ AlexaCoverMode = Literal["discrete", "percentage", "hybrid"]
 COVER_OPEN = 1
 COVER_CLOSE = 2
 COVER_SET_POSITION = 4
+COVER_STOP = 8
 COVER_MODES: tuple[AlexaCoverMode, ...] = ("discrete", "percentage", "hybrid")
 
 

@@ -109,6 +109,40 @@ async def test_installations_page_is_real_tenant_scoped_and_links_to_detail(
     await client.aclose()
 
 
+async def test_connector_compatibility_is_visible_across_console(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)
+    assert installation is not None
+    installation.connector_version = "0.1.7"
+    installation.ha_version = "2026.8.0"
+    installation.connector_protocol_version = 1
+    installation.connector_capabilities_json = {}
+    installation.connector_compatibility_status = "INCOMPATIBLE"
+    installation.connector_compatibility_reason = "required_connector_capabilities_missing"
+    installation.last_seen_at = datetime.now(UTC)
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    dashboard = await client.get("/dashboard")
+    assert "Connector incompatibile" in dashboard.text
+    assert "INCOMPATIBLE" in dashboard.text
+
+    detail = await client.get(f"/installations/{installation.id}")
+    assert "Connector Home Assistant:</b> 0.1.7" in detail.text
+    assert "Versione richiesta:</b> &gt;= 0.1.8-beta.5" in detail.text
+    assert "Versione raccomandata:</b> 0.1.8-beta.6" in detail.text
+    assert "I comandi possono non funzionare" in detail.text
+
+    system = await client.get("/system")
+    assert "Compatibilità Cloud ↔ Connector" in system.text
+    assert "Minimum supported" in system.text
+    assert "0.1.8-beta.5" in system.text
+    assert "0.1.8-beta.6" in system.text
+    await client.aclose()
+
+
 async def test_command_is_csrf_and_tenant_scoped_and_audited(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:
@@ -120,7 +154,7 @@ async def test_command_is_csrf_and_tenant_scoped_and_audited(
     client = await _client(session)
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
-    assert "Home Assistant" not in page.text
+    assert "Home B" not in page.text
     csrf = _csrf(page)
     payload = {"csrf_token": csrf, "entity_id": str(entity.id), "operation": "power_on"}
     assert (
@@ -554,8 +588,8 @@ async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
     page = await client.get(edit_url)
     assert page.status_code == 200
     assert "Modalità Alexa tapparella/tenda" in page.text
-    assert "Discreto — apri e chiudi" in page.text
-    assert "Alexa non definisce un comando Stop per tapparelle" in page.text
+    assert "Discreto — apri / stop / chiudi" in page.text
+    assert "Discreto usa i comandi stateless apri, ferma e chiudi, senza percentuali" in page.text
     assert "Percentuale — posizione 0–100%" in page.text
     assert "Ibrido — comandi discreti e percentuali" in page.text
 
@@ -583,6 +617,9 @@ async def test_cover_alexa_mode_edit_is_feature_validated_and_tenant_scoped(
     entity.supported_features = 3
     await session.commit()
     invalid_page = await client.get(edit_url)
+    assert "Discreto — apri e chiudi" in invalid_page.text
+    assert "Discreto — apri / stop / chiudi" not in invalid_page.text
+    assert "Discreto usa i comandi stateless apri e chiudi, senza percentuali" in invalid_page.text
     invalid = await client.post(
         edit_url,
         data={
@@ -941,6 +978,46 @@ async def test_activity_and_system_views_remain_tenant_scoped(
     assert "Prossima pulizia prevista" in system.text
     assert "Storico stati: 30 giorni" in system.text
     assert "Audit amministrativo: 365 giorni" in system.text
+    await client.aclose()
+
+
+async def test_activity_filters_and_expands_correlated_alexa_json(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    correlation_id = "11111111-1111-1111-1111-111111111111"
+    session.add(
+        AuditEvent(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            source="alexa",
+            event_type="alexa.mapping_result",
+            request_id="amazon-message",
+            payload_redacted_json={
+                "correlation_id": correlation_id,
+                "command_id": "22222222-2222-2222-2222-222222222222",
+                "endpoint_id": "ev1_test",
+                "ha_entity_id": "cover.office",
+                "operation": "open",
+            },
+            result="success",
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    activity = await client.get(
+        "/activity", params={"source": "alexa", "correlation_id": correlation_id}
+    )
+
+    assert activity.status_code == 200
+    assert "alexa.mapping_result" in activity.text
+    assert "<details>" in activity.text
+    assert "Correlation ID" in activity.text
+    assert correlation_id in activity.text
+    assert "cover.office" in activity.text
+    assert "ev1_test" in activity.text
+    assert "open" in activity.text
     await client.aclose()
 
 

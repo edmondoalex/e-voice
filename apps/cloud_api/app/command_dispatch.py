@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Protocol
 from uuid import UUID, uuid4
 
@@ -112,6 +113,7 @@ class CommandRouter(Protocol):
         registry_id: str,
         command: dict[str, object],
         timeout_seconds: float,
+        correlation_id: UUID | None = None,
     ) -> CommandResultPayload: ...
 
 
@@ -135,6 +137,7 @@ class CommandDispatchService:
         command: CommandSpec,
         *,
         command_id: UUID | None = None,
+        correlation_id: UUID | None = None,
     ) -> DispatchOutcome:
         request_id = command_id or uuid4()
         installation = await self._session.get(Installation, installation_id)
@@ -162,13 +165,134 @@ class CommandDispatchService:
                 command.operation,
                 DispatchOutcome(request_id, "unavailable", "ENTITY_UNAVAILABLE"),
             )
-        result = await self._router.dispatch(
+        diagnostic = {
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "correlation_id": str(correlation_id) if correlation_id else None,
+            "command_id": str(request_id),
+            "installation_id": str(installation.id),
+            "entity_id": str(entity.id),
+            "ha_entity_id": entity.ha_entity_id,
+            "registry_id": registry_id,
+            "operation": command.operation,
+            "payload": command.model_dump(mode="json"),
+        }
+        self._session.add(
+            AuditEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation.id,
+                source="alexa" if correlation_id else "evcp",
+                event_type="dispatcher.command_created",
+                request_id=str(request_id),
+                payload_redacted_json=diagnostic,
+                result="queued",
+            )
+        )
+        await self._session.commit()
+        dispatch_arguments = (
             installation_id,
             request_id,
             registry_id,
             command.model_dump(mode="json"),
             COMMAND_TIMEOUT_SECONDS,
         )
+        result = (
+            await self._router.dispatch(*dispatch_arguments, correlation_id)
+            if correlation_id is not None
+            else await self._router.dispatch(*dispatch_arguments)
+        )
+        session_reason = next(
+            (
+                item.get("reason")
+                for item in result.diagnostics
+                if item.get("event_type")
+                in {"evcp.session_decision", "evcp.dispatch_session_selected"}
+            ),
+            None,
+        )
+        not_sent_reasons = {
+            "no_registered_session",
+            "session_transitioning",
+            "heartbeat_expired",
+            "websocket_client_not_connected",
+            "websocket_application_not_connected",
+            "websocket_send_failed",
+        }
+        command_sent = (
+            result.error_code != "INSTALLATION_OFFLINE" and session_reason not in not_sent_reasons
+        )
+        self._session.add(
+            AuditEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation.id,
+                source="alexa" if correlation_id else "evcp",
+                event_type="evcp.command_sent",
+                request_id=str(request_id),
+                payload_redacted_json=diagnostic
+                | {
+                    "session_id": str(result.session_id),
+                    "send_result": "sent" if command_sent else "not_sent",
+                    "evcp_payload": {
+                        "command_id": str(request_id),
+                        "correlation_id": str(correlation_id) if correlation_id else None,
+                        "registry_id": registry_id,
+                        "command": command.model_dump(mode="json"),
+                    },
+                },
+                result="sent" if command_sent else "not_sent",
+            )
+        )
+        for item in result.diagnostics:
+            event_type = str(item.get("event_type", "connector.diagnostic"))
+            component_source = (
+                "homeassistant" if event_type.startswith("homeassistant.") else "connector"
+            )
+            self._session.add(
+                AuditEvent(
+                    tenant_id=installation.tenant_id,
+                    installation_id=installation.id,
+                    source="alexa" if correlation_id else component_source,
+                    event_type=event_type,
+                    request_id=str(request_id),
+                    payload_redacted_json=diagnostic
+                    | {"component_source": component_source}
+                    | item,
+                    result=(
+                        "success"
+                        if item.get("success") is True
+                        else "failure"
+                        if item.get("success") is False
+                        else "observed"
+                    ),
+                )
+            )
+        self._session.add(
+            AuditEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation.id,
+                source="alexa" if correlation_id else "evcp",
+                event_type="command.final_summary",
+                request_id=str(request_id),
+                payload_redacted_json=diagnostic
+                | {
+                    "final_status": result.status,
+                    "error_code": result.error_code,
+                    "connector_received": any(
+                        item.get("event_type") == "connector.command_received"
+                        for item in result.diagnostics
+                    ),
+                    "service_result": next(
+                        (
+                            item.get("success")
+                            for item in result.diagnostics
+                            if item.get("event_type") == "homeassistant.service_result"
+                        ),
+                        None,
+                    ),
+                },
+                result=result.status,
+            )
+        )
+        await self._session.commit()
         return await self._record(
             installation,
             registry_id,

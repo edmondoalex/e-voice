@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from aiohttp import ClientWebSocketResponse
+from aiohttp import ClientConnectionError, ClientWebSocketResponse
 from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
     EVENT_STATE_CHANGED,
@@ -64,6 +64,7 @@ class EntityInventorySynchronizer:
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self._send_lock = asyncio.Lock()
         self.last_full_revision: int | None = None
         self.last_full_entity_count: int | None = None
         self.last_state_entity_count: int | None = None
@@ -123,19 +124,28 @@ class EntityInventorySynchronizer:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        for task in (self._flush_task, self._resync_task):
-            if task is not None and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        tasks = tuple(task for task in (self._flush_task, self._resync_task) if task is not None)
         self._flush_task = self._resync_task = None
-        self._pending.clear()
         self._websocket = None
+        self._session_id = None
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    _LOGGER.debug("Inventory background task stopped after send failure")
+        async with self._send_lock:
+            pass
+        self._pending.clear()
 
     @callback
     def _state_changed(self, event: Event[Any]) -> None:
+        if self._websocket is None or self._session_id is None:
+            return
         entity_id = event.data.get("entity_id")
         if isinstance(entity_id, str):
             self._pending.add(entity_id)
@@ -146,6 +156,8 @@ class EntityInventorySynchronizer:
 
     @callback
     def _registry_changed(self, event: Event[Any]) -> None:
+        if self._websocket is None or self._session_id is None:
+            return
         if self._resync_task is None or self._resync_task.done():
             self._resync_task = self._hass.async_create_background_task(
                 self._delayed_full(), "ekonex_voice_inventory_resync", eager_start=True
@@ -177,7 +189,12 @@ class EntityInventorySynchronizer:
         await self._send("inventory_full", items)
 
     async def _send(self, message_type: str, items: list[dict[str, object]]) -> None:
-        if self._websocket is None or self._session_id is None:
+        async with self._send_lock:
+            await self._send_locked(message_type, items)
+
+    async def _send_locked(self, message_type: str, items: list[dict[str, object]]) -> None:
+        websocket, session_id = self._websocket, self._session_id
+        if websocket is None or session_id is None or getattr(websocket, "closed", False) is True:
             return
         self._revision += 1
         chunks = _chunks(items)
@@ -186,7 +203,7 @@ class EntityInventorySynchronizer:
                 message = envelope(
                     message_type,
                     {
-                        "session_id": self._session_id,
+                        "session_id": session_id,
                         "revision": self._revision,
                         "batch_index": index,
                         "batch_count": len(chunks),
@@ -195,7 +212,18 @@ class EntityInventorySynchronizer:
                 )
                 if len(json.dumps(message, separators=(",", ":")).encode()) > MAX_MESSAGE_BYTES:
                     raise ValueError("inventory_message_too_large")
-                await self._websocket.send_json(message)
+                if self._websocket is not websocket or getattr(websocket, "closed", False) is True:
+                    return
+                await websocket.send_json(message)
+        except ClientConnectionError:
+            self.send_failure_count += 1
+            self.last_error_code = "transport_closing"
+            _LOGGER.info(
+                "Entity synchronization skipped on closing transport: type=%s revision=%d",
+                message_type,
+                self._revision,
+            )
+            return
         except Exception:
             self.send_failure_count += 1
             self.last_error_code = "send_failed"
