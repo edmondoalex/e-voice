@@ -1,3 +1,6 @@
 {
-  "name": "Ekonex Voice"
+  "name": "Ekonex Voice",
+  "filename": "ekonex_voice.zip",
+  "hide_default_branch": true,
+  "zip_release": true
 }

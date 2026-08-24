@@ -295,164 +295,6 @@ def test_cover_display_category_matches_home_assistant(
     assert discovery_endpoint(entity)["displayCategories"] == [category]
 
 
-def test_office_test_cover_temporarily_uses_interior_blind_category() -> None:
-    target = Entity(
-        id=uuid4(),
-        installation_id=uuid4(),
-        ha_entity_id="cover.buspro_cover_porta_ufficio",
-        ha_domain="cover",
-        supported_features=11,
-        alexa_cover_mode="discrete",
-    )
-    other = Entity(
-        id=uuid4(),
-        installation_id=uuid4(),
-        ha_entity_id="cover.other_without_device_class",
-        ha_domain="cover",
-        supported_features=11,
-        alexa_cover_mode="discrete",
-    )
-
-    assert discovery_endpoint(target)["displayCategories"] == ["INTERIOR_BLIND"]
-    assert discovery_endpoint(other)["displayCategories"] == ["OTHER"]
-
-
-def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
-    target = Entity(
-        id=uuid4(),
-        installation_id=uuid4(),
-        ha_entity_id="cover.buspro_cover_porta_ufficio",
-        ha_domain="cover",
-        supported_features=11,
-        alexa_cover_mode="discrete",
-        state="unknown",
-        voice_name="tapparella ufficio test",
-    )
-    other = Entity(
-        id=uuid4(),
-        installation_id=uuid4(),
-        ha_entity_id="cover.other_discrete",
-        ha_domain="cover",
-        supported_features=11,
-        alexa_cover_mode="discrete",
-        state="unknown",
-    )
-
-    endpoint = discovery_endpoint(target)
-    interfaces = [item["interface"] for item in endpoint["capabilities"]]
-    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
-    assert interfaces == [
-        "Alexa",
-        "Alexa.EndpointHealth",
-        "Alexa.ModeController",
-        "Alexa.PlaybackController",
-    ]
-    mode = next(
-        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.ModeController"
-    )
-    assert endpoint["endpointId"] == "ev1_diag_clean_native_office_cover_v1"
-    assert endpoint["friendlyName"] == "tapparella ufficio test"
-    assert mode["instance"] == "Position"
-    assert mode["capabilityResources"] == {
-        "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
-    }
-    assert mode["configuration"] == {
-        "ordered": False,
-        "supportedModes": [
-            {
-                "value": "Position.Up",
-                "modeResources": {
-                    "friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                    ]
-                },
-            },
-            {
-                "value": "Position.Down",
-                "modeResources": {
-                    "friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                    ]
-                },
-            },
-        ],
-    }
-    assert mode["semantics"]["actionMappings"] == [
-        {
-            "@type": "ActionsToDirective",
-            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
-            "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
-        },
-        {
-            "@type": "ActionsToDirective",
-            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
-            "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
-        },
-    ]
-    assert mode["semantics"]["stateMappings"] == [
-        {
-            "@type": "StatesToValue",
-            "states": ["Alexa.States.Closed"],
-            "value": "Position.Down",
-        },
-        {
-            "@type": "StatesToValue",
-            "states": ["Alexa.States.Open"],
-            "value": "Position.Up",
-        },
-    ]
-    assert '"@type": "text"' not in json.dumps(mode)
-    playback = next(
-        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.PlaybackController"
-    )
-    assert playback == {
-        "type": "AlexaInterface",
-        "interface": "Alexa.PlaybackController",
-        "version": "3",
-        "instance": "cover.stop",
-        "supportedOperations": ["Stop"],
-    }
-    assert endpoint == {
-        "endpointId": "ev1_diag_clean_native_office_cover_v1",
-        "manufacturerName": "Ekonex",
-        "friendlyName": "tapparella ufficio test",
-        "description": "Home Assistant entity via Ekonex Voice",
-        "displayCategories": ["INTERIOR_BLIND"],
-        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
-        "cookie": {},
-        "capabilities": [
-            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
-            {
-                "type": "AlexaInterface",
-                "interface": "Alexa.EndpointHealth",
-                "version": "3",
-                "properties": {
-                    "supported": [{"name": "connectivity"}],
-                    "proactivelyReported": True,
-                    "retrievable": True,
-                },
-            },
-            mode,
-            playback,
-        ],
-    }
-    assert not any(
-        item["namespace"] == "Alexa.PowerController" for item in state_properties(target)
-    )
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, target) == {
-        "operation": "open"
-    }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, target) == {
-        "operation": "close"
-    }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, target) is None
-    assert _command("Alexa.PlaybackController", "Stop", {}, target) == {"operation": "stop"}
-    assert any(
-        item["interface"] == "Alexa.PowerController"
-        for item in discovery_endpoint(other)["capabilities"]
-    )
-
-
 async def test_report_state_response_omits_null_brightness(
     session: AsyncSession, seeded_domain: object
 ) -> None:
@@ -690,7 +532,7 @@ async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
     assert entity is not None
-    entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
+    entity.ha_entity_id = "cover.office_diagnostic"
     entity.ha_registry_id = "office-cover-registry"
     entity.ha_domain = "cover"
     entity.supported_features = 11
@@ -745,10 +587,10 @@ async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
         token,
         "Alexa.ModeController",
         "SetMode",
-        "ev1_diag_clean_native_office_cover_v1",
+        endpoint_id(entity),
     )
-    body["directive"]["header"]["instance"] = "Position"  # type: ignore[index]
-    body["directive"]["payload"] = {"mode": "Position.Up"}  # type: ignore[index]
+    body["directive"]["header"]["instance"] = "cover.position"  # type: ignore[index]
+    body["directive"]["payload"] = {"mode": "position.open"}  # type: ignore[index]
     body["directive"]["payload"]["client_secret"] = "never-store-client-secret"  # type: ignore[index]
     client = await _client(session)
 

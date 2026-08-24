@@ -259,14 +259,6 @@ def _capability(interface: str, properties: list[str] | None = None) -> dict[str
     return value
 
 
-_OFFICE_TEST_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
-_OFFICE_TEST_ENDPOINT_ID = "ev1_diag_clean_native_office_cover_v1"
-
-
-def _is_office_test_cover(entity: Entity) -> bool:
-    return entity.ha_entity_id == _OFFICE_TEST_ENTITY_ID
-
-
 def capabilities(entity: Entity) -> list[dict[str, Any]]:
     attributes = entity.attributes_json or {}
     result = [_capability("Alexa"), _capability("Alexa.EndpointHealth", ["connectivity"])]
@@ -282,7 +274,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
-        if mode == "discrete" and not _is_office_test_cover(entity):
+        if mode == "discrete":
             result.append(_capability("Alexa.PowerController", ["powerState"]))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
@@ -341,10 +333,9 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 }
             result.append(range_capability)
         if mode in {"discrete", "hybrid"}:
-            office_test = _is_office_test_cover(entity)
             supported_modes = [
                 {
-                    "value": "Position.Up" if office_test else "position.open",
+                    "value": "position.open",
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
@@ -352,7 +343,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
                 {
-                    "value": "Position.Down" if office_test else "position.closed",
+                    "value": "position.closed",
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
@@ -360,7 +351,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 },
             ]
-            if entity.supported_features & COVER_STOP and not office_test:
+            if entity.supported_features & COVER_STOP:
                 supported_modes.append(
                     {
                         "value": "position.custom",
@@ -381,22 +372,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
-                    "instance": "Position" if office_test else "cover.position",
+                    "instance": "cover.position",
                     "capabilityResources": {
-                        "friendlyNames": (
-                            [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
-                            if office_test
-                            else [
-                                {
-                                    "@type": "text",
-                                    "value": {"text": "Position", "locale": "en-US"},
-                                },
-                                {
-                                    "@type": "asset",
-                                    "value": {"assetId": "Alexa.Setting.Opening"},
-                                },
-                            ]
-                        )
+                        "friendlyNames": [
+                            {
+                                "@type": "text",
+                                "value": {"text": "Position", "locale": "en-US"},
+                            },
+                            {
+                                "@type": "asset",
+                                "value": {"assetId": "Alexa.Setting.Opening"},
+                            },
+                        ]
                     },
                     "configuration": {
                         "ordered": False,
@@ -406,32 +393,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "actionMappings": [
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": (
-                                    ["Alexa.Actions.Close", "Alexa.Actions.Lower"]
-                                    if office_test
-                                    else ["Alexa.Actions.Lower", "Alexa.Actions.Close"]
-                                ),
+                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {
-                                        "mode": "Position.Down"
-                                        if office_test
-                                        else "position.closed"
-                                    },
+                                    "payload": {"mode": "position.closed"},
                                 },
                             },
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": (
-                                    ["Alexa.Actions.Open", "Alexa.Actions.Raise"]
-                                    if office_test
-                                    else ["Alexa.Actions.Raise", "Alexa.Actions.Open"]
-                                ),
+                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
                                 "directive": {
                                     "name": "SetMode",
-                                    "payload": {
-                                        "mode": "Position.Up" if office_test else "position.open"
-                                    },
+                                    "payload": {"mode": "position.open"},
                                 },
                             },
                         ],
@@ -439,12 +412,12 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Closed"],
-                                "value": "Position.Down" if office_test else "position.closed",
+                                "value": "position.closed",
                             },
                             {
                                 "@type": "StatesToValue",
                                 "states": ["Alexa.States.Open"],
-                                "value": "Position.Up" if office_test else "position.open",
+                                "value": "position.open",
                             },
                         ],
                     },
@@ -475,14 +448,10 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
 
 
 def endpoint_id(entity: Entity) -> str:
-    if _is_office_test_cover(entity):
-        return _OFFICE_TEST_ENDPOINT_ID
     return f"ev1_{entity.id.hex}"
 
 
 def _cover_display_category(entity: Entity) -> str:
-    if _is_office_test_cover(entity):
-        return "INTERIOR_BLIND"
     device_class = (entity.attributes_json or {}).get("device_class")
     if not isinstance(device_class, str):
         return "OTHER"
@@ -557,11 +526,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    elif (
-        entity.ha_domain == "cover"
-        and effective_cover_mode(entity) == "discrete"
-        and not _is_office_test_cover(entity)
-    ):
+    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
         props.append(
             _property(
                 "Alexa.PowerController",
@@ -618,11 +583,10 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
     if entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
-        office_test = _is_office_test_cover(entity)
         discrete_position = (
-            ("Position.Up" if office_test else "position.open")
+            "position.open"
             if entity.state == "open"
-            else ("Position.Down" if office_test else "position.closed")
+            else "position.closed"
             if entity.state == "closed"
             else None
         )
@@ -641,7 +605,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "Alexa.ModeController",
                     "mode",
                     discrete_position,
-                    instance="Position" if office_test else "cover.position",
+                    instance="cover.position",
                 )
             )
     if entity.ha_domain == "fan":
@@ -722,13 +686,6 @@ def _command(
         if entity is None or effective_cover_mode(entity) not in {"discrete", "hybrid"}:
             return None
         mode_value = payload.get("mode")
-        if _is_office_test_cover(entity):
-            operation = (
-                {"Position.Up": "open", "Position.Down": "close"}.get(mode_value)
-                if isinstance(mode_value, str)
-                else None
-            )
-            return {"operation": operation} if operation is not None else None
         operation = (
             {
                 "position.open": "open",
@@ -964,12 +921,10 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
-        entity_uuid: UUID | None = None
-        if endpoint_value != _OFFICE_TEST_ENDPOINT_ID:
-            try:
-                entity_uuid = UUID(hex=endpoint_value[4:])
-            except ValueError as exc:
-                raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
+        try:
+            entity_uuid = UUID(hex=endpoint_value[4:])
+        except ValueError as exc:
+            raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
             select(Entity)
             .join(Installation)
@@ -978,11 +933,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 Entity.deleted_at.is_(None),
             )
         )
-        entity_query = entity_query.where(
-            Entity.ha_entity_id == _OFFICE_TEST_ENTITY_ID
-            if endpoint_value == _OFFICE_TEST_ENDPOINT_ID
-            else Entity.id == entity_uuid
-        )
+        entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
         if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
             if diagnostic_correlation_id is not None:

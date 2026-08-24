@@ -132,12 +132,14 @@ async def test_connector_compatibility_is_visible_across_console(
     detail = await client.get(f"/installations/{installation.id}")
     assert "Connector Home Assistant:</b> 0.1.7" in detail.text
     assert "Versione richiesta:</b> &gt;= 0.1.8-beta.5" in detail.text
+    assert "Versione raccomandata:</b> 0.1.8-beta.6" in detail.text
     assert "I comandi possono non funzionare" in detail.text
 
     system = await client.get("/system")
     assert "Compatibilità Cloud ↔ Connector" in system.text
     assert "Minimum supported" in system.text
     assert "0.1.8-beta.5" in system.text
+    assert "0.1.8-beta.6" in system.text
     await client.aclose()
 
 
