@@ -279,7 +279,7 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
         "area_name": _bound(area.name if area else None),
         "device_id": entry.device_id,
         "device_name": _bound(device.name_by_user or device.name if device else None),
-        "device_class": _bound(entry.device_class or state.attributes.get("device_class")),
+        "device_class": _device_class(entry, state),
         "supported_features": int(state.attributes.get("supported_features", 0) or 0),
         "state": None if state.state in {STATE_UNKNOWN, STATE_UNAVAILABLE} else _bound(state.state),
         "available": state.state != STATE_UNAVAILABLE,
@@ -298,6 +298,35 @@ def _friendly_name(entry: er.RegistryEntry, state: State) -> object | None:
     if name_by_user:
         return name_by_user
     return entry.name or entry.original_name or state.name
+
+
+def _device_class(entry: er.RegistryEntry, state: State) -> str | None:
+    registry_device_class = _bound(entry.device_class)
+    registry_original_device_class = _bound(entry.original_device_class)
+    state_device_class = _bound(state.attributes.get("device_class"))
+    if registry_device_class is not None:
+        resolved_device_class = registry_device_class
+        device_class_source = "registry_override"
+    elif registry_original_device_class is not None:
+        resolved_device_class = registry_original_device_class
+        device_class_source = "registry_original"
+    elif state_device_class is not None:
+        resolved_device_class = state_device_class
+        device_class_source = "state_attribute"
+    else:
+        resolved_device_class = None
+        device_class_source = "not_provided"
+    _LOGGER.debug(
+        "entity_device_class_resolved %s",
+        {
+            "registry_device_class": registry_device_class,
+            "registry_original_device_class": registry_original_device_class,
+            "state_device_class": state_device_class,
+            "resolved_device_class": resolved_device_class,
+            "device_class_source": device_class_source,
+        },
+    )
+    return resolved_device_class
 
 
 def _attributes(domain: str, state: State) -> dict[str, object]:

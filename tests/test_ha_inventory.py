@@ -1,9 +1,11 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from aiohttp import ClientConnectionResetError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -241,6 +243,99 @@ async def test_unknown_assumed_state_cover_remains_available(hass: HomeAssistant
     assert item["state"] is None
     assert item["available"] is True
     assert item["supported_features"] == 11
+
+
+def _registered_cover_with_device_classes(
+    hass: HomeAssistant,
+    *,
+    original: str | None = None,
+    override: str | None = None,
+    state_value: str | None = None,
+) -> er.RegistryEntry:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "cover",
+        "test",
+        f"device-class-{uuid4()}",
+        original_device_class=original,
+    )
+    if override is not None:
+        updated = registry.async_update_entity(entry.entity_id, device_class=override)
+        assert updated is not None
+        entry = updated
+    attributes = {"device_class": state_value} if state_value is not None else {}
+    hass.states.async_set(entry.entity_id, "closed", attributes)
+    return entry
+
+
+async def test_inventory_device_class_prefers_user_registry_override(
+    hass: HomeAssistant,
+) -> None:
+    entry = _registered_cover_with_device_classes(
+        hass, original="shutter", override="blind", state_value="curtain"
+    )
+
+    item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
+
+    assert item is not None
+    assert item["device_class"] == "blind"
+
+
+async def test_inventory_device_class_falls_back_to_registry_original(
+    hass: HomeAssistant,
+) -> None:
+    entry = _registered_cover_with_device_classes(hass, original="shutter", state_value="curtain")
+
+    item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
+
+    assert item is not None
+    assert item["device_class"] == "shutter"
+
+
+async def test_inventory_device_class_falls_back_to_state_attribute(
+    hass: HomeAssistant,
+) -> None:
+    entry = _registered_cover_with_device_classes(hass, state_value="curtain")
+
+    item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
+
+    assert item is not None
+    assert item["device_class"] == "curtain"
+
+
+async def test_inventory_device_class_remains_null_when_home_assistant_has_none(
+    hass: HomeAssistant,
+) -> None:
+    entry = _registered_cover_with_device_classes(hass)
+
+    item = EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
+
+    assert item is not None
+    assert item["device_class"] is None
+
+
+async def test_inventory_device_class_diagnostic_is_allowlisted(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    entry = _registered_cover_with_device_classes(
+        hass, original="shutter", override="blind", state_value="curtain"
+    )
+    caplog.set_level(logging.DEBUG, logger="custom_components.ekonex_voice.entity_inventory")
+
+    EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
+
+    record = next(
+        record for record in caplog.records if record.message == "entity_device_class_resolved %s"
+    )
+    assert record.args == (
+        {
+            "registry_device_class": "blind",
+            "registry_original_device_class": "shutter",
+            "state_device_class": "curtain",
+            "resolved_device_class": "blind",
+            "device_class_source": "registry_override",
+        },
+    )
 
 
 async def test_ui_entity_selection_uses_stable_registry_id_and_allowlist(
