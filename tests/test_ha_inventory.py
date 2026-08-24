@@ -1,7 +1,6 @@
 """M5 Home Assistant inventory exposure and normalization tests."""
 
 import asyncio
-import logging
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -12,7 +11,11 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ekonex_voice.entity_inventory import EntityInventorySynchronizer, _chunks
+from custom_components.ekonex_voice.entity_inventory import (
+    _LOGGER,
+    EntityInventorySynchronizer,
+    _chunks,
+)
 
 
 def registered_light(hass: HomeAssistant) -> er.RegistryEntry:
@@ -315,19 +318,18 @@ async def test_inventory_device_class_remains_null_when_home_assistant_has_none(
 
 
 async def test_inventory_device_class_diagnostic_is_allowlisted(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entry = _registered_cover_with_device_classes(
         hass, original="shutter", override="blind", state_value="curtain"
     )
-    caplog.set_level(logging.DEBUG, logger="custom_components.ekonex_voice.entity_inventory")
+    diagnostic = MagicMock()
+    monkeypatch.setattr(_LOGGER, "debug", diagnostic)
 
     EntityInventorySynchronizer(hass, set(), {entry.id}, None)._serialize(entry)
 
-    record = next(
-        record for record in caplog.records if record.message == "entity_device_class_resolved %s"
-    )
-    assert record.args == (
+    diagnostic.assert_called_once_with(
+        "entity_device_class_resolved %s",
         {
             "registry_device_class": "blind",
             "registry_original_device_class": "shutter",
