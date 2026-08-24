@@ -14,6 +14,8 @@ system. Open `/dashboard` after logging in at `/login`.
   current inventory derived from active proactive deliveries, and shows redacted outcomes for the
   latest AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot be
   controlled.
+  Administrators can force a tenant-scoped proactive Alexa Discovery refresh for all current
+  endpoints. The CSRF-protected action reports its outcome in the page and records an audit event.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
   for an entity belonging to the selected tenant and installation. For `cover` entities it also
   selects the feature-validated Alexa exposure mode (discrete, percentage, hybrid or automatic).

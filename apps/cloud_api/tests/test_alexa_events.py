@@ -167,10 +167,16 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert await gateway.reconcile_discovery(installation) == 0
     assert len(requests) == 1
 
+    assert await gateway.reconcile_discovery(installation, force=True) == 1
+    forced = json.loads(requests[-1].content)
+    assert forced["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert forced["event"]["payload"]["endpoints"][0]["endpointId"] == endpoint_value
+    assert len(requests) == 2
+
     entity.state = "on"
     await session.commit()
     assert await gateway.reconcile_discovery(installation) == 0
-    assert len(requests) == 1
+    assert len(requests) == 2
 
     entity.voice_name = "luce cucina nuova"
     await session.commit()
@@ -227,7 +233,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
             )
         ).all()
     )
-    assert [event.result for event in audits] == ["success"] * 5
+    assert [event.result for event in audits] == ["success"] * 6
     assert all("token" not in json.dumps(event.payload_redacted_json) for event in audits)
     await client.aclose()
 

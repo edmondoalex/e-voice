@@ -15,7 +15,7 @@ from typing import Annotated, Any, TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -450,12 +450,56 @@ async def installation_detail(
         )
     csrf = _csrf(context)
     rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    resync_status = request.query_params.get("alexa_resync", "")
+    resync_count = request.query_params.get("sent", "0")
+    resync_notice = (
+        f'<p class="ok">Risincronizzazione Alexa completata: {_e(resync_count)} endpoint inviati.</p>'
+        if resync_status == "success"
+        else '<p class="bad">Risincronizzazione Alexa non riuscita.</p>'
+        if resync_status == "error"
+        else ""
+    )
+    resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+@router.post("/installations/{installation_id}/alexa/resync", response_class=RedirectResponse)
+async def resync_alexa_discovery(
+    installation_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Force a tenant-scoped proactive Discovery refresh for one installation."""
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    sent = await reconcile_discovery_safely(session, installation, force=True)
+    succeeded = sent is not None
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            user_id=context.user_id,
+            source="admin_console",
+            event_type="alexa.discovery.resync_requested",
+            payload_redacted_json={"sent_endpoint_count": sent or 0},
+            result="success" if succeeded else "error",
+        )
+    )
+    await session.commit()
+    outcome = "success" if succeeded else "error"
+    return RedirectResponse(
+        f"/installations/{installation.id}?alexa_resync={outcome}&sent={sent or 0}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 def _alexa_discovery_section(

@@ -212,8 +212,8 @@ class AlexaEventGateway:
                 sent += 1
         return sent
 
-    async def reconcile_discovery(self, installation: Installation) -> int:
-        """Publish only changed endpoint representations for one installation."""
+    async def reconcile_discovery(self, installation: Installation, *, force: bool = False) -> int:
+        """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
         from .entity_names import unambiguous_voice_entities
 
@@ -267,13 +267,17 @@ class AlexaEventGateway:
                 ).all()
             )
             previous = {item.alexa_endpoint_id: item for item in deliveries}
-            updates = [
-                value
-                for endpoint_id, value in current.items()
-                if endpoint_id not in previous
-                or previous[endpoint_id].removed_at is not None
-                or previous[endpoint_id].representation_fingerprint != value[2]
-            ]
+            updates = (
+                list(current.values())
+                if force
+                else [
+                    value
+                    for endpoint_id, value in current.items()
+                    if endpoint_id not in previous
+                    or previous[endpoint_id].removed_at is not None
+                    or previous[endpoint_id].representation_fingerprint != value[2]
+                ]
+            )
             deletions = [
                 item
                 for endpoint_id, item in previous.items()
@@ -423,14 +427,16 @@ class AlexaEventGateway:
         return False
 
 
-async def reconcile_discovery_safely(session: AsyncSession, installation: Installation) -> int:
+async def reconcile_discovery_safely(
+    session: AsyncSession, installation: Installation, *, force: bool = False
+) -> int | None:
     """Run bounded proactive discovery without failing the authoritative sync."""
     gateway = AlexaEventGateway(session)
     try:
-        return await gateway.reconcile_discovery(installation)
+        return await gateway.reconcile_discovery(installation, force=force)
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
         logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
-        return 0
+        return None
     finally:
         await gateway.close()
