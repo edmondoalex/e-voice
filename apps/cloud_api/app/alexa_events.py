@@ -29,10 +29,38 @@ from .domain.models import (
 
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 logger = logging.getLogger(__name__)
+REDACTED = "[REDACTED]"
+SENSITIVE_DIAGNOSTIC_KEYS = {
+    "access_token",
+    "authorization",
+    "client_secret",
+    "refresh_token",
+    "token",
+}
 
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def _safe_diagnostic_value(value: Any, secrets: tuple[str, ...]) -> Any:
+    """Return complete diagnostic data with credentials recursively redacted."""
+    if isinstance(value, dict):
+        return {
+            key: REDACTED
+            if key.lower() in SENSITIVE_DIAGNOSTIC_KEYS
+            else _safe_diagnostic_value(item, secrets)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_safe_diagnostic_value(item, secrets) for item in value]
+    if isinstance(value, str):
+        result = value
+        for secret in secrets:
+            if secret:
+                result = result.replace(secret, REDACTED)
+        return result
+    return value
 
 
 class AlexaEventGateway:
@@ -297,7 +325,11 @@ class AlexaEventGateway:
                 event = self._discovery_event(
                     "AddOrUpdateReport", [endpoint for _, endpoint, _ in updates]
                 )
-                success = await self._send(authorization, event)
+                success = await self._send(
+                    authorization,
+                    event,
+                    diagnostic_installation=installation,
+                )
                 now = datetime.now(UTC)
                 for entity, endpoint, fingerprint in updates:
                     endpoint_value = str(endpoint["endpointId"])
@@ -385,25 +417,48 @@ class AlexaEventGateway:
             )
         )
 
-    async def _send(self, authorization: AlexaEventAuthorization, event: dict[str, Any]) -> bool:
+    async def _send(
+        self,
+        authorization: AlexaEventAuthorization,
+        event: dict[str, Any],
+        *,
+        diagnostic_installation: Installation | None = None,
+    ) -> bool:
         access = self._cipher.decrypt(authorization.access_token_encrypted).decode()
         if _utc(authorization.expires_at) <= datetime.now(UTC) + timedelta(seconds=30):
             try:
                 access = await self._refresh(authorization)
-            except httpx.HTTPError:
+            except httpx.HTTPError as error:
                 logger.warning("Alexa LWA token refresh failed before event delivery")
+                request_event = json.loads(json.dumps(event))
+                await self._audit_add_or_update_delivery(
+                    diagnostic_installation, request_event, None, error, 0, access
+                )
                 return False
+        response: httpx.Response | None = None
+        transport_error: httpx.HTTPError | None = None
         for attempt in range(3):
             event_body = event["event"]
-            scope_parent = event_body.get("endpoint") or event_body.get("payload")
+            request_event = json.loads(json.dumps(event))
+            request_event_body = request_event["event"]
+            scope_parent = request_event_body.get("endpoint") or request_event_body.get("payload")
             scope_parent["scope"]["token"] = access
+            serialized = json.dumps(
+                request_event, ensure_ascii=False, separators=(",", ":")
+            ).encode()
             try:
                 response = await self._client.post(
                     self._settings.alexa_event_gateway_url,
-                    json=event,
-                    headers={"Authorization": f"Bearer {access}"},
+                    content=serialized,
+                    headers={
+                        "Authorization": f"Bearer {access}",
+                        "Content-Type": "application/json",
+                    },
                 )
-            except httpx.HTTPError:
+                transport_error = None
+            except httpx.HTTPError as error:
+                transport_error = error
+                response = None
                 logger.warning(
                     "Alexa Event Gateway transport error event=%s attempt=%d",
                     event_body["header"]["name"],
@@ -413,18 +468,91 @@ class AlexaEventGateway:
                     await asyncio.sleep(attempt + 1)
                 continue
             if response.is_success:
+                await self._audit_add_or_update_delivery(
+                    diagnostic_installation, request_event, response, None, attempt + 1, access
+                )
                 return True
             if response.status_code not in {401, 429} and response.status_code < 500:
+                await self._audit_add_or_update_delivery(
+                    diagnostic_installation, request_event, response, None, attempt + 1, access
+                )
                 return False
             if response.status_code == 401:
                 try:
                     access = await self._refresh(authorization)
-                except httpx.HTTPError:
+                except httpx.HTTPError as error:
                     logger.warning("Alexa LWA token refresh failed after gateway HTTP 401")
+                    await self._audit_add_or_update_delivery(
+                        diagnostic_installation,
+                        request_event,
+                        response,
+                        error,
+                        attempt + 1,
+                        access,
+                    )
                     return False
             if attempt < 2:
                 await asyncio.sleep(attempt + 1)
+        await self._audit_add_or_update_delivery(
+            diagnostic_installation,
+            request_event,
+            response,
+            transport_error,
+            3,
+            access,
+        )
         return False
+
+    async def _audit_add_or_update_delivery(
+        self,
+        installation: Installation | None,
+        request_event: dict[str, Any],
+        response: httpx.Response | None,
+        error: httpx.HTTPError | None,
+        attempts: int,
+        access_token: str,
+    ) -> None:
+        """Persist one secret-free diagnostic for an AddOrUpdateReport delivery."""
+        event = request_event["event"]
+        header = event["header"]
+        if installation is None or header.get("name") != "AddOrUpdateReport":
+            return
+        endpoint_ids = [
+            str(endpoint["endpointId"])
+            for endpoint in event.get("payload", {}).get("endpoints", [])
+            if endpoint.get("endpointId") is not None
+        ]
+        message_id = str(header.get("messageId", ""))
+        response_body: Any = None
+        if response is not None and response.content:
+            try:
+                response_body = response.json()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                response_body = response.text
+        secrets = (access_token,)
+        payload = {
+            "correlation_id": message_id,
+            "message_id": message_id,
+            "endpoint_id": endpoint_ids[0] if len(endpoint_ids) == 1 else None,
+            "endpoint_ids": endpoint_ids,
+            "request_payload": _safe_diagnostic_value(request_event, secrets),
+            "http_status": response.status_code if response is not None else None,
+            "response_body": _safe_diagnostic_value(response_body, secrets),
+            "error": _safe_diagnostic_value(str(error), secrets) if error is not None else None,
+            "error_type": type(error).__name__ if error is not None else None,
+            "attempts": attempts,
+        }
+        self._session.add(
+            AuditEvent(
+                tenant_id=installation.tenant_id,
+                installation_id=installation.id,
+                source="alexa_event_gateway",
+                event_type="alexa.event_gateway.add_or_update",
+                request_id=message_id,
+                payload_redacted_json=payload,
+                result="success" if response is not None and response.is_success else "error",
+            )
+        )
 
 
 async def reconcile_discovery_safely(

@@ -29,8 +29,10 @@ HTTP 401/429/503 responses receive three bounded attempts.
 After `Alexa.Authorization/AcceptGrant`, Ekonex exchanges Amazon's one-use grant with LWA and
 stores the customer access/refresh tokens encrypted in `alexa_event_authorizations`. These Amazon
 tokens authenticate Ekonex **to Alexa** and are distinct from the Ekonex BearerToken Alexa sends
-with directives. They are refreshed through LWA before expiry or after an Event Gateway HTTP 401;
-neither tokens nor event bodies are logged or displayed.
+with directives. They are refreshed through LWA before expiry or after an Event Gateway HTTP 401.
+Temporary AddOrUpdateReport diagnostics in Activity retain the complete serialized event structure,
+Amazon HTTP status/body and transport error, while recursively redacting scope/access tokens,
+authorization values, client secrets and refresh tokens.
 
 Every committed inventory full/delta, relevant state metadata update, and cloud voice-name edit
 reconciles the installation against the endpoint representation produced by the existing
