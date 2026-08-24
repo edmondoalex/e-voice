@@ -510,9 +510,7 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",
-        "friendlyName": "tapparella test"
-        if _is_office_test_cover(entity)
-        else effective_voice_name(entity),
+        "friendlyName": effective_voice_name(entity),
         "description": "Home Assistant entity via Ekonex Voice",
         "displayCategories": [category],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},

@@ -325,6 +325,7 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
         supported_features=11,
         alexa_cover_mode="discrete",
         state="unknown",
+        voice_name="tapparella ufficio test",
     )
     other = Entity(
         id=uuid4(),
@@ -349,7 +350,7 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
         item for item in endpoint["capabilities"] if item["interface"] == "Alexa.ModeController"
     )
     assert endpoint["endpointId"] == "ev1_diag_clean_native_office_cover_v1"
-    assert endpoint["friendlyName"] == "tapparella test"
+    assert endpoint["friendlyName"] == "tapparella ufficio test"
     assert mode["instance"] == "Position"
     assert mode["capabilityResources"] == {
         "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
@@ -413,7 +414,7 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
     assert endpoint == {
         "endpointId": "ev1_diag_clean_native_office_cover_v1",
         "manufacturerName": "Ekonex",
-        "friendlyName": "tapparella test",
+        "friendlyName": "tapparella ufficio test",
         "description": "Home Assistant entity via Ekonex Voice",
         "displayCategories": ["INTERIOR_BLIND"],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
