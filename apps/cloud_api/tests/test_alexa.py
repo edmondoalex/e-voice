@@ -348,7 +348,9 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
     mode = next(
         item for item in endpoint["capabilities"] if item["interface"] == "Alexa.ModeController"
     )
-    assert mode["instance"] == "Blinds.Position"
+    assert endpoint["endpointId"] == "ev1_diag_clean_native_office_cover_v1"
+    assert endpoint["friendlyName"] == "tapparella test"
+    assert mode["instance"] == "Position"
     assert mode["capabilityResources"] == {
         "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
     }
@@ -360,8 +362,6 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                        {"@type": "text", "value": {"text": "apri", "locale": "it-IT"}},
-                        {"@type": "text", "value": {"text": "su", "locale": "it-IT"}},
                     ]
                 },
             },
@@ -370,8 +370,6 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                        {"@type": "text", "value": {"text": "chiudi", "locale": "it-IT"}},
-                        {"@type": "text", "value": {"text": "giù", "locale": "it-IT"}},
                     ]
                 },
             },
@@ -389,6 +387,19 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
             "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
         },
     ]
+    assert mode["semantics"]["stateMappings"] == [
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Closed"],
+            "value": "Position.Down",
+        },
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Open"],
+            "value": "Position.Up",
+        },
+    ]
+    assert '"@type": "text"' not in json.dumps(mode)
     playback = next(
         item for item in endpoint["capabilities"] if item["interface"] == "Alexa.PlaybackController"
     )
@@ -398,6 +409,30 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
         "version": "3",
         "instance": "cover.stop",
         "supportedOperations": ["Stop"],
+    }
+    assert endpoint == {
+        "endpointId": "ev1_diag_clean_native_office_cover_v1",
+        "manufacturerName": "Ekonex",
+        "friendlyName": "tapparella test",
+        "description": "Home Assistant entity via Ekonex Voice",
+        "displayCategories": ["INTERIOR_BLIND"],
+        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
+        "cookie": {},
+        "capabilities": [
+            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.EndpointHealth",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "connectivity"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
+                },
+            },
+            mode,
+            playback,
+        ],
     }
     assert not any(
         item["namespace"] == "Alexa.PowerController" for item in state_properties(target)

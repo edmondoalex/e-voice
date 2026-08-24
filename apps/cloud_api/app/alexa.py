@@ -258,8 +258,12 @@ def _capability(interface: str, properties: list[str] | None = None) -> dict[str
     return value
 
 
+_OFFICE_TEST_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
+_OFFICE_TEST_ENDPOINT_ID = "ev1_diag_clean_native_office_cover_v1"
+
+
 def _is_office_test_cover(entity: Entity) -> bool:
-    return entity.ha_entity_id == "cover.buspro_cover_porta_ufficio"
+    return entity.ha_entity_id == _OFFICE_TEST_ENTITY_ID
 
 
 def capabilities(entity: Entity) -> list[dict[str, Any]]:
@@ -343,20 +347,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                            *(
-                                [
-                                    {
-                                        "@type": "text",
-                                        "value": {"text": "apri", "locale": "it-IT"},
-                                    },
-                                    {
-                                        "@type": "text",
-                                        "value": {"text": "su", "locale": "it-IT"},
-                                    },
-                                ]
-                                if office_test
-                                else []
-                            ),
                         ]
                     },
                 },
@@ -365,20 +355,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                            *(
-                                [
-                                    {
-                                        "@type": "text",
-                                        "value": {"text": "chiudi", "locale": "it-IT"},
-                                    },
-                                    {
-                                        "@type": "text",
-                                        "value": {"text": "giù", "locale": "it-IT"},
-                                    },
-                                ]
-                                if office_test
-                                else []
-                            ),
                         ]
                     },
                 },
@@ -404,7 +380,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             result.append(
                 _capability("Alexa.ModeController", ["mode"])
                 | {
-                    "instance": "Blinds.Position" if office_test else "cover.position",
+                    "instance": "Position" if office_test else "cover.position",
                     "capabilityResources": {
                         "friendlyNames": (
                             [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
@@ -498,6 +474,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
 
 
 def endpoint_id(entity: Entity) -> str:
+    if _is_office_test_cover(entity):
+        return _OFFICE_TEST_ENDPOINT_ID
     return f"ev1_{entity.id.hex}"
 
 
@@ -532,7 +510,9 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",
-        "friendlyName": effective_voice_name(entity),
+        "friendlyName": "tapparella test"
+        if _is_office_test_cover(entity)
+        else effective_voice_name(entity),
         "description": "Home Assistant entity via Ekonex Voice",
         "displayCategories": [category],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
@@ -662,7 +642,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "Alexa.ModeController",
                     "mode",
                     discrete_position,
-                    instance="Blinds.Position" if office_test else "cover.position",
+                    instance="Position" if office_test else "cover.position",
                 )
             )
     if entity.ha_domain == "fan":
