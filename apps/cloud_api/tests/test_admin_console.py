@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import select
@@ -208,6 +208,122 @@ async def test_command_rejects_cross_tenant_entity(
         },
     )
     assert response.status_code == 404
+    await client.aclose()
+
+
+async def test_alexa_resync_is_csrf_protected_tenant_scoped_and_audited(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    calls: list[tuple[UUID, bool]] = []
+
+    async def reconcile(
+        database: AsyncSession, installation: Installation, *, force: bool = False
+    ) -> int:
+        assert database is session
+        calls.append((installation.id, force))
+        return 2
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "apps.cloud_api.app.admin_console.reconcile_discovery_safely", reconcile
+    )
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Risincronizza Alexa" in page.text
+    assert f'action="/installations/{seeded_domain.installation_a_id}/alexa/resync"' in page.text
+    csrf = _csrf(page)
+
+    invalid_csrf = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/resync",
+        data={"csrf_token": "invalid"},
+    )
+    assert invalid_csrf.status_code == 403
+    assert calls == []
+
+    foreign = await client.post(
+        f"/installations/{seeded_domain.installation_b_id}/alexa/resync",
+        data={"csrf_token": csrf},
+    )
+    assert foreign.status_code == 404
+    assert calls == []
+
+    response = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/resync",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?alexa_resync=success&sent=2")
+    assert calls == [(seeded_domain.installation_a_id, True)]
+    result_page = await client.get(response.headers["location"])
+    assert "Risincronizzazione Alexa completata: 2 endpoint inviati." in result_page.text
+
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.resync_requested")
+    )
+    assert audit is not None
+    assert audit.tenant_id == seeded_domain.tenant_a_id
+    assert audit.installation_id == seeded_domain.installation_a_id
+    assert audit.user_id == seeded_domain.user_a_id
+    assert audit.result == "success"
+    assert audit.payload_redacted_json == {"sent_endpoint_count": 2}
+    await client.aclose()
+
+
+async def test_alexa_resync_rejects_readonly_role(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    client = await _client(session)
+    await _login(client, "readonly@example.test", "readonly-password-123")
+
+    response = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/resync",
+        data={"csrf_token": "irrelevant"},
+    )
+
+    assert response.status_code == 403
+    assert (
+        await session.scalar(
+            select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.resync_requested")
+        )
+        is None
+    )
+    await client.aclose()
+
+
+async def test_alexa_resync_reports_and_audits_gateway_failure(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    async def reconcile(
+        database: AsyncSession, installation: Installation, *, force: bool = False
+    ) -> None:
+        assert database is session
+        assert installation.id == seeded_domain.installation_a_id
+        assert force is True
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "apps.cloud_api.app.admin_console.reconcile_discovery_safely", reconcile
+    )
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    response = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/resync",
+        data={"csrf_token": _csrf(page)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?alexa_resync=error&sent=0")
+    result_page = await client.get(response.headers["location"])
+    assert "Risincronizzazione Alexa non riuscita." in result_page.text
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.resync_requested")
+    )
+    assert audit is not None
+    assert audit.result == "error"
+    assert audit.payload_redacted_json == {"sent_endpoint_count": 0}
     await client.aclose()
 
 
