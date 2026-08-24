@@ -237,13 +237,22 @@ class EkonexVoiceConnection:
         self, websocket: ClientWebSocketResponse, session_id: str, payload: dict[str, Any]
     ) -> None:
         try:
-            requested_session, command_id, registry_id, command = parse_command(payload)
+            requested_session, command_id, registry_id, correlation_id, command = parse_command(
+                payload
+            )
         except (ValueError, TypeError):
             raise EkonexVoiceProtocolError("invalid_command") from None
         if requested_session != session_id:
-            result = CommandResult(command_id, "stale_session", "STALE_SESSION")
+            result = CommandResult(command_id, "stale_session", "STALE_SESSION", correlation_id)
         elif self._command_executor is None:
-            result = CommandResult(command_id, "unsupported_command", "OPERATION_NOT_SUPPORTED")
+            result = CommandResult(
+                command_id,
+                "unsupported_command",
+                "OPERATION_NOT_SUPPORTED",
+                correlation_id,
+            )
         else:
-            result = await self._command_executor.async_execute(command_id, registry_id, command)
+            result = await self._command_executor.async_execute(
+                command_id, registry_id, command, correlation_id=correlation_id
+            )
         await websocket.send_json(envelope("command_result", result.payload(session_id)))

@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any, TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -48,6 +49,16 @@ from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
+
+
+class ActivityRow(TypedDict):
+    at: datetime
+    kind: str
+    source: str
+    result: str
+    installation_id: UUID | None
+    detail: dict[str, Any]
+
 
 router = APIRouter(tags=["admin-console"])
 session_dependency = Depends(get_database_session)
@@ -930,6 +941,10 @@ async def activity(
             aq.where(AuditEvent.result == outcome),
             oq.where(OperationalEvent.outcome == outcome),
         )
+    source_filter = request.query_params.get("source", "")
+    if source_filter:
+        aq = aq.where(AuditEvent.source == source_filter)
+        oq = oq.where(OperationalEvent.source == source_filter)
     event_type = request.query_params.get("event_type", "")
     if event_type:
         aq = aq.where(AuditEvent.event_type == event_type)
@@ -949,6 +964,14 @@ async def activity(
             raise HTTPException(404, "Entità non trovata")
         oq = oq.where(OperationalEvent.entity_id == entity_id)
         aq = aq.where(AuditEvent.payload_redacted_json["entity_id"].as_string() == str(entity_id))
+    diagnostic_filters = {
+        key: request.query_params.get(key, "")
+        for key in ("correlation_id", "command_id", "endpoint_id", "ha_entity_id")
+    }
+    for key, value in diagnostic_filters.items():
+        if value:
+            aq = aq.where(AuditEvent.payload_redacted_json[key].as_string() == value)
+            oq = oq.where(OperationalEvent.metadata_json[key].as_string() == value)
     date_from, date_to = (request.query_params.get(key, "") for key in ("from", "to"))
     try:
         if date_from:
@@ -971,24 +994,51 @@ async def activity(
     operations = list(
         (await session.scalars(oq.order_by(OperationalEvent.created_at.desc()).limit(200))).all()
     )
-    all_events = sorted(
+    all_events: list[ActivityRow] = sorted(
         [
-            *((e.created_at, e.event_type, e.source, e.result, e.installation_id) for e in audits),
             *(
-                (e.created_at, e.event_type, e.source, e.outcome, e.installation_id)
+                ActivityRow(
+                    at=e.created_at,
+                    kind=e.event_type,
+                    source=e.source,
+                    result=e.result,
+                    installation_id=e.installation_id,
+                    detail=e.payload_redacted_json,
+                )
+                for e in audits
+            ),
+            *(
+                ActivityRow(
+                    at=e.created_at,
+                    kind=e.event_type,
+                    source=e.source,
+                    result=e.outcome,
+                    installation_id=e.installation_id,
+                    detail=e.metadata_json,
+                )
                 for e in operations
             ),
         ],
-        reverse=True,
+        key=lambda item: item["at"],
+        reverse=not bool(diagnostic_filters["correlation_id"]),
     )
     page = max(1, int(request.query_params.get("page", "1")))
     events = all_events[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
     rows = "".join(
-        f"<tr><td>{_e(at)}</td><td>{_e(kind)}</td><td>{_e(source)}</td><td>{_e(result)}</td><td>{_e(iid)}</td></tr>"
-        for at, kind, source, result, iid in events
+        f'<tr data-correlation-id="{_e(event["detail"].get("correlation_id", ""))}">'
+        f"<td>{_e(event['at'])}</td><td><details><summary>{_e(event['kind'])}</summary>"
+        f"<pre>{_e(json.dumps(event['detail'], indent=2, ensure_ascii=False, default=str))}</pre>"
+        f"</details></td><td>{_e(event['source'])}</td><td>{_e(event['result'])}</td>"
+        f"<td>{_e(event['detail'].get('correlation_id'))}</td>"
+        f"<td>{_e(event['detail'].get('command_id'))}</td>"
+        f"<td>{_e(event['detail'].get('endpoint_id'))}</td>"
+        f"<td>{_e(event['detail'].get('ha_entity_id'))}</td>"
+        f"<td>{_e(event['detail'].get('operation'))}</td>"
+        f"<td>{_e(event['installation_id'])}</td></tr>"
+        for event in events
     )
     csrf = _csrf(context)
-    body = f'<form method="get"><input name="installation_id" placeholder="ID installazione" value="{_e(installation_filter)}"><input name="outcome" placeholder="Esito" value="{_e(outcome)}"><button>Filtra</button></form><table><thead><tr><th>Data</th><th>Evento</th><th>Fonte</th><th>Esito</th><th>Installazione</th></tr></thead><tbody>{rows or "<tr><td colspan=5>Nessuna attività</td></tr>"}</tbody></table>'
+    body = f'''<form method="get"><input name="installation_id" placeholder="ID installazione" value="{_e(installation_filter)}"><input name="source" placeholder="Fonte (es. alexa)" value="{_e(source_filter)}"><input name="outcome" placeholder="Esito" value="{_e(outcome)}"><input name="correlation_id" placeholder="Correlation ID" value="{_e(diagnostic_filters["correlation_id"])}"><input name="command_id" placeholder="Command ID" value="{_e(diagnostic_filters["command_id"])}"><input name="endpoint_id" placeholder="Endpoint ID" value="{_e(diagnostic_filters["endpoint_id"])}"><input name="ha_entity_id" placeholder="HA entity ID" value="{_e(diagnostic_filters["ha_entity_id"])}"><button>Filtra</button></form><table><thead><tr><th>Data</th><th>Evento / JSON</th><th>Fonte</th><th>Esito</th><th>Correlation</th><th>Command</th><th>Endpoint</th><th>HA entity</th><th>Operation</th><th>Installazione</th></tr></thead><tbody>{rows or "<tr><td colspan=10>Nessuna attività</td></tr>"}</tbody></table>'''
     response = HTMLResponse(_layout("Attività", body, context, csrf, "activity"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800

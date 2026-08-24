@@ -29,6 +29,7 @@ from .domain.models import (
     AlexaAccountLink,
     AlexaOAuthGrant,
     AlexaOAuthToken,
+    AuditEvent,
     Entity,
     Installation,
     TenantMembership,
@@ -777,6 +778,79 @@ def _event(
     return result
 
 
+_SENSITIVE_DIAGNOSTIC_KEYS = {
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "password",
+    "cookie",
+    "scope",
+}
+
+
+def _diagnostic_payload(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _diagnostic_payload(item)
+            for key, item in value.items()
+            if not _sensitive_diagnostic_key(str(key))
+        }
+    if isinstance(value, list):
+        return [_diagnostic_payload(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _sensitive_diagnostic_key(key: str) -> bool:
+    normalized = key.casefold()
+    return normalized in _SENSITIVE_DIAGNOSTIC_KEYS or any(
+        fragment in normalized
+        for fragment in ("token", "secret", "password", "authorization", "cookie")
+    )
+
+
+def _alexa_audit(
+    database: AsyncSession,
+    *,
+    tenant_id: UUID,
+    event_type: str,
+    correlation_id: UUID,
+    amazon_message_id: str,
+    payload: dict[str, object],
+    result: str,
+    installation_id: UUID | None = None,
+) -> None:
+    database.add(
+        AuditEvent(
+            tenant_id=tenant_id,
+            installation_id=installation_id,
+            source="alexa",
+            event_type=event_type,
+            request_id=amazon_message_id,
+            payload_redacted_json={
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "correlation_id": str(correlation_id),
+                "amazon_message_id": amazon_message_id,
+                **payload,
+            },
+            result=result,
+        )
+    )
+
+
+def _mapping_rule(namespace: str, name: str, payload: dict[str, Any]) -> str:
+    if namespace == "Alexa.ModeController" and name == "SetMode":
+        return f"ModeController.SetMode({payload.get('mode')})"
+    if namespace == "Alexa.PlaybackController":
+        return f"PlaybackController.{name}"
+    if namespace == "Alexa.PowerController":
+        return f"PowerController.{name}"
+    return f"{namespace}.{name}"
+
+
 @router.post("/alexa/v1/directive")
 async def directive(request: Request, database: AsyncSession = database_dependency) -> JSONResponse:
     raw = await request.body()
@@ -822,6 +896,28 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     if replay_key in _replay:
         return JSONResponse(_replay[replay_key])
     correlation = header.get("correlationToken")
+    diagnostic_correlation_id: UUID | None = None
+    if not (header["namespace"] == "Alexa.Discovery" and header["name"] == "Discover"):
+        diagnostic_correlation_id = uuid4()
+        endpoint_value = str(directive.get("endpoint", {}).get("endpointId", ""))
+        _alexa_audit(
+            database,
+            tenant_id=link.tenant_id,
+            event_type="alexa.directive_received",
+            correlation_id=diagnostic_correlation_id,
+            amazon_message_id=message_id,
+            payload={
+                "endpoint_id": endpoint_value,
+                "namespace": header["namespace"],
+                "name": header["name"],
+                "instance": header.get("instance"),
+                "payload": _diagnostic_payload(directive.get("payload", {})),
+                "tenant_id": str(link.tenant_id),
+                "installation_id": None,
+            },
+            result="received",
+        )
+        await database.commit()
     if header["namespace"] == "Alexa.Discovery" and header["name"] == "Discover":
         installations = list(
             (
@@ -868,21 +964,61 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
-        try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
-        except ValueError as exc:
-            raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
-        entity = await database.scalar(
+        entity_uuid: UUID | None = None
+        if endpoint_value != _OFFICE_TEST_ENDPOINT_ID:
+            try:
+                entity_uuid = UUID(hex=endpoint_value[4:])
+            except ValueError as exc:
+                raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
+        entity_query = (
             select(Entity)
             .join(Installation)
             .where(
-                Entity.id == entity_uuid,
                 Installation.tenant_id == link.tenant_id,
                 Entity.deleted_at.is_(None),
             )
         )
+        entity_query = entity_query.where(
+            Entity.ha_entity_id == _OFFICE_TEST_ENTITY_ID
+            if endpoint_value == _OFFICE_TEST_ENDPOINT_ID
+            else Entity.id == entity_uuid
+        )
+        entity = await database.scalar(entity_query)
         if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+            if diagnostic_correlation_id is not None:
+                _alexa_audit(
+                    database,
+                    tenant_id=link.tenant_id,
+                    event_type="alexa.endpoint_resolved",
+                    correlation_id=diagnostic_correlation_id,
+                    amazon_message_id=message_id,
+                    payload={"endpoint_id": endpoint_value, "failure_reason": "NO_SUCH_ENDPOINT"},
+                    result="failure",
+                )
+                await database.commit()
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
+        if diagnostic_correlation_id is not None:
+            _alexa_audit(
+                database,
+                tenant_id=link.tenant_id,
+                installation_id=entity.installation_id,
+                event_type="alexa.endpoint_resolved",
+                correlation_id=diagnostic_correlation_id,
+                amazon_message_id=message_id,
+                payload={
+                    "endpoint_id": endpoint_value,
+                    "entity_id": str(entity.id),
+                    "ha_entity_id": entity.ha_entity_id,
+                    "voice_name": effective_voice_name(entity),
+                    "friendly_name": entity.friendly_name,
+                    "ha_domain": entity.ha_domain,
+                    "device_class": (entity.attributes_json or {}).get("device_class"),
+                    "supported_features": entity.supported_features,
+                    "state": entity.state,
+                    "available": entity.available,
+                },
+                result="success",
+            )
         if header["namespace"] == "Alexa" and header["name"] == "ReportState":
             response = _event(
                 {
@@ -914,6 +1050,31 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     },
                 )
             spec = _command(header["namespace"], header["name"], command_payload, entity)
+            if diagnostic_correlation_id is not None:
+                _alexa_audit(
+                    database,
+                    tenant_id=link.tenant_id,
+                    installation_id=entity.installation_id,
+                    event_type="alexa.mapping_result",
+                    correlation_id=diagnostic_correlation_id,
+                    amazon_message_id=message_id,
+                    payload={
+                        "endpoint_id": endpoint_value,
+                        "entity_id": str(entity.id),
+                        "ha_entity_id": entity.ha_entity_id,
+                        "namespace": header["namespace"],
+                        "name": header["name"],
+                        "instance": header.get("instance"),
+                        "payload": _diagnostic_payload(command_payload),
+                        "operation": spec.get("operation") if spec else None,
+                        "normalized_payload": spec,
+                        "mapping_rule": _mapping_rule(
+                            header["namespace"], header["name"], command_payload
+                        ),
+                    },
+                    result="success" if spec else "failure",
+                )
+                await database.commit()
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
@@ -934,6 +1095,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     entity.ha_registry_id,
                     command,
                     command_id=UUID(message_id) if _is_uuid(message_id) else uuid4(),
+                    correlation_id=diagnostic_correlation_id,
                 )
                 if outcome.status != "success":
                     error_type = {
@@ -966,6 +1128,29 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         {"endpointId": endpoint_value},
                         state_properties(entity),
                     )
+    if diagnostic_correlation_id is not None:
+        response_event = response["event"]
+        response_header = response_event["header"]
+        response_payload = response_event.get("payload", {})
+        response_success = response_header.get("name") not in {"ErrorResponse"}
+        _alexa_audit(
+            database,
+            tenant_id=link.tenant_id,
+            event_type="alexa.response_generated",
+            correlation_id=diagnostic_correlation_id,
+            amazon_message_id=message_id,
+            installation_id=entity.installation_id if "entity" in locals() and entity else None,
+            payload={
+                "response_namespace": response_header.get("namespace"),
+                "response_name": response_header.get("name"),
+                "success": response_success,
+                "error_type": response_payload.get("type"),
+                "error_message": response_payload.get("message"),
+                "context": _diagnostic_payload(response.get("context", {})),
+            },
+            result="success" if response_success else "failure",
+        )
+        await database.commit()
     _replay[replay_key] = response
     if len(_replay) > 2048:
         _replay.pop(next(iter(_replay)))

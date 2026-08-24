@@ -947,6 +947,46 @@ async def test_activity_and_system_views_remain_tenant_scoped(
     await client.aclose()
 
 
+async def test_activity_filters_and_expands_correlated_alexa_json(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    correlation_id = "11111111-1111-1111-1111-111111111111"
+    session.add(
+        AuditEvent(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            source="alexa",
+            event_type="alexa.mapping_result",
+            request_id="amazon-message",
+            payload_redacted_json={
+                "correlation_id": correlation_id,
+                "command_id": "22222222-2222-2222-2222-222222222222",
+                "endpoint_id": "ev1_test",
+                "ha_entity_id": "cover.office",
+                "operation": "open",
+            },
+            result="success",
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    activity = await client.get(
+        "/activity", params={"source": "alexa", "correlation_id": correlation_id}
+    )
+
+    assert activity.status_code == 200
+    assert "alexa.mapping_result" in activity.text
+    assert "<details>" in activity.text
+    assert "Correlation ID" in activity.text
+    assert correlation_id in activity.text
+    assert "cover.office" in activity.text
+    assert "ev1_test" in activity.text
+    assert "open" in activity.text
+    await client.aclose()
+
+
 async def test_database_size_uses_postgresql_authoritative_function_and_decimal_mb() -> None:
     fake = MagicMock(spec=AsyncSession)
     fake.get_bind.return_value.dialect.name = "postgresql"

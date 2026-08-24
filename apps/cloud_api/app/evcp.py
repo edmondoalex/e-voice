@@ -154,6 +154,8 @@ class CommandResultPayload(StrictModel):
     command_id: UUID
     status: CommandStatus
     error_code: str | None = Field(default=None, max_length=64, pattern=r"^[A-Z0-9_]+$")
+    correlation_id: UUID | None = None
+    diagnostics: list[dict[str, object]] = Field(default_factory=list, max_length=16)
 
 
 class CommandResultMessage(StrictModel):
@@ -229,6 +231,7 @@ class ConnectorSessionRegistry:
         registry_id: str,
         command: dict[str, object],
         timeout_seconds: float,
+        correlation_id: UUID | None = None,
     ) -> CommandResultPayload:
         """Send to the active session and correlate one bounded result."""
         key = (installation_id, command_id)
@@ -272,6 +275,7 @@ class ConnectorSessionRegistry:
                         "session_id": str(handle.session_id),
                         "command_id": str(command_id),
                         "registry_id": registry_id,
+                        "correlation_id": str(correlation_id) if correlation_id else None,
                         "command": command,
                     },
                 )

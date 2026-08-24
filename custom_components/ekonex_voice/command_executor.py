@@ -6,6 +6,8 @@ import asyncio
 import json
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import perf_counter
 from typing import Literal
 
 from homeassistant.components.climate.const import ClimateEntityFeature
@@ -39,6 +41,8 @@ class CommandResult:
     command_id: str
     status: CommandStatus
     error_code: str | None = None
+    correlation_id: str | None = None
+    diagnostics: tuple[dict[str, object], ...] = ()
 
     def payload(self, session_id: str) -> dict[str, object]:
         value: dict[str, object] = {
@@ -48,6 +52,10 @@ class CommandResult:
         }
         if self.error_code is not None:
             value["error_code"] = self.error_code
+        if self.correlation_id is not None:
+            value["correlation_id"] = self.correlation_id
+        if self.diagnostics:
+            value["diagnostics"] = list(self.diagnostics)
         return value
 
 
@@ -65,7 +73,12 @@ class EkonexVoiceCommandExecutor:
         self._results: OrderedDict[str, tuple[str, CommandResult]] = OrderedDict()
 
     async def async_execute(
-        self, command_id: str, registry_id: str, command: dict[str, object]
+        self,
+        command_id: str,
+        registry_id: str,
+        command: dict[str, object],
+        *,
+        correlation_id: str | None = None,
     ) -> CommandResult:
         fingerprint = json.dumps(
             {"registry_id": registry_id, "command": command}, sort_keys=True, separators=(",", ":")
@@ -76,7 +89,9 @@ class EkonexVoiceCommandExecutor:
                 if cached[0] == fingerprint
                 else CommandResult(command_id, "duplicate", "DUPLICATE_COMMAND")
             )
-        result = await self._execute_once(command_id, registry_id, command)
+        result = await self._execute_once(
+            command_id, registry_id, command, correlation_id=correlation_id
+        )
         self._results[command_id] = (fingerprint, result)
         self._results.move_to_end(command_id)
         while len(self._results) > RESULT_CACHE_SIZE:
@@ -84,25 +99,100 @@ class EkonexVoiceCommandExecutor:
         return result
 
     async def _execute_once(
-        self, command_id: str, registry_id: str, command: dict[str, object]
+        self,
+        command_id: str,
+        registry_id: str,
+        command: dict[str, object],
+        *,
+        correlation_id: str | None,
     ) -> CommandResult:
+        diagnostics: list[dict[str, object]] = [
+            {
+                "event_type": "connector.command_received",
+                "command_id": command_id,
+                "correlation_id": correlation_id,
+                "requested_entity_id": registry_id,
+                "operation": command.get("operation"),
+                "payload": command,
+            }
+        ]
         registry = er.async_get(self._hass)
         entry = next((item for item in registry.entities.values() if item.id == registry_id), None)
         if entry is None or entry.disabled:
-            return CommandResult(command_id, "target_not_found", "ENTITY_NOT_FOUND")
+            return CommandResult(
+                command_id,
+                "target_not_found",
+                "ENTITY_NOT_FOUND",
+                correlation_id,
+                tuple(diagnostics),
+            )
         if not self._inventory.is_exposed(entry):
-            return CommandResult(command_id, "target_not_exposed", "ENTITY_NOT_EXPOSED")
+            return CommandResult(
+                command_id,
+                "target_not_exposed",
+                "ENTITY_NOT_EXPOSED",
+                correlation_id,
+                tuple(diagnostics),
+            )
         state = self._hass.states.get(entry.entity_id)
         if state is None:
-            return CommandResult(command_id, "target_not_found", "ENTITY_NOT_FOUND")
+            return CommandResult(
+                command_id,
+                "target_not_found",
+                "ENTITY_NOT_FOUND",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        diagnostics.append(
+            {
+                "event_type": "connector.entity_resolved",
+                "command_id": command_id,
+                "correlation_id": correlation_id,
+                "requested_entity_id": registry_id,
+                "ha_entity_id": entry.entity_id,
+                "state_before": state.state,
+                "available": state.state != STATE_UNAVAILABLE,
+                "supported_features": int(state.attributes.get("supported_features", 0)),
+            }
+        )
         if state.state == STATE_UNAVAILABLE:
-            return CommandResult(command_id, "unavailable", "ENTITY_UNAVAILABLE")
+            return CommandResult(
+                command_id,
+                "unavailable",
+                "ENTITY_UNAVAILABLE",
+                correlation_id,
+                tuple(diagnostics),
+            )
         try:
             domain, service, data = _map_command(entry.domain, state, command)
         except UnsupportedCommand:
-            return CommandResult(command_id, "unsupported_command", "OPERATION_NOT_SUPPORTED")
+            return CommandResult(
+                command_id,
+                "unsupported_command",
+                "OPERATION_NOT_SUPPORTED",
+                correlation_id,
+                tuple(diagnostics),
+            )
         except InvalidArgument:
-            return CommandResult(command_id, "invalid_argument", "INVALID_PARAMETER")
+            return CommandResult(
+                command_id,
+                "invalid_argument",
+                "INVALID_PARAMETER",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        diagnostics.append(
+            {
+                "event_type": "homeassistant.service_call",
+                "command_id": command_id,
+                "correlation_id": correlation_id,
+                "domain": domain,
+                "service": service,
+                "target": {"entity_id": entry.entity_id},
+                "service_data": data,
+            }
+        )
+        started = perf_counter()
         try:
             async with asyncio.timeout(self._timeout):
                 await self._hass.services.async_call(
@@ -112,10 +202,80 @@ class EkonexVoiceCommandExecutor:
                     blocking=True,
                 )
         except TimeoutError:
-            return CommandResult(command_id, "timeout", "COMMAND_TIMEOUT")
-        except Exception:  # HA action exceptions must not cross the protocol boundary.
-            return CommandResult(command_id, "execution_failed", "SERVICE_CALL_FAILED")
-        return CommandResult(command_id, "success")
+            diagnostics.append(
+                _service_result(command_id, correlation_id, started, False, "TimeoutError", "")
+            )
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception as error:  # HA action exceptions must not cross the protocol boundary.
+            diagnostics.append(
+                _service_result(
+                    command_id,
+                    correlation_id,
+                    started,
+                    False,
+                    type(error).__name__,
+                    str(error),
+                )
+            )
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "SERVICE_CALL_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        diagnostics.append(_service_result(command_id, correlation_id, started, True, None, None))
+        if entry.domain == "cover":
+            state_before = state.state
+            for delay_ms, delay_seconds in ((300, 0.3), (1000, 0.7)):
+                await asyncio.sleep(delay_seconds)
+                current = self._hass.states.get(entry.entity_id)
+                diagnostics.append(
+                    {
+                        "event_type": "entity.state_verification",
+                        "command_id": command_id,
+                        "correlation_id": correlation_id,
+                        "ha_entity_id": entry.entity_id,
+                        "state_before": state_before,
+                        "state_after": current.state if current is not None else None,
+                        "current_position": (
+                            current.attributes.get("current_position")
+                            if current is not None
+                            else None
+                        ),
+                        "available": current is not None and current.state != STATE_UNAVAILABLE,
+                        "last_changed": current.last_changed.isoformat()
+                        if current is not None
+                        else None,
+                        "last_updated": current.last_updated.isoformat()
+                        if current is not None
+                        else None,
+                        "delay_ms": delay_ms,
+                        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    }
+                )
+        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+
+
+def _service_result(
+    command_id: str,
+    correlation_id: str | None,
+    started: float,
+    success: bool,
+    exception_type: str | None,
+    exception_message: str | None,
+) -> dict[str, object]:
+    return {
+        "event_type": "homeassistant.service_result",
+        "command_id": command_id,
+        "correlation_id": correlation_id,
+        "success": success,
+        "duration_ms": round((perf_counter() - started) * 1000, 3),
+        "exception_type": exception_type,
+        "exception_message": exception_message,
+    }
 
 
 class UnsupportedCommand(Exception):

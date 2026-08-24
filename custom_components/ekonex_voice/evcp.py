@@ -52,22 +52,34 @@ def parse_message(raw: str) -> tuple[str, str, dict[str, Any]]:
     return value["type"], value["id"], value["payload"]
 
 
-def parse_command(payload: dict[str, Any]) -> tuple[str, str, str, dict[str, object]]:
+def parse_command(payload: dict[str, Any]) -> tuple[str, str, str, str | None, dict[str, object]]:
     """Validate the fixed outer command shape; mapper validates typed arguments."""
-    if set(payload) != {"session_id", "command_id", "registry_id", "command"}:
+    if set(payload) not in (
+        {"session_id", "command_id", "registry_id", "command"},
+        {"session_id", "command_id", "registry_id", "correlation_id", "command"},
+    ):
         raise ValueError("invalid_command")
-    session_id, command_id, registry_id, command = (
+    session_id, command_id, registry_id, correlation_id, command = (
         payload["session_id"],
         payload["command_id"],
         payload["registry_id"],
+        payload.get("correlation_id"),
         payload["command"],
     )
     UUID(str(session_id))
     UUID(str(command_id))
     if not isinstance(registry_id, str) or not 1 <= len(registry_id) <= 64:
         raise ValueError("invalid_command")
+    if correlation_id is not None:
+        UUID(str(correlation_id))
     if not isinstance(command, dict) or not 1 <= len(command) <= 4:
         raise ValueError("invalid_command")
     if not all(isinstance(key, str) and len(key) <= 64 for key in command):
         raise ValueError("invalid_command")
-    return str(session_id), str(command_id), registry_id, command
+    return (
+        str(session_id),
+        str(command_id),
+        registry_id,
+        str(correlation_id) if correlation_id is not None else None,
+        command,
+    )

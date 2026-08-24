@@ -45,7 +45,10 @@ async def test_dispatch_requires_active_installation_scoped_exposed_entity(
     )
     assert outcome.status == "success"
     router.dispatch.assert_awaited_once()
-    audit = (await session.scalars(select(AuditEvent))).one()
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "command_dispatch")
+    )
+    assert audit is not None
     assert audit.request_id == str(command_id)
     assert audit.payload_redacted_json == {
         "registry_id": "stable-light",
@@ -113,6 +116,51 @@ async def test_session_registry_has_bounded_cloud_timeout() -> None:
     )
     assert outcome.status == "timeout"
     assert outcome.error_code == "COMMAND_TIMEOUT"
+
+
+async def test_diagnostics_distinguish_evcp_sent_from_connector_received(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_registry_id = "stable-light"
+    await session.commit()
+    command_id, correlation_id, session_id = uuid4(), uuid4(), uuid4()
+    router = AsyncMock()
+    router.dispatch.return_value = CommandResultPayload(
+        session_id=session_id,
+        command_id=command_id,
+        correlation_id=correlation_id,
+        status="timeout",
+        error_code="COMMAND_TIMEOUT",
+    )
+
+    outcome = await CommandDispatchService(session, router).dispatch(
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+        "stable-light",
+        PowerCommand(operation="power_on"),
+        command_id=command_id,
+        correlation_id=correlation_id,
+    )
+
+    assert outcome.status == "timeout"
+    events = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.payload_redacted_json["correlation_id"].as_string()
+                    == str(correlation_id)
+                )
+                .order_by(AuditEvent.created_at)
+            )
+        ).all()
+    )
+    sent = next(event for event in events if event.event_type == "evcp.command_sent")
+    summary = next(event for event in events if event.event_type == "command.final_summary")
+    assert sent.result == "sent"
+    assert summary.payload_redacted_json["connector_received"] is False
+    assert summary.payload_redacted_json["service_result"] is None
 
 
 async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:

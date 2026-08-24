@@ -121,17 +121,22 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
     payload = {
         "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
         "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
+        "correlation_id": "cbb498ed-ad8e-4686-8f44-69c6bec37c1a",
         "registry_id": "stable-light",
         "command": {"operation": "power_on"},
     }
     executor.async_execute.return_value = CommandResult(payload["command_id"], "success")
     await connection._handle_command(websocket, payload["session_id"], payload)
     executor.async_execute.assert_awaited_once_with(
-        payload["command_id"], "stable-light", {"operation": "power_on"}
+        payload["command_id"],
+        "stable-light",
+        {"operation": "power_on"},
+        correlation_id=payload["correlation_id"],
     )
     sent = websocket.send_json.await_args.args[0]
     assert sent["type"] == "command_result"
     assert sent["payload"]["command_id"] == payload["command_id"]
+    assert sent["payload"]["correlation_id"] == payload["correlation_id"]
     assert sent["payload"]["status"] == "success"
 
     websocket.reset_mock()
@@ -139,3 +144,7 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
     await connection._handle_command(websocket, "different-session", payload)
     executor.async_execute.assert_not_awaited()
     assert websocket.send_json.await_args.args[0]["payload"]["status"] == "stale_session"
+    assert (
+        websocket.send_json.await_args.args[0]["payload"]["correlation_id"]
+        == payload["correlation_id"]
+    )

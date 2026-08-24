@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -25,6 +25,7 @@ from apps.cloud_api.app.domain.models import (
     AlexaDiscoveryDelivery,
     AlexaDiscoverySnapshot,
     AlexaOAuthToken,
+    AuditEvent,
     Entity,
 )
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
@@ -681,6 +682,121 @@ async def test_light_capabilities_state_and_typed_command_dispatch(
         "Alexa.BrightnessController",
         "Alexa.ColorController",
     } <= interfaces
+    await client.aclose()
+
+
+async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
+    entity.ha_registry_id = "office-cover-registry"
+    entity.ha_domain = "cover"
+    entity.supported_features = 11
+    entity.alexa_cover_mode = "discrete"
+    entity.state = "unknown"
+    entity.voice_name = "tapparella ufficio test"
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_diagnostic_chain")
+
+    async def dispatched(*args: object) -> CommandResultPayload:
+        correlation_id = args[5]
+        assert isinstance(correlation_id, UUID)
+        command_id = args[1]
+        assert isinstance(command_id, UUID)
+        return CommandResultPayload(
+            session_id=uuid4(),
+            command_id=command_id,
+            correlation_id=correlation_id,
+            status="success",
+            diagnostics=[
+                {
+                    "event_type": "connector.command_received",
+                    "correlation_id": str(correlation_id),
+                    "command_id": str(command_id),
+                    "operation": "open",
+                },
+                {
+                    "event_type": "connector.entity_resolved",
+                    "correlation_id": str(correlation_id),
+                    "ha_entity_id": entity.ha_entity_id,
+                    "state_before": "unknown",
+                },
+                {
+                    "event_type": "homeassistant.service_call",
+                    "correlation_id": str(correlation_id),
+                    "domain": "cover",
+                    "service": "open_cover",
+                    "target": {"entity_id": entity.ha_entity_id},
+                    "service_data": {},
+                },
+                {
+                    "event_type": "homeassistant.service_result",
+                    "correlation_id": str(correlation_id),
+                    "success": True,
+                    "duration_ms": 12.5,
+                },
+            ],
+        )
+
+    monkeypatch.setattr(sessions, "dispatch", AsyncMock(side_effect=dispatched))  # type: ignore[attr-defined]
+    body = _directive(
+        token,
+        "Alexa.ModeController",
+        "SetMode",
+        "ev1_diag_clean_native_office_cover_v1",
+    )
+    body["directive"]["header"]["instance"] = "Position"  # type: ignore[index]
+    body["directive"]["payload"] = {"mode": "Position.Up"}  # type: ignore[index]
+    body["directive"]["payload"]["client_secret"] = "never-store-client-secret"  # type: ignore[index]
+    client = await _client(session)
+
+    response = await client.post("/alexa/v1/directive", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["event"]["header"]["name"] == "Response"
+    events = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.source.in_(["alexa", "connector", "homeassistant"]))
+                .order_by(AuditEvent.created_at)
+            )
+        ).all()
+    )
+    event_types = [event.event_type for event in events]
+    for expected in (
+        "alexa.directive_received",
+        "alexa.endpoint_resolved",
+        "alexa.mapping_result",
+        "dispatcher.command_created",
+        "evcp.command_sent",
+        "connector.command_received",
+        "connector.entity_resolved",
+        "homeassistant.service_call",
+        "homeassistant.service_result",
+        "command.final_summary",
+        "alexa.response_generated",
+    ):
+        assert expected in event_types
+    correlations = {
+        event.payload_redacted_json.get("correlation_id")
+        for event in events
+        if event.payload_redacted_json.get("correlation_id")
+    }
+    assert len(correlations) == 1
+    mapping = next(event for event in events if event.event_type == "alexa.mapping_result")
+    assert mapping.payload_redacted_json["operation"] == "open"
+    service_call = next(
+        event for event in events if event.event_type == "homeassistant.service_call"
+    )
+    assert service_call.payload_redacted_json["service"] == "open_cover"
+    serialized = json.dumps([event.payload_redacted_json for event in events])
+    assert token not in serialized
+    assert "BearerToken" not in serialized
+    assert "never-store-client-secret" not in serialized
+    assert all(event.source == "alexa" for event in events)
     await client.aclose()
 
 
