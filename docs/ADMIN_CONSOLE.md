@@ -18,7 +18,12 @@ system. Open `/dashboard` after logging in at `/login`.
   for an entity belonging to the selected tenant and installation. For `cover` entities it also
   selects the feature-validated Alexa exposure mode (discrete, percentage, hybrid or automatic).
 - `/activity` combines user/audit and connector lifecycle events. Filters remain bound
-  to the selected tenant; foreign installation and entity identifiers return 404.
+  to the selected tenant; foreign installation and entity identifiers return 404. The page can
+  export every event matching the active filters as JSON or CSV without changing retention data.
+  Exports contain the complete stored diagnostic JSON plus request/correlation, command, endpoint,
+  Home Assistant entity and operation identifiers. They also include the current Home Assistant,
+  Connector and EVCP compatibility metadata for each referenced installation. Export responses are
+  admin-only, tenant-scoped, marked `no-store` and delivered as attachments.
 - `/system` reports tenant object counts, retained samples, the authoritative PostgreSQL
   database size in MB, retention policy, and last/next maintenance execution.
 

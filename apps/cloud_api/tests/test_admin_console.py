@@ -1,5 +1,8 @@
 """Authenticated console, tenant isolation and safe command tests."""
 
+import csv
+import io
+import json
 import re
 from datetime import UTC, datetime
 from typing import cast
@@ -21,6 +24,7 @@ from apps.cloud_api.app.domain.models import (
     Entity,
     Installation,
     MaintenanceRun,
+    OperationalEvent,
 )
 from apps.cloud_api.app.evcp import CommandResultPayload, CommandStatus, sessions
 from apps.cloud_api.app.main import app
@@ -1018,6 +1022,184 @@ async def test_activity_filters_and_expands_correlated_alexa_json(
     assert "cover.office" in activity.text
     assert "ev1_test" in activity.text
     assert "open" in activity.text
+    assert "Esporta attività JSON" in activity.text
+    assert "Esporta attività CSV" in activity.text
+    assert f'name="correlation_id" value="{correlation_id}"' in activity.text
+    await client.aclose()
+
+
+async def test_activity_export_requires_admin_and_rejects_foreign_installation(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    anonymous = await _client(session)
+    response = await anonymous.get("/activity/export", params={"format": "json"})
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    await anonymous.aclose()
+
+    readonly = await _client(session)
+    await _login(readonly, "readonly@example.test", "readonly-password-123")
+    assert (await readonly.get("/activity/export", params={"format": "json"})).status_code == 403
+    await readonly.aclose()
+
+    owner = await _client(session)
+    await _login(owner, "owner@example.test", "owner-password-123")
+    foreign = await owner.get(
+        "/activity/export",
+        params={"format": "json", "installation_id": str(seeded_domain.installation_b_id)},
+    )
+    assert foreign.status_code == 404
+    await owner.aclose()
+
+
+async def test_activity_json_export_is_filtered_complete_tenant_scoped_and_read_only(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    correlation_id = "33333333-3333-3333-3333-333333333333"
+    full_payload = {
+        "correlation_id": correlation_id,
+        "command_id": "44444444-4444-4444-4444-444444444444",
+        "endpoint_id": "ev1_export_test",
+        "ha_entity_id": "cover.export_test",
+        "operation": "open",
+        "nested": {"values": list(range(250)), "message": "diagnostica-" * 200},
+    }
+    installation = await session.get(Installation, seeded_domain.installation_a_id)
+    assert installation is not None
+    installation.ha_version = "2026.8.1"
+    installation.connector_version = "0.1.8-beta.9"
+    installation.connector_protocol_version = 1
+    installation.connector_compatibility_status = "OK"
+    installation.connector_compatibility_reason = "compatible"
+    installation.last_seen_at = datetime.now(UTC)
+    session.add_all(
+        [
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="alexa",
+                event_type="alexa.directive_received",
+                request_id="amazon-export-request",
+                payload_redacted_json=full_payload,
+                result="success",
+            ),
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                source="admin_console",
+                event_type="excluded.by.filter",
+                payload_redacted_json={"correlation_id": correlation_id},
+                result="success",
+            ),
+            AuditEvent(
+                tenant_id=seeded_domain.tenant_b_id,
+                installation_id=seeded_domain.installation_b_id,
+                source="alexa",
+                event_type="foreign.private.event",
+                payload_redacted_json={"correlation_id": correlation_id, "secret": "foreign"},
+                result="success",
+            ),
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    before = list((await session.scalars(select(AuditEvent))).all())
+
+    response = await client.get(
+        "/activity/export",
+        params={
+            "format": "json",
+            "installation_id": str(seeded_domain.installation_a_id),
+            "source": "alexa",
+            "outcome": "success",
+            "correlation_id": correlation_id,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"].endswith('.json"')
+    exported = response.json()
+    assert exported["tenant_id"] == str(seeded_domain.tenant_a_id)
+    assert exported["filters"]["source"] == "alexa"
+    assert exported["filters"]["correlation_id"] == correlation_id
+    assert len(exported["activities"]) == 1
+    event = exported["activities"][0]
+    assert event["request_id"] == "amazon-export-request"
+    assert event["correlation_id"] == correlation_id
+    assert event["command_id"] == full_payload["command_id"]
+    assert event["endpoint_id"] == "ev1_export_test"
+    assert event["ha_entity_id"] == "cover.export_test"
+    assert event["operation"] == "open"
+    assert event["payload"] == full_payload
+    assert "foreign.private.event" not in response.text
+    assert len(exported["installations"]) == 1
+    metadata = exported["installations"][0]
+    assert metadata["installation_id"] == str(seeded_domain.installation_a_id)
+    assert metadata["name"] == "Home A"
+    assert metadata["ha_version"] == "2026.8.1"
+    assert metadata["connector_version"] == "0.1.8-beta.9"
+    assert metadata["connector_protocol_version"] == 1
+    assert metadata["compatibility_status"] == "OK"
+    assert metadata["compatibility_reason"] == "compatible"
+    assert metadata["last_seen"] is not None
+    after = list((await session.scalars(select(AuditEvent))).all())
+    assert [item.id for item in after] == [item.id for item in before]
+    await client.aclose()
+
+
+async def test_activity_csv_export_contains_complete_payload_and_operational_fields(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    payload = {
+        "correlation_id": "55555555-5555-5555-5555-555555555555",
+        "command_id": "66666666-6666-6666-6666-666666666666",
+        "endpoint_id": "ev1_csv",
+        "ha_entity_id": "cover.csv",
+        "operation": "stop",
+        "diagnostics": [{"stage": "received", "details": "x" * 5000}],
+    }
+    session.add(
+        OperationalEvent(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            entity_id=seeded_domain.entity_a_id,
+            event_type="connector.command_received",
+            source="alexa",
+            outcome="success",
+            metadata_json=payload,
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    response = await client.get(
+        "/activity/export",
+        params={
+            "format": "csv",
+            "event_type": "connector.command_received",
+            "endpoint_id": "ev1_csv",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.headers["content-disposition"].endswith('.csv"')
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["event_type"] == "connector.command_received"
+    assert row["source"] == "alexa"
+    assert row["outcome"] == "success"
+    assert row["correlation_id"] == payload["correlation_id"]
+    assert row["command_id"] == payload["command_id"]
+    assert row["endpoint_id"] == "ev1_csv"
+    assert row["ha_entity_id"] == "cover.csv"
+    assert row["operation"] == "stop"
+    assert row["installation_id"] == str(seeded_domain.installation_a_id)
+    assert json.loads(row["payload_json"]) == payload
     await client.aclose()
 
 

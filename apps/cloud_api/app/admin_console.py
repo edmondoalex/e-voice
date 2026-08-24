@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import csv
 import html
+import io
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -13,7 +15,7 @@ from typing import Annotated, Any, TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +65,7 @@ class ActivityRow(TypedDict):
     source: str
     result: str
     installation_id: UUID | None
+    request_id: str | None
     detail: dict[str, Any]
 
 
@@ -960,6 +963,29 @@ async def send_command(
     return response
 
 
+ACTIVITY_FILTER_PARAMS = (
+    "installation_id",
+    "source",
+    "outcome",
+    "event_type",
+    "entity_id",
+    "correlation_id",
+    "command_id",
+    "endpoint_id",
+    "ha_entity_id",
+    "from",
+    "to",
+)
+
+
+def _activity_export_inputs(request: Request) -> str:
+    return "".join(
+        f'<input type="hidden" name="{_e(key)}" value="{_e(request.query_params[key])}">'
+        for key in ACTIVITY_FILTER_PARAMS
+        if request.query_params.get(key)
+    )
+
+
 @router.get("/activity", response_class=HTMLResponse)
 async def activity(
     request: Request,
@@ -1050,6 +1076,7 @@ async def activity(
                     source=e.source,
                     result=e.result,
                     installation_id=e.installation_id,
+                    request_id=e.request_id,
                     detail=e.payload_redacted_json,
                 )
                 for e in audits
@@ -1061,6 +1088,7 @@ async def activity(
                     source=e.source,
                     result=e.outcome,
                     installation_id=e.installation_id,
+                    request_id=None,
                     detail=e.metadata_json,
                 )
                 for e in operations
@@ -1086,11 +1114,221 @@ async def activity(
     )
     csrf = _csrf(context)
     body = f'''<form method="get"><input name="installation_id" placeholder="ID installazione" value="{_e(installation_filter)}"><input name="source" placeholder="Fonte (es. alexa)" value="{_e(source_filter)}"><input name="outcome" placeholder="Esito" value="{_e(outcome)}"><input name="correlation_id" placeholder="Correlation ID" value="{_e(diagnostic_filters["correlation_id"])}"><input name="command_id" placeholder="Command ID" value="{_e(diagnostic_filters["command_id"])}"><input name="endpoint_id" placeholder="Endpoint ID" value="{_e(diagnostic_filters["endpoint_id"])}"><input name="ha_entity_id" placeholder="HA entity ID" value="{_e(diagnostic_filters["ha_entity_id"])}"><button>Filtra</button></form><table><thead><tr><th>Data</th><th>Evento / JSON</th><th>Fonte</th><th>Esito</th><th>Correlation</th><th>Command</th><th>Endpoint</th><th>HA entity</th><th>Operation</th><th>Installazione</th></tr></thead><tbody>{rows or "<tr><td colspan=10>Nessuna attività</td></tr>"}</tbody></table>'''
+    body = f"""<form method="get" action="/activity/export" class="actions">{_activity_export_inputs(request)}<button name="format" value="json">Esporta attività JSON</button><button name="format" value="csv">Esporta attività CSV</button></form>{body}"""
     response = HTMLResponse(_layout("Attività", body, context, csrf, "activity"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+def _export_activity_row(
+    event: AuditEvent | OperationalEvent,
+    installation_metadata: dict[str, dict[str, object | None]],
+) -> dict[str, object | None]:
+    if isinstance(event, AuditEvent):
+        payload = event.payload_redacted_json
+        outcome = event.result
+        request_id: object | None = event.request_id
+    else:
+        payload = event.metadata_json
+        outcome = event.outcome
+        request_id = payload.get("request_id")
+    installation_id = str(event.installation_id) if event.installation_id else None
+    installation = installation_metadata.get(installation_id or "", {})
+    return {
+        "timestamp": event.created_at.isoformat(),
+        "event_type": event.event_type,
+        "source": event.source,
+        "outcome": outcome,
+        "request_id": request_id,
+        "correlation_id": payload.get("correlation_id"),
+        "command_id": payload.get("command_id"),
+        "endpoint_id": payload.get("endpoint_id"),
+        "ha_entity_id": payload.get("ha_entity_id"),
+        "operation": payload.get("operation"),
+        "installation_id": installation_id,
+        "ha_version": installation.get("ha_version"),
+        "connector_version": installation.get("connector_version"),
+        "connector_protocol_version": installation.get("connector_protocol_version"),
+        "connector_compatibility_status": installation.get("compatibility_status"),
+        "connector_compatibility_reason": installation.get("compatibility_reason"),
+        "payload": payload,
+    }
+
+
+@router.get("/activity/export")
+async def export_activity(
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    format: str = "json",
+) -> Response:
+    """Export every tenant-scoped Activity event matching the page filters."""
+    _admin(context)
+    if format not in {"json", "csv"}:
+        raise HTTPException(422, "Formato export non valido")
+
+    installation_filter = request.query_params.get("installation_id", "")
+    installation_id: UUID | None = None
+    if installation_filter:
+        try:
+            installation_id = UUID(installation_filter)
+        except ValueError as error:
+            raise HTTPException(422, "Filtro non valido") from error
+        await _installation(session, context, installation_id)
+
+    aq = select(AuditEvent).where(AuditEvent.tenant_id == context.tenant_id)
+    oq = select(OperationalEvent).where(OperationalEvent.tenant_id == context.tenant_id)
+    if installation_id:
+        aq = aq.where(AuditEvent.installation_id == installation_id)
+        oq = oq.where(OperationalEvent.installation_id == installation_id)
+
+    outcome = request.query_params.get("outcome", "")
+    if outcome:
+        aq = aq.where(AuditEvent.result == outcome)
+        oq = oq.where(OperationalEvent.outcome == outcome)
+    source_filter = request.query_params.get("source", "")
+    if source_filter:
+        aq = aq.where(AuditEvent.source == source_filter)
+        oq = oq.where(OperationalEvent.source == source_filter)
+    event_type = request.query_params.get("event_type", "")
+    if event_type:
+        aq = aq.where(AuditEvent.event_type == event_type)
+        oq = oq.where(OperationalEvent.event_type == event_type)
+
+    entity_filter = request.query_params.get("entity_id", "")
+    if entity_filter:
+        try:
+            entity_id = UUID(entity_filter)
+        except ValueError as error:
+            raise HTTPException(422, "Filtro non valido") from error
+        owned = await session.scalar(
+            select(Entity.id)
+            .join(Installation)
+            .where(Entity.id == entity_id, Installation.tenant_id == context.tenant_id)
+        )
+        if owned is None:
+            raise HTTPException(404, "Entità non trovata")
+        oq = oq.where(OperationalEvent.entity_id == entity_id)
+        aq = aq.where(AuditEvent.payload_redacted_json["entity_id"].as_string() == str(entity_id))
+
+    for key in ("correlation_id", "command_id", "endpoint_id", "ha_entity_id"):
+        if value := request.query_params.get(key, ""):
+            aq = aq.where(AuditEvent.payload_redacted_json[key].as_string() == value)
+            oq = oq.where(OperationalEvent.metadata_json[key].as_string() == value)
+
+    date_from, date_to = (request.query_params.get(key, "") for key in ("from", "to"))
+    try:
+        if date_from:
+            start = datetime.fromisoformat(date_from).replace(tzinfo=UTC)
+            aq = aq.where(AuditEvent.created_at >= start)
+            oq = oq.where(OperationalEvent.created_at >= start)
+        if date_to:
+            end = datetime.fromisoformat(date_to).replace(tzinfo=UTC) + timedelta(days=1)
+            aq = aq.where(AuditEvent.created_at < end)
+            oq = oq.where(OperationalEvent.created_at < end)
+    except ValueError as error:
+        raise HTTPException(422, "Data non valida") from error
+
+    audits = list((await session.scalars(aq.order_by(AuditEvent.created_at.desc()))).all())
+    operations = list(
+        (await session.scalars(oq.order_by(OperationalEvent.created_at.desc()))).all()
+    )
+    all_activity_events: list[AuditEvent | OperationalEvent] = [*audits, *operations]
+    installation_ids = {
+        event.installation_id for event in all_activity_events if event.installation_id
+    }
+    if installation_id:
+        installation_ids.add(installation_id)
+    installations = (
+        list(
+            (
+                await session.scalars(
+                    select(Installation).where(
+                        Installation.tenant_id == context.tenant_id,
+                        Installation.id.in_(installation_ids),
+                    )
+                )
+            ).all()
+        )
+        if installation_ids
+        else []
+    )
+    installation_metadata: dict[str, dict[str, object | None]] = {
+        str(item.id): {
+            "installation_id": str(item.id),
+            "name": item.name,
+            "ha_version": item.ha_version,
+            "connector_version": item.connector_version,
+            "connector_protocol_version": item.connector_protocol_version,
+            "compatibility_status": _compatibility_status(item).value,
+            "compatibility_reason": item.connector_compatibility_reason,
+            "last_seen": item.last_seen_at.isoformat() if item.last_seen_at else None,
+        }
+        for item in installations
+    }
+    rows = sorted(
+        (_export_activity_row(event, installation_metadata) for event in all_activity_events),
+        key=lambda row: str(row["timestamp"]),
+        reverse=True,
+    )
+    now = datetime.now(UTC)
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    headers = {
+        "Cache-Control": "no-store",
+        "Content-Disposition": f'attachment; filename="ekonex-voice-activity-{stamp}.{format}"',
+    }
+    if format == "json":
+        return JSONResponse(
+            {
+                "exported_at": now.isoformat(),
+                "tenant_id": str(context.tenant_id),
+                "filters": {
+                    key: request.query_params[key]
+                    for key in ACTIVITY_FILTER_PARAMS
+                    if request.query_params.get(key)
+                },
+                "connector_requirements": {
+                    "minimum_supported": MINIMUM_SUPPORTED_CONNECTOR_VERSION,
+                    "recommended": RECOMMENDED_CONNECTOR_VERSION,
+                    "evcp_protocol": REQUIRED_EVCP_PROTOCOL_VERSION,
+                },
+                "installations": list(installation_metadata.values()),
+                "activities": rows,
+            },
+            headers=headers,
+        )
+
+    fieldnames = [
+        "timestamp",
+        "event_type",
+        "source",
+        "outcome",
+        "request_id",
+        "correlation_id",
+        "command_id",
+        "endpoint_id",
+        "ha_entity_id",
+        "operation",
+        "installation_id",
+        "ha_version",
+        "connector_version",
+        "connector_protocol_version",
+        "connector_compatibility_status",
+        "connector_compatibility_reason",
+        "payload_json",
+    ]
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        csv_row = {key: row.get(key) for key in fieldnames if key != "payload_json"}
+        csv_row["payload_json"] = json.dumps(
+            row["payload"], ensure_ascii=False, separators=(",", ":"), default=str
+        )
+        writer.writerow(csv_row)
+    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @router.get("/system", response_class=HTMLResponse)
