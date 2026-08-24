@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
@@ -174,10 +174,22 @@ inbound_adapter: TypeAdapter[InboundMessage] = TypeAdapter(InboundMessage)
 database_dependency = Depends(get_database_session)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SessionHandle:
     session_id: UUID
     websocket: WebSocket
+    connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass(slots=True)
+class PendingCommand:
+    """A command bound to the exact session on which it was sent."""
+
+    future: asyncio.Future[CommandResultPayload]
+    session_id: UUID
+    diagnostic: dict[str, object]
+    sent: bool = False
 
 
 class ConnectorSessionRegistry:
@@ -185,42 +197,80 @@ class ConnectorSessionRegistry:
 
     def __init__(self) -> None:
         self._sessions: dict[UUID, SessionHandle] = {}
-        self._pending: dict[tuple[UUID, UUID], asyncio.Future[CommandResultPayload]] = {}
+        self._pending: dict[tuple[UUID, UUID], PendingCommand] = {}
         self._completed: dict[tuple[UUID, UUID], CommandResultPayload] = {}
         self._command_fingerprints: dict[tuple[UUID, UUID], str] = {}
         self._lock = asyncio.Lock()
+        self._replacement_locks: dict[UUID, asyncio.Lock] = {}
+        self._transitioning: set[UUID] = set()
 
     async def replace(self, installation_id: UUID, handle: SessionHandle) -> None:
-        async with self._lock:
-            previous = self._sessions.get(installation_id)
-            self._sessions[installation_id] = handle
-            if previous is not None and previous.session_id != handle.session_id:
-                for key, future in self._pending.items():
-                    if key[0] == installation_id and not future.done():
-                        future.set_result(
-                            CommandResultPayload(
-                                session_id=previous.session_id,
-                                command_id=key[1],
-                                status="stale_session",
-                                error_code="STALE_SESSION",
-                            )
-                        )
-        if previous is not None and previous.session_id != handle.session_id:
+        replacement_lock = self._replacement_locks.setdefault(installation_id, asyncio.Lock())
+        async with replacement_lock:
+            async with self._lock:
+                previous = self._sessions.get(installation_id)
+                if previous is None or previous.session_id == handle.session_id:
+                    self._sessions[installation_id] = handle
+                    return
+                self._transitioning.add(installation_id)
+                draining = [
+                    pending
+                    for key, pending in self._pending.items()
+                    if key[0] == installation_id
+                    and pending.session_id == previous.session_id
+                    and pending.sent
+                    and not pending.future.done()
+                ]
+            try:
+                if draining:
+                    await asyncio.gather(
+                        *(asyncio.shield(pending.future) for pending in draining),
+                        return_exceptions=True,
+                    )
+            except asyncio.CancelledError:
+                async with self._lock:
+                    self._transitioning.discard(installation_id)
+                raise
+            async with self._lock:
+                if self._sessions.get(installation_id) is previous:
+                    self._sessions.pop(installation_id, None)
+                self._sessions[installation_id] = handle
+                self._transitioning.discard(installation_id)
             await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+
+    async def touch(self, installation_id: UUID, session_id: UUID) -> bool:
+        """Refresh liveness only for the currently owned session."""
+        async with self._lock:
+            current = self._sessions.get(installation_id)
+            if current is None or current.session_id != session_id:
+                return False
+            current.last_seen = datetime.now(UTC)
+            return True
 
     async def remove(self, installation_id: UUID, session_id: UUID) -> None:
         async with self._lock:
             current = self._sessions.get(installation_id)
             if current is not None and current.session_id == session_id:
                 self._sessions.pop(installation_id, None)
-                for key, future in list(self._pending.items()):
-                    if key[0] == installation_id and not future.done():
-                        future.set_result(
+                for key, pending in list(self._pending.items()):
+                    if (
+                        key[0] == installation_id
+                        and pending.session_id == session_id
+                        and not pending.future.done()
+                    ):
+                        pending.future.set_result(
                             CommandResultPayload(
                                 session_id=session_id,
                                 command_id=key[1],
                                 status="stale_session",
                                 error_code="STALE_SESSION",
+                                diagnostics=[
+                                    _session_diagnostic(
+                                        installation_id,
+                                        current,
+                                        "session_removed_before_result",
+                                    )
+                                ],
                             )
                         )
 
@@ -257,29 +307,70 @@ class ConnectorSessionRegistry:
                     command_id=command_id,
                     status="unavailable",
                     error_code="INSTALLATION_OFFLINE",
+                    diagnostics=[
+                        _session_diagnostic(installation_id, None, "no_registered_session")
+                    ],
                 )
-            future = self._pending.get(key)
-            if future is None:
+            diagnostic = _session_diagnostic(
+                installation_id,
+                handle,
+                "session_transitioning"
+                if installation_id in self._transitioning
+                else _stale_reason(handle),
+            )
+            stale_reason = str(diagnostic["reason"])
+            if stale_reason != "active_session_ready":
+                return CommandResultPayload(
+                    session_id=handle.session_id,
+                    command_id=command_id,
+                    status="stale_session",
+                    error_code="STALE_SESSION",
+                    correlation_id=correlation_id,
+                    diagnostics=[diagnostic],
+                )
+            pending = self._pending.get(key)
+            if pending is None:
                 future = asyncio.get_running_loop().create_future()
-                self._pending[key] = future
+                pending = PendingCommand(
+                    future=future,
+                    session_id=handle.session_id,
+                    diagnostic=diagnostic,
+                )
+                self._pending[key] = pending
                 self._command_fingerprints[key] = fingerprint
                 should_send = True
             else:
+                future = pending.future
                 should_send = False
-        if should_send:
-            await handle.websocket.send_json(
-                _response(
-                    "command",
-                    command_id,
-                    {
-                        "session_id": str(handle.session_id),
-                        "command_id": str(command_id),
-                        "registry_id": registry_id,
-                        "correlation_id": str(correlation_id) if correlation_id else None,
-                        "command": command,
-                    },
-                )
-            )
+            if should_send:
+                try:
+                    await handle.websocket.send_json(
+                        _response(
+                            "command",
+                            command_id,
+                            {
+                                "session_id": str(handle.session_id),
+                                "command_id": str(command_id),
+                                "registry_id": registry_id,
+                                "correlation_id": str(correlation_id) if correlation_id else None,
+                                "command": command,
+                            },
+                        )
+                    )
+                    pending.sent = True
+                except Exception:
+                    self._pending.pop(key, None)
+                    self._command_fingerprints.pop(key, None)
+                    failed = _session_diagnostic(installation_id, handle, "websocket_send_failed")
+                    return CommandResultPayload(
+                        session_id=handle.session_id,
+                        command_id=command_id,
+                        status="stale_session",
+                        error_code="STALE_SESSION",
+                        correlation_id=correlation_id,
+                        diagnostics=[failed],
+                    )
+        result: CommandResultPayload
         try:
             async with asyncio.timeout(timeout_seconds):
                 result = await asyncio.shield(future)
@@ -289,9 +380,14 @@ class ConnectorSessionRegistry:
                 command_id=command_id,
                 status="timeout",
                 error_code="COMMAND_TIMEOUT",
+                correlation_id=correlation_id,
+                diagnostics=[pending.diagnostic],
             )
+            if not future.done():
+                future.set_result(result)
         async with self._lock:
-            self._pending.pop(key, None)
+            if self._pending.get(key) is pending:
+                self._pending.pop(key, None)
             self._completed[key] = result
             if len(self._completed) > 1024:
                 oldest = next(iter(self._completed))
@@ -311,13 +407,54 @@ class ConnectorSessionRegistry:
                 or result.session_id != session_id
             ):
                 return False
-            future = self._pending.get((installation_id, result.command_id))
-            if future is None and (installation_id, result.command_id) in self._completed:
+            pending = self._pending.get((installation_id, result.command_id))
+            if pending is None and (installation_id, result.command_id) in self._completed:
                 return True
-            if future is None or future.done():
+            if pending is None or pending.session_id != session_id or pending.future.done():
                 return False
-            future.set_result(result)
+            result.diagnostics = [pending.diagnostic, *result.diagnostics[:15]]
+            pending.future.set_result(result)
             return True
+
+
+def _stale_reason(handle: SessionHandle) -> str:
+    now = datetime.now(UTC)
+    last_seen = handle.last_seen
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=UTC)
+    if (now - last_seen).total_seconds() > LIVENESS_TIMEOUT_SECONDS:
+        return "heartbeat_expired"
+    client_state = getattr(handle.websocket, "client_state", None)
+    application_state = getattr(handle.websocket, "application_state", None)
+    if client_state != WebSocketState.CONNECTED:
+        return "websocket_client_not_connected"
+    if isinstance(application_state, WebSocketState) and (
+        application_state != WebSocketState.CONNECTED
+    ):
+        return "websocket_application_not_connected"
+    return "active_session_ready"
+
+
+def _session_diagnostic(
+    installation_id: UUID,
+    handle: SessionHandle | None,
+    reason: str,
+) -> dict[str, object]:
+    diagnostic: dict[str, object] = {
+        "event_type": "evcp.session_decision",
+        "requested_installation_id": str(installation_id),
+        "active_session_id": str(handle.session_id) if handle else None,
+        "registry_session_id": str(handle.session_id) if handle else None,
+        "connection_id": id(handle.websocket) if handle else None,
+        "connected_at": handle.connected_at.isoformat() if handle else None,
+        "last_seen": handle.last_seen.isoformat() if handle else None,
+        "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
+        "stale_threshold_seconds": LIVENESS_TIMEOUT_SECONDS,
+        "reason": reason,
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    logger.info("evcp_session_decision %s", diagnostic)
+    return diagnostic
 
 
 sessions = ConnectorSessionRegistry()
@@ -485,6 +622,7 @@ async def connector_websocket(
     session_id = uuid4()
     installation_id = credential.installation_id
     registered = False
+    session_handle: SessionHandle | None = None
     try:
         hello = await _receive(websocket, HANDSHAKE_TIMEOUT_SECONDS)
         if not isinstance(hello, Hello) or hello.payload.installation_id != installation_id:
@@ -495,9 +633,8 @@ async def connector_websocket(
         installation.ha_version = hello.payload.ha_version
         installation.last_seen_at = datetime.now(UTC)
         await database.commit()
-        await sessions.replace(
-            installation_id, SessionHandle(session_id=session_id, websocket=websocket)
-        )
+        session_handle = SessionHandle(session_id=session_id, websocket=websocket)
+        await sessions.replace(installation_id, session_handle)
         registered = True
         database.add(
             OperationalEvent(
@@ -506,7 +643,9 @@ async def connector_websocket(
                 event_type="connector_session",
                 source="connector",
                 outcome="connected",
-                metadata_json={},
+                metadata_json=_session_diagnostic(
+                    installation_id, session_handle, "active_session_ready"
+                ),
             )
         )
         await database.commit()
@@ -525,6 +664,9 @@ async def connector_websocket(
         logger.info("Connector EVCP session established; awaiting entity inventory")
         while True:
             message = await _receive(websocket, LIVENESS_TIMEOUT_SECONDS)
+            if not await sessions.touch(installation_id, session_id):
+                await _safe_close(websocket, 4008, "SESSION_REPLACED")
+                return
             if isinstance(message, Heartbeat):
                 if message.payload.session_id != session_id:
                     await _safe_close(websocket, 4002, "INVALID_MESSAGE")
@@ -563,6 +705,7 @@ async def connector_websocket(
         pass
     finally:
         if registered:
+            assert session_handle is not None
             inventory_batches.clear_session(installation_id, session_id)
             await sessions.remove(installation_id, session_id)
             database.add(
@@ -572,7 +715,9 @@ async def connector_websocket(
                     event_type="connector_session",
                     source="connector",
                     outcome="disconnected",
-                    metadata_json={},
+                    metadata_json=_session_diagnostic(
+                        installation_id, session_handle, "websocket_finalized"
+                    ),
                 )
             )
             await database.commit()

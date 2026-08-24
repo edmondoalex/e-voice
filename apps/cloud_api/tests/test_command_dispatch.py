@@ -1,6 +1,7 @@
 """M6 cloud command authorization, routing and correlation tests."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -163,12 +164,13 @@ async def test_diagnostics_distinguish_evcp_sent_from_connector_received(
     assert summary.payload_redacted_json["service_result"] is None
 
 
-async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -> None:
+async def test_reconnect_drains_old_command_and_old_cleanup_preserves_new_session() -> None:
     registry = ConnectorSessionRegistry()
     installation_id, command_id = uuid4(), uuid4()
+    first_session, second_session = uuid4(), uuid4()
     first, second = AsyncMock(), AsyncMock()
     first.client_state = second.client_state = WebSocketState.CONNECTED
-    await registry.replace(installation_id, SessionHandle(uuid4(), first))
+    await registry.replace(installation_id, SessionHandle(first_session, first))
     pending = asyncio.create_task(
         registry.dispatch(
             installation_id,
@@ -179,9 +181,119 @@ async def test_reconnect_marks_old_session_command_stale_without_waiter_leak() -
         )
     )
     await asyncio.sleep(0)
-    await registry.replace(installation_id, SessionHandle(uuid4(), second))
-    assert (await pending).status == "stale_session"
+    reconnect = asyncio.create_task(
+        registry.replace(installation_id, SessionHandle(second_session, second))
+    )
+    await asyncio.sleep(0)
+    assert not reconnect.done()
+    result = CommandResultPayload(
+        session_id=first_session,
+        command_id=command_id,
+        status="success",
+    )
+    assert await registry.resolve(installation_id, first_session, result)
+    assert (await pending).status == "success"
+    await reconnect
+    await registry.remove(installation_id, first_session)
+    assert registry._sessions[installation_id].session_id == second_session
     assert not registry._pending
+
+
+async def test_heartbeat_keeps_session_valid_and_expired_session_is_stale() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id, session_id = uuid4(), uuid4()
+    websocket = AsyncMock()
+    websocket.client_state = WebSocketState.CONNECTED
+    handle = SessionHandle(
+        session_id,
+        websocket,
+        last_seen=datetime.now(UTC) - timedelta(seconds=74),
+    )
+    await registry.replace(installation_id, handle)
+    assert await registry.touch(installation_id, session_id)
+    command_id = uuid4()
+    command = asyncio.create_task(
+        registry.dispatch(
+            installation_id,
+            command_id,
+            "stable-cover",
+            {"operation": "open"},
+            1.0,
+        )
+    )
+    await asyncio.sleep(0)
+    assert await registry.resolve(
+        installation_id,
+        session_id,
+        CommandResultPayload(
+            session_id=session_id,
+            command_id=command_id,
+            status="success",
+        ),
+    )
+    assert (await command).status == "success"
+
+    expired_installation, expired_session = uuid4(), uuid4()
+    expired_socket = AsyncMock()
+    expired_socket.client_state = WebSocketState.CONNECTED
+    await registry.replace(
+        expired_installation,
+        SessionHandle(
+            expired_session,
+            expired_socket,
+            last_seen=datetime.now(UTC) - timedelta(seconds=76),
+        ),
+    )
+    for _ in range(2):
+        expired = await registry.dispatch(
+            expired_installation,
+            uuid4(),
+            "stable-cover",
+            {"operation": "open"},
+            1.0,
+        )
+        assert expired.status == "stale_session"
+        assert expired.error_code == "STALE_SESSION"
+        diagnostic = expired.diagnostics[0]
+        assert diagnostic["reason"] == "heartbeat_expired"
+        assert diagnostic["active_session_id"] == str(expired_session)
+        assert diagnostic["requested_installation_id"] == str(expired_installation)
+        assert diagnostic["stale_threshold_seconds"] == 75.0
+    expired_socket.send_json.assert_not_awaited()
+
+
+async def test_session_registry_isolates_two_installations() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_a, installation_b = uuid4(), uuid4()
+    session_a, session_b = uuid4(), uuid4()
+    command_a, command_b = uuid4(), uuid4()
+    socket_a, socket_b = AsyncMock(), AsyncMock()
+    socket_a.client_state = socket_b.client_state = WebSocketState.CONNECTED
+    await registry.replace(installation_a, SessionHandle(session_a, socket_a))
+    await registry.replace(installation_b, SessionHandle(session_b, socket_b))
+
+    pending_a = asyncio.create_task(
+        registry.dispatch(installation_a, command_a, "cover-a", {"operation": "open"}, 1.0)
+    )
+    pending_b = asyncio.create_task(
+        registry.dispatch(installation_b, command_b, "cover-b", {"operation": "close"}, 1.0)
+    )
+    await asyncio.sleep(0)
+    assert socket_a.send_json.await_args.args[0]["payload"]["session_id"] == str(session_a)
+    assert socket_b.send_json.await_args.args[0]["payload"]["session_id"] == str(session_b)
+    assert await registry.resolve(
+        installation_a,
+        session_a,
+        CommandResultPayload(session_id=session_a, command_id=command_a, status="success"),
+    )
+    assert not pending_b.done()
+    assert await registry.resolve(
+        installation_b,
+        session_b,
+        CommandResultPayload(session_id=session_b, command_id=command_b, status="success"),
+    )
+    assert (await pending_a).status == "success"
+    assert (await pending_b).status == "success"
 
 
 def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> None:

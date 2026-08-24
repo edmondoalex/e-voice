@@ -200,6 +200,25 @@ class CommandDispatchService:
             if correlation_id is not None
             else await self._router.dispatch(*dispatch_arguments)
         )
+        session_reason = next(
+            (
+                item.get("reason")
+                for item in result.diagnostics
+                if item.get("event_type") == "evcp.session_decision"
+            ),
+            None,
+        )
+        not_sent_reasons = {
+            "no_registered_session",
+            "session_transitioning",
+            "heartbeat_expired",
+            "websocket_client_not_connected",
+            "websocket_application_not_connected",
+            "websocket_send_failed",
+        }
+        command_sent = (
+            result.error_code != "INSTALLATION_OFFLINE" and session_reason not in not_sent_reasons
+        )
         self._session.add(
             AuditEvent(
                 tenant_id=installation.tenant_id,
@@ -210,9 +229,7 @@ class CommandDispatchService:
                 payload_redacted_json=diagnostic
                 | {
                     "session_id": str(result.session_id),
-                    "send_result": (
-                        "sent" if result.error_code != "INSTALLATION_OFFLINE" else "not_sent"
-                    ),
+                    "send_result": "sent" if command_sent else "not_sent",
                     "evcp_payload": {
                         "command_id": str(request_id),
                         "correlation_id": str(correlation_id) if correlation_id else None,
@@ -220,7 +237,7 @@ class CommandDispatchService:
                         "command": command.model_dump(mode="json"),
                     },
                 },
-                result="sent" if result.error_code != "INSTALLATION_OFFLINE" else "not_sent",
+                result="sent" if command_sent else "not_sent",
             )
         )
         for item in result.diagnostics:

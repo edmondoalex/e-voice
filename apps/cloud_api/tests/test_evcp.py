@@ -196,6 +196,12 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
     session_id = hello_payload["session_id"]
     assert session_id is not None
 
+    registered_last_seen = sessions._sessions[installation_id].last_seen
+    await websocket.inbound.put(message("heartbeat", {"session_id": session_id}))
+    heartbeat_ack = await asyncio.wait_for(websocket.outbound.get(), 2.0)
+    assert heartbeat_ack["type"] == "heartbeat_ack"
+    assert sessions._sessions[installation_id].last_seen >= registered_last_seen
+
     await websocket.inbound.put(
         message(
             "inventory_full",
