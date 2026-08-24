@@ -293,7 +293,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             "minimumValue": 0,
                             "maximumValue": 100,
                             "precision": 1,
-                        }
+                        },
+                        "unitOfMeasure": "Alexa.Unit.Percent",
                     },
                     "semantics": {
                         "actionMappings": [
@@ -313,7 +314,19 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                                     "payload": {"rangeValue": 0},
                                 },
                             },
-                        ]
+                        ],
+                        "stateMappings": [
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Closed"],
+                                "value": 0,
+                            },
+                            {
+                                "@type": "StatesToRange",
+                                "states": ["Alexa.States.Open"],
+                                "range": {"minimumValue": 1, "maximumValue": 100},
+                            },
+                        ],
                     },
                 }
             )
@@ -555,14 +568,18 @@ def _cover_display_category(entity: Entity) -> str:
 
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
-    category = {
-        "light": "LIGHT",
-        "switch": "SWITCH",
-        "cover": _cover_display_category(entity),
-        "climate": "THERMOSTAT",
-        "fan": "FAN",
-        "scene": "SCENE_TRIGGER",
-    }[entity.ha_domain]
+    category = (
+        "INTERIOR_BLIND"
+        if _is_office_range_ab(entity)
+        else {
+            "light": "LIGHT",
+            "switch": "SWITCH",
+            "cover": _cover_display_category(entity),
+            "climate": "THERMOSTAT",
+            "fan": "FAN",
+            "scene": "SCENE_TRIGGER",
+        }[entity.ha_domain]
+    )
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",

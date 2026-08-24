@@ -818,53 +818,94 @@ def test_office_cover_alone_uses_experimental_discrete_range_profile() -> None:
         installation_id=installation_id,
         ha_entity_id="cover.buspro_cover_porta_ufficio",
         ha_domain="cover",
+        friendly_name="Tapparella ufficio",
+        device_class="shutter",
         supported_features=15,
         alexa_cover_mode="discrete",
         state="unknown",
     )
     endpoint = discovery_endpoint(experimental)
-    assert [item["interface"] for item in endpoint["capabilities"]] == [
-        "Alexa",
-        "Alexa.EndpointHealth",
-        "Alexa.RangeController",
-    ]
-    assert endpoint["capabilities"][2] == {
-        "type": "AlexaInterface",
-        "interface": "Alexa.RangeController",
-        "version": "3",
-        "properties": {
-            "supported": [{"name": "rangeValue"}],
-            "proactivelyReported": True,
-            "retrievable": True,
-        },
-        "instance": "Blind.Lift",
-        "capabilityResources": {
-            "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
-        },
-        "configuration": {
-            "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
-        },
-        "semantics": {
-            "actionMappings": [
-                {
-                    "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Open"],
-                    "directive": {
-                        "name": "SetRangeValue",
-                        "payload": {"rangeValue": 100},
-                    },
+    assert endpoint == {
+        "endpointId": endpoint_id(experimental),
+        "manufacturerName": "Ekonex",
+        "friendlyName": "Tapparella ufficio",
+        "description": "Home Assistant entity via Ekonex Voice",
+        "displayCategories": ["INTERIOR_BLIND"],
+        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
+        "cookie": {},
+        "capabilities": [
+            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.EndpointHealth",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "connectivity"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
                 },
-                {
-                    "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Close"],
-                    "directive": {
-                        "name": "SetRangeValue",
-                        "payload": {"rangeValue": 0},
-                    },
+            },
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.RangeController",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "rangeValue"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
                 },
-            ]
-        },
+                "instance": "Blind.Lift",
+                "capabilityResources": {
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                    ]
+                },
+                "configuration": {
+                    "supportedRange": {
+                        "minimumValue": 0,
+                        "maximumValue": 100,
+                        "precision": 1,
+                    },
+                    "unitOfMeasure": "Alexa.Unit.Percent",
+                },
+                "semantics": {
+                    "actionMappings": [
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Open"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 100},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Close"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 0},
+                            },
+                        },
+                    ],
+                    "stateMappings": [
+                        {
+                            "@type": "StatesToValue",
+                            "states": ["Alexa.States.Closed"],
+                            "value": 0,
+                        },
+                        {
+                            "@type": "StatesToRange",
+                            "states": ["Alexa.States.Open"],
+                            "range": {"minimumValue": 1, "maximumValue": 100},
+                        },
+                    ],
+                },
+            },
+        ],
     }
+    serialized_endpoint = json.dumps(endpoint)
+    assert serialized_endpoint.count('"Alexa.Actions.Open"') == 1
+    assert serialized_endpoint.count('"Alexa.Actions.Close"') == 1
     assert _command(
         "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, experimental
     ) == {"operation": "open"}
