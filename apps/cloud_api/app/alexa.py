@@ -279,13 +279,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         if _is_office_range_ab(entity):
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
             result.append(
                 _capability("Alexa.RangeController", ["rangeValue"])
                 | {
-                    "instance": "Blind.Lift",
+                    "instance": "cover.position",
                     "capabilityResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                            {
+                                "@type": "text",
+                                "value": {"text": "Position", "locale": "en-US"},
+                            },
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                         ]
                     },
                     "configuration": {
@@ -293,30 +298,47 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             "minimumValue": 0,
                             "maximumValue": 100,
                             "precision": 1,
-                        }
+                        },
+                        "unitOfMeasure": "Alexa.Unit.Percent",
                     },
                     "semantics": {
                         "actionMappings": [
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Open"],
-                                "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 100},
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Close"],
+                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
                                 "directive": {
                                     "name": "SetRangeValue",
                                     "payload": {"rangeValue": 0},
                                 },
                             },
-                        ]
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 100},
+                                },
+                            },
+                        ],
+                        "stateMappings": [
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Closed"],
+                                "value": 0,
+                            },
+                            {
+                                "@type": "StatesToRange",
+                                "states": ["Alexa.States.Open"],
+                                "range": {"minimumValue": 1, "maximumValue": 100},
+                            },
+                        ],
                     },
                 }
             )
+            if entity.supported_features & COVER_STOP:
+                result.append(
+                    _capability("Alexa.PlaybackController") | {"supportedOperations": ["Stop"]}
+                )
             return result
         mode = effective_cover_mode(entity)
         if mode == "discrete":
@@ -612,11 +634,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    elif (
-        entity.ha_domain == "cover"
-        and not _is_office_range_ab(entity)
-        and effective_cover_mode(entity) == "discrete"
-    ):
+    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
         props.append(
             _property(
                 "Alexa.PowerController",
@@ -686,7 +704,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "Alexa.RangeController",
                     "rangeValue",
                     current_position,
-                    instance="Blind.Lift",
+                    instance="cover.position" if _is_office_range_ab(entity) else "Blind.Lift",
                 )
             )
         if mode == "discrete" and discrete_position is not None:
@@ -743,7 +761,7 @@ def _command(
     }
     if (namespace, name) in mapping:
         if entity is not None and entity.ha_domain == "cover":
-            if _is_office_range_ab(entity) or effective_cover_mode(entity) != "discrete":
+            if effective_cover_mode(entity) != "discrete":
                 return None
             if (namespace, name) == ("Alexa.PowerController", "TurnOn"):
                 return {"operation": "open"}
@@ -776,7 +794,7 @@ def _command(
                 return {"operation": "open"}
             if range_value == 0:
                 return {"operation": "close"}
-            return None
+            return {"operation": "set_position", "position": round(range_value)}
         if entity is None or effective_cover_mode(entity) not in {"percentage", "hybrid"}:
             return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
@@ -816,7 +834,7 @@ def _command(
         operation = mode_mapping.get(mode_value) if isinstance(mode_value, str) else None
         return {"operation": operation} if operation is not None else None
     if namespace == "Alexa.PlaybackController" and name in {"Pause", "Stop"}:
-        if entity is None or entity.ha_domain != "cover" or _is_office_range_ab(entity):
+        if entity is None or entity.ha_domain != "cover":
             return None
         return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
