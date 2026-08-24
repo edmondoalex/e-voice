@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.websockets import WebSocketDisconnect, WebSocketState
+from starlette.websockets import WebSocketState
 
 from apps.cloud_api.app.domain.enums import InstallationStatus
 from apps.cloud_api.app.domain.models import AuditEvent, ConnectorCredential, Installation
@@ -262,7 +262,7 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
     assert "evcp.dispatch_session_selected" in event_types
     assert "evcp.command_result_session_check" in event_types
 
-    await websocket.inbound.put(WebSocketDisconnect())
+    await websocket.inbound.put(TimeoutError())
     await asyncio.wait_for(endpoint, 2.0)
     assert installation_id not in sessions._sessions
     activity = list(
@@ -271,7 +271,15 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
                 select(AuditEvent)
                 .where(
                     AuditEvent.installation_id == installation_id,
-                    AuditEvent.event_type.in_(["evcp.session_registered", "evcp.session_removed"]),
+                    AuditEvent.event_type.in_(
+                        [
+                            "evcp.session_registered",
+                            "evcp.heartbeat_received",
+                            "evcp.heartbeat_ack",
+                            "evcp.session_timeout",
+                            "evcp.session_removed",
+                        ]
+                    ),
                 )
                 .order_by(AuditEvent.created_at)
             )
@@ -279,8 +287,16 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
     )
     assert [event.event_type for event in activity] == [
         "evcp.session_registered",
+        "evcp.heartbeat_received",
+        "evcp.heartbeat_ack",
+        "evcp.session_timeout",
         "evcp.session_removed",
     ]
     assert activity[0].payload_redacted_json["new_session_id"] == session_id
-    assert activity[1].payload_redacted_json["requested_session_id"] == session_id
-    assert activity[1].payload_redacted_json["removed"] is True
+    assert activity[1].payload_redacted_json["payload_session_id"] == session_id
+    assert activity[1].payload_redacted_json["message_id"] == activity[2].request_id
+    assert activity[2].payload_redacted_json["payload_session_id"] == session_id
+    assert activity[3].payload_redacted_json["reason"] == "liveness_timeout"
+    assert activity[3].payload_redacted_json["timeout_seconds"] == 75.0
+    assert activity[4].payload_redacted_json["requested_session_id"] == session_id
+    assert activity[4].payload_redacted_json["removed"] is True

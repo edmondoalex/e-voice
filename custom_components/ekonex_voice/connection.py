@@ -174,7 +174,7 @@ class EkonexVoiceConnection:
             await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
             sleeper = asyncio.create_task(self._sleep(float(interval)))
-            receiver = asyncio.create_task(self._receive_message(websocket))
+            receiver = asyncio.create_task(self._receive_message(websocket, session_id=session_id))
             try:
                 done, pending = await asyncio.wait(
                     {sleeper, receiver}, return_when=asyncio.FIRST_COMPLETED
@@ -194,12 +194,30 @@ class EkonexVoiceConnection:
                 await self._handle_command(websocket, session_id, inbound)
                 continue
             heartbeat = envelope("heartbeat", {"session_id": session_id})
+            _LOGGER.info(
+                "heartbeat_sent %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "message_id": heartbeat["id"],
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
             await websocket.send_json(heartbeat)
             ack = await self._receive_ack(
                 websocket, "heartbeat_ack", str(heartbeat["id"]), session_id=session_id
             )
             if set(ack) != {"session_id"} or ack.get("session_id") != session_id:
                 raise EkonexVoiceProtocolError("invalid_heartbeat_ack")
+            _LOGGER.info(
+                "heartbeat_ack %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "message_id": heartbeat["id"],
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
 
     async def _receive_ack(
         self,
@@ -210,7 +228,9 @@ class EkonexVoiceConnection:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         while True:
-            received_type, received_id, payload = await self._receive_message(websocket)
+            received_type, received_id, payload = await self._receive_message(
+                websocket, session_id=session_id
+            )
             if received_type == "command" and session_id is not None:
                 await self._handle_command(websocket, session_id, payload)
                 continue
@@ -219,12 +239,24 @@ class EkonexVoiceConnection:
             return payload
 
     async def _receive_message(
-        self, websocket: ClientWebSocketResponse
+        self,
+        websocket: ClientWebSocketResponse,
+        *,
+        session_id: str | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         try:
             async with asyncio.timeout(HEARTBEAT_TIMEOUT):
                 message = await websocket.receive()
         except TimeoutError as error:
+            _LOGGER.warning(
+                "session_timeout %s",
+                {
+                    "installation_id": self._installation_id,
+                    "session_id": session_id,
+                    "timeout_seconds": HEARTBEAT_TIMEOUT,
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+            )
             raise EkonexVoiceCannotConnect("cloud_timeout") from error
         if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
             if websocket.close_code in {4001, 4004}:

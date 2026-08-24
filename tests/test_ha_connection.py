@@ -102,6 +102,47 @@ async def test_invalid_auth_stops_and_requests_reauth(hass: HomeAssistant) -> No
     await connection.async_stop()
 
 
+async def test_connector_logs_heartbeat_sent_and_ack(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    websocket = FakeWebSocket()
+    heartbeat_acknowledged = asyncio.Event()
+    info_log = MagicMock()
+
+    def capture(message: str, payload: dict[str, object]) -> None:
+        if message == "heartbeat_ack %s":
+            heartbeat_acknowledged.set()
+
+    info_log.side_effect = capture
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
+
+    async def immediate_interval(delay: float) -> None:
+        return None
+
+    connection = EkonexVoiceConnection(
+        hass,
+        AsyncMock(),
+        "installation-1",
+        sleep=immediate_interval,
+    )
+    session = asyncio.create_task(connection._run_session(websocket))  # noqa: SLF001
+    await asyncio.wait_for(heartbeat_acknowledged.wait(), 1.0)
+    session.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await session
+
+    formats = [call.args[0] for call in info_log.call_args_list]
+    assert "heartbeat_sent %s" in formats
+    assert "heartbeat_ack %s" in formats
+    heartbeat_payloads = [
+        call.args[1] for call in info_log.call_args_list if call.args[0].startswith("heartbeat_")
+    ]
+    assert all(
+        payload["session_id"] == "75a8dd73-7645-4e13-81c6-d90d75d8c261"
+        for payload in heartbeat_payloads
+    )
+
+
 async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant) -> None:
     sleeping = asyncio.Event()
 

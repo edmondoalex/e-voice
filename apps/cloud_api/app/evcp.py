@@ -813,11 +813,44 @@ async def connector_websocket(
                 if message.payload.session_id != session_id:
                     await _safe_close(websocket, 4002, "INVALID_MESSAGE")
                     return
+                heartbeat_received = _session_diagnostic(
+                    installation_id,
+                    session_handle,
+                    "heartbeat_received",
+                    event_type="evcp.heartbeat_received",
+                    payload_session_id=message.payload.session_id,
+                )
+                heartbeat_received["message_id"] = str(message.id)
+                _add_session_activity(
+                    database,
+                    tenant_id=installation.tenant_id,
+                    installation_id=installation_id,
+                    diagnostic=heartbeat_received,
+                    request_id=message.id,
+                    result="received",
+                )
                 installation.last_seen_at = datetime.now(UTC)
                 await database.commit()
                 await websocket.send_json(
                     _response("heartbeat_ack", message.id, {"session_id": str(session_id)})
                 )
+                heartbeat_ack = _session_diagnostic(
+                    installation_id,
+                    session_handle,
+                    "heartbeat_acknowledged",
+                    event_type="evcp.heartbeat_ack",
+                    payload_session_id=message.payload.session_id,
+                )
+                heartbeat_ack["message_id"] = str(message.id)
+                _add_session_activity(
+                    database,
+                    tenant_id=installation.tenant_id,
+                    installation_id=installation_id,
+                    diagnostic=heartbeat_ack,
+                    request_id=message.id,
+                    result="acknowledged",
+                )
+                await database.commit()
                 continue
             if isinstance(message, CommandResultMessage):
                 matched, resolution_diagnostic = await sessions.resolve_with_diagnostic(
@@ -863,6 +896,22 @@ async def connector_websocket(
                 await _safe_close(websocket, 4009, "STALE_REVISION")
                 return
     except TimeoutError:
+        if registered and session_handle is not None:
+            timeout_diagnostic = _session_diagnostic(
+                installation_id,
+                session_handle,
+                "liveness_timeout",
+                event_type="evcp.session_timeout",
+            )
+            timeout_diagnostic["timeout_seconds"] = LIVENESS_TIMEOUT_SECONDS
+            _add_session_activity(
+                database,
+                tenant_id=credential.installation.tenant_id,
+                installation_id=installation_id,
+                diagnostic=timeout_diagnostic,
+                result="timeout",
+            )
+            await database.commit()
         await _safe_close(websocket, 4005 if not registered else 4006, "TIMEOUT")
     except (ValidationError, ValueError):
         logger.warning("Connector EVCP message rejected: invalid schema or batch sequence")
