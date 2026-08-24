@@ -345,9 +345,71 @@ def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
         "Alexa.ModeController",
         "Alexa.PlaybackController",
     ]
+    mode = next(
+        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.ModeController"
+    )
+    assert mode["instance"] == "Blinds.Position"
+    assert mode["capabilityResources"] == {
+        "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+    }
+    assert mode["configuration"] == {
+        "ordered": False,
+        "supportedModes": [
+            {
+                "value": "Position.Up",
+                "modeResources": {
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                        {"@type": "text", "value": {"text": "apri", "locale": "it-IT"}},
+                        {"@type": "text", "value": {"text": "su", "locale": "it-IT"}},
+                    ]
+                },
+            },
+            {
+                "value": "Position.Down",
+                "modeResources": {
+                    "friendlyNames": [
+                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                        {"@type": "text", "value": {"text": "chiudi", "locale": "it-IT"}},
+                        {"@type": "text", "value": {"text": "giù", "locale": "it-IT"}},
+                    ]
+                },
+            },
+        ],
+    }
+    assert mode["semantics"]["actionMappings"] == [
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+        },
+    ]
+    playback = next(
+        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.PlaybackController"
+    )
+    assert playback == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.PlaybackController",
+        "version": "3",
+        "instance": "cover.stop",
+        "supportedOperations": ["Stop"],
+    }
     assert not any(
         item["namespace"] == "Alexa.PowerController" for item in state_properties(target)
     )
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, target) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, target) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, target) is None
+    assert _command("Alexa.PlaybackController", "Stop", {}, target) == {"operation": "stop"}
     assert any(
         item["interface"] == "Alexa.PowerController"
         for item in discovery_endpoint(other)["capabilities"]
