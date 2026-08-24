@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,10 @@ from custom_components.ekonex_voice.client import (
 from custom_components.ekonex_voice.command_executor import CommandResult
 from custom_components.ekonex_voice.connection import EkonexVoiceConnection
 from custom_components.ekonex_voice.models import ConnectionState
+
+CONNECTOR_VERSION = json.loads(
+    Path("custom_components/ekonex_voice/manifest.json").read_text(encoding="utf-8")
+)["version"]
 
 
 class FakeWebSocket:
@@ -60,6 +65,17 @@ class FakeWebSocket:
         self.closed = True
 
 
+@pytest.mark.parametrize("connector_version", ["", "   "])
+def test_connector_version_is_required(hass: HomeAssistant, connector_version: str) -> None:
+    with pytest.raises(ValueError, match="connector_version is required"):
+        EkonexVoiceConnection(
+            hass,
+            AsyncMock(),
+            "installation-1",
+            connector_version=connector_version,
+        )
+
+
 async def test_transient_failure_uses_bounded_jitter_then_connects(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -75,7 +91,12 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
             await asyncio.Event().wait()
 
     connection = EkonexVoiceConnection(
-        hass, connect, "installation-1", sleep=record_sleep, random_value=lambda: 0.5
+        hass,
+        connect,
+        "installation-1",
+        connector_version=CONNECTOR_VERSION,
+        sleep=record_sleep,
+        random_value=lambda: 0.5,
     )
     info_log = MagicMock()
     monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
@@ -86,7 +107,7 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
     assert connection.retry_count == 0
     hello = websocket.sent_messages[0]
     assert hello["type"] == "hello"
-    assert hello["payload"]["connector_version"] == "0.1.0"  # type: ignore[index]
+    assert hello["payload"]["connector_version"] == CONNECTOR_VERSION  # type: ignore[index]
     assert hello["payload"]["protocol_versions"] == [1]  # type: ignore[index]
     assert hello["payload"]["capabilities"] == {  # type: ignore[index]
         "supports_correlation_id": True,
@@ -108,6 +129,7 @@ async def test_invalid_auth_stops_and_requests_reauth(hass: HomeAssistant) -> No
         hass,
         AsyncMock(side_effect=EkonexVoiceAuthError("safe")),
         "installation-1",
+        connector_version=CONNECTOR_VERSION,
         on_auth_failure=reauth,
     )
     connection.async_start()
@@ -138,6 +160,7 @@ async def test_connector_logs_heartbeat_sent_and_ack(
         hass,
         AsyncMock(),
         "installation-1",
+        connector_version=CONNECTOR_VERSION,
         sleep=immediate_interval,
     )
     session = asyncio.create_task(connection._run_session(websocket))  # noqa: SLF001
@@ -166,7 +189,13 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
         await asyncio.Event().wait()
 
     connect = AsyncMock(side_effect=EkonexVoiceCannotConnect("safe"))
-    connection = EkonexVoiceConnection(hass, connect, "installation-1", sleep=cancellable_sleep)
+    connection = EkonexVoiceConnection(
+        hass,
+        connect,
+        "installation-1",
+        connector_version=CONNECTOR_VERSION,
+        sleep=cancellable_sleep,
+    )
     connection.async_start()
     connection.async_start()
     await sleeping.wait()
@@ -181,7 +210,9 @@ async def test_cloud_rejects_incompatible_connector_with_explicit_error(
     websocket = FakeWebSocket()
     websocket.close_code = 4010
     await websocket.messages.put(WSMessage(WSMsgType.CLOSE, None, None))
-    connection = EkonexVoiceConnection(hass, AsyncMock(), "installation-1")
+    connection = EkonexVoiceConnection(
+        hass, AsyncMock(), "installation-1", connector_version=CONNECTOR_VERSION
+    )
 
     with pytest.raises(EkonexVoiceProtocolError, match="connector_version_incompatible"):
         await connection._receive_message(websocket)  # noqa: SLF001
@@ -193,7 +224,11 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
     executor = AsyncMock()
     executor.async_execute.return_value = CommandResult("command-1", "success")
     connection = EkonexVoiceConnection(
-        hass, AsyncMock(), "installation-1", command_executor=executor
+        hass,
+        AsyncMock(),
+        "installation-1",
+        connector_version=CONNECTOR_VERSION,
+        command_executor=executor,
     )
     websocket = AsyncMock()
     info_log = MagicMock()

@@ -40,7 +40,7 @@ class EkonexVoiceConnection:
         connect: Connect,
         installation_id: str,
         *,
-        connector_version: str = "0.1.0",
+        connector_version: str,
         ha_version: str = "unknown",
         on_auth_failure: Callable[[], None] | None = None,
         inventory: EntityInventorySynchronizer | None = None,
@@ -48,6 +48,8 @@ class EkonexVoiceConnection:
         sleep: Sleep = asyncio.sleep,
         random_value: RandomValue = random.random,
     ) -> None:
+        if not connector_version.strip():
+            raise ValueError("connector_version is required")
         self._hass, self._connect = hass, connect
         self._installation_id = installation_id
         self._connector_version, self._ha_version = connector_version, ha_version
