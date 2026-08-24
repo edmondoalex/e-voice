@@ -273,7 +273,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         mode = effective_cover_mode(entity)
-        if mode == "discrete":
+        if mode == "discrete" and entity.ha_entity_id != "cover.buspro_cover_porta_ufficio":
             result.append(_capability("Alexa.PowerController", ["powerState"]))
         if mode in {"percentage", "hybrid"}:
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
@@ -524,7 +524,11 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
+    elif (
+        entity.ha_domain == "cover"
+        and effective_cover_mode(entity) == "discrete"
+        and entity.ha_entity_id != "cover.buspro_cover_porta_ufficio"
+    ):
         props.append(
             _property(
                 "Alexa.PowerController",

@@ -316,6 +316,44 @@ def test_office_test_cover_temporarily_uses_interior_blind_category() -> None:
     assert discovery_endpoint(other)["displayCategories"] == ["OTHER"]
 
 
+def test_office_test_cover_temporarily_omits_only_power_controller() -> None:
+    target = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.buspro_cover_porta_ufficio",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state="unknown",
+    )
+    other = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.other_discrete",
+        ha_domain="cover",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state="unknown",
+    )
+
+    endpoint = discovery_endpoint(target)
+    interfaces = [item["interface"] for item in endpoint["capabilities"]]
+    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    assert interfaces == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.ModeController",
+        "Alexa.PlaybackController",
+    ]
+    assert not any(
+        item["namespace"] == "Alexa.PowerController" for item in state_properties(target)
+    )
+    assert any(
+        item["interface"] == "Alexa.PowerController"
+        for item in discovery_endpoint(other)["capabilities"]
+    )
+
+
 async def test_report_state_response_omits_null_brightness(
     session: AsyncSession, seeded_domain: object
 ) -> None:
