@@ -811,6 +811,105 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
 
 
+def test_office_cover_alone_uses_experimental_discrete_range_profile() -> None:
+    installation_id = uuid4()
+    experimental = Entity(
+        id=uuid4(),
+        installation_id=installation_id,
+        ha_entity_id="cover.buspro_cover_porta_ufficio",
+        ha_domain="cover",
+        supported_features=15,
+        alexa_cover_mode="discrete",
+        state="unknown",
+    )
+    endpoint = discovery_endpoint(experimental)
+    assert [item["interface"] for item in endpoint["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.RangeController",
+    ]
+    assert endpoint["capabilities"][2] == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.RangeController",
+        "version": "3",
+        "properties": {
+            "supported": [{"name": "rangeValue"}],
+            "proactivelyReported": True,
+            "retrievable": True,
+        },
+        "instance": "Blind.Lift",
+        "capabilityResources": {
+            "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+        },
+        "configuration": {
+            "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
+        },
+        "semantics": {
+            "actionMappings": [
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Open"],
+                    "directive": {
+                        "name": "SetRangeValue",
+                        "payload": {"rangeValue": 100},
+                    },
+                },
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Close"],
+                    "directive": {
+                        "name": "SetRangeValue",
+                        "payload": {"rangeValue": 0},
+                    },
+                },
+            ]
+        },
+    }
+    assert _command(
+        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, experimental
+    ) == {"operation": "open"}
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, experimental) == {
+        "operation": "close"
+    }
+    assert (
+        _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, experimental) is None
+    )
+    assert (
+        _command("Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, experimental)
+        is None
+    )
+    assert _command("Alexa.PowerController", "TurnOn", {}, experimental) is None
+    assert (
+        _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, experimental) is None
+    )
+    assert _command("Alexa.PlaybackController", "Stop", {}, experimental) is None
+
+    normal = Entity(
+        id=uuid4(),
+        installation_id=installation_id,
+        ha_entity_id="cover.another_discrete_cover",
+        ha_domain="cover",
+        supported_features=15,
+        alexa_cover_mode="discrete",
+        state="unknown",
+    )
+    normal_endpoint = discovery_endpoint(normal)
+    assert [item["interface"] for item in normal_endpoint["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.PowerController",
+        "Alexa.ModeController",
+        "Alexa.PlaybackController",
+    ]
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, normal) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, normal) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.PlaybackController", "Stop", {}, normal) == {"operation": "stop"}
+
+
 def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -> None:
     entity = Entity(
         id=uuid4(),
