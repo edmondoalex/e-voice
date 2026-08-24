@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -56,7 +55,7 @@ class FakeWebSocket:
 
 
 async def test_transient_failure_uses_bounded_jitter_then_connects(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     websocket = FakeWebSocket()
     connect = AsyncMock(side_effect=[EkonexVoiceCannotConnect("safe"), websocket])
@@ -72,17 +71,18 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
     connection = EkonexVoiceConnection(
         hass, connect, "installation-1", sleep=record_sleep, random_value=lambda: 0.5
     )
-    caplog.set_level(logging.INFO, logger="custom_components.ekonex_voice.connection")
+    info_log = MagicMock()
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
     connection.async_start()
     await online.wait()
     assert connection.state is ConnectionState.ONLINE
     assert delays[:2] == [0.5, 30.0]
     assert connection.retry_count == 0
     acknowledged = next(
-        record.message for record in caplog.records if "evcp_session_acknowledged" in record.message
+        call for call in info_log.call_args_list if call.args[0] == "evcp_session_acknowledged %s"
     )
-    assert "installation-1" in acknowledged
-    assert "75a8dd73-7645-4e13-81c6-d90d75d8c261" in acknowledged
+    assert acknowledged.args[1]["installation_id"] == "installation-1"
+    assert acknowledged.args[1]["session_id"] == "75a8dd73-7645-4e13-81c6-d90d75d8c261"
     await connection.async_stop()
     assert websocket.closed
 
@@ -120,7 +120,7 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
 
 
 async def test_command_result_is_correlated_and_stale_session_is_rejected(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executor = AsyncMock()
     executor.async_execute.return_value = CommandResult("command-1", "success")
@@ -128,7 +128,8 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
         hass, AsyncMock(), "installation-1", command_executor=executor
     )
     websocket = AsyncMock()
-    caplog.set_level(logging.INFO, logger="custom_components.ekonex_voice.connection")
+    info_log = MagicMock()
+    monkeypatch.setattr("custom_components.ekonex_voice.connection._LOGGER.info", info_log)
     payload = {
         "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
         "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
@@ -163,11 +164,12 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
         "session_match": True,
         "timestamp": session_check["timestamp"],
     }
-    logs = "\n".join(record.message for record in caplog.records)
-    assert "connector_command_session_check" in logs
-    assert "connector_command_result_session" in logs
-    assert "authorization" not in logs.casefold()
-    assert "token" not in logs.casefold()
+    formats = [call.args[0] for call in info_log.call_args_list]
+    assert "connector_command_session_check %s" in formats
+    assert "connector_command_result_session %s" in formats
+    serialized_logs = repr(info_log.call_args_list).casefold()
+    assert "authorization" not in serialized_logs
+    assert "token" not in serialized_logs
 
     websocket.reset_mock()
     executor.reset_mock()
