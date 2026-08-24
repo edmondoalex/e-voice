@@ -125,7 +125,9 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
         "registry_id": "stable-light",
         "command": {"operation": "power_on"},
     }
-    executor.async_execute.return_value = CommandResult(payload["command_id"], "success")
+    executor.async_execute.return_value = CommandResult(
+        payload["command_id"], "success", correlation_id=payload["correlation_id"]
+    )
     await connection._handle_command(websocket, payload["session_id"], payload)
     executor.async_execute.assert_awaited_once_with(
         payload["command_id"],
