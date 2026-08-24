@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.cloud_api.app.alexa import discovery_endpoint
 from apps.cloud_api.app.domain.models import Entity, Installation
 from apps.cloud_api.app.entity_sync import EntitySyncService, StaleSyncError
 from apps.cloud_api.app.evcp import (
@@ -59,6 +60,32 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     await service.apply_full(2, [])
     assert entity.deleted_at is not None
     assert not entity.available
+
+
+async def test_cover_device_class_survives_inventory_database_and_discovery(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    cover_item = {
+        **item(registry_id="registry-cover-shutter", state="closed"),
+        "entity_id": "cover.office_shutter",
+        "domain": "cover",
+        "device_class": "shutter",
+        "supported_features": 11,
+        "attributes": {},
+    }
+
+    await EntitySyncService(session, installation).apply_full(1, [cover_item])
+
+    entity = (
+        await session.scalars(
+            select(Entity).where(Entity.ha_registry_id == "registry-cover-shutter")
+        )
+    ).one()
+    assert entity.device_class == "shutter"
+    assert "device_class" not in entity.attributes_json
+    assert discovery_endpoint(entity)["displayCategories"] == ["EXTERIOR_BLIND"]
 
 
 async def test_inventory_commit_triggers_proactive_discovery_reconciliation(

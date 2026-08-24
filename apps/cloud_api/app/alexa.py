@@ -452,7 +452,7 @@ def endpoint_id(entity: Entity) -> str:
 
 
 def _cover_display_category(entity: Entity) -> str:
-    device_class = (entity.attributes_json or {}).get("device_class")
+    device_class = entity.device_class
     if not isinstance(device_class, str):
         return "OTHER"
     return {
@@ -949,6 +949,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 await database.commit()
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
         if diagnostic_correlation_id is not None:
+            published_endpoint = discovery_endpoint(entity)
             _alexa_audit(
                 database,
                 tenant_id=link.tenant_id,
@@ -963,7 +964,15 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     "voice_name": effective_voice_name(entity),
                     "friendly_name": entity.friendly_name,
                     "ha_domain": entity.ha_domain,
-                    "device_class": (entity.attributes_json or {}).get("device_class"),
+                    "device_class": entity.device_class,
+                    "display_categories": published_endpoint["displayCategories"],
+                    "capabilities": [
+                        {
+                            "interface": capability["interface"],
+                            "instance": capability.get("instance"),
+                        }
+                        for capability in published_endpoint["capabilities"]
+                    ],
                     "supported_features": entity.supported_features,
                     "state": entity.state,
                     "available": entity.available,
