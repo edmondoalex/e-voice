@@ -287,12 +287,48 @@ def test_cover_display_category_matches_home_assistant(
         installation_id=uuid4(),
         ha_entity_id="cover.category",
         ha_domain="cover",
+        device_class=device_class,
         supported_features=11,
         alexa_cover_mode="discrete",
-        attributes_json={"device_class": device_class} if device_class else {},
+        attributes_json={},
     )
 
     assert discovery_endpoint(entity)["displayCategories"] == [category]
+
+
+def test_cover_device_class_category_does_not_change_discrete_contract() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.office_shutter",
+        ha_registry_id="office-shutter",
+        ha_domain="cover",
+        device_class="shutter",
+        supported_features=11,
+        alexa_cover_mode="discrete",
+        state="unknown",
+        attributes_json={},
+    )
+
+    endpoint = discovery_endpoint(entity)
+    assert endpoint["displayCategories"] == ["EXTERIOR_BLIND"]
+    assert [
+        (capability["interface"], capability.get("instance"))
+        for capability in endpoint["capabilities"]
+    ] == [
+        ("Alexa", None),
+        ("Alexa.EndpointHealth", None),
+        ("Alexa.PowerController", None),
+        ("Alexa.ModeController", "cover.position"),
+        ("Alexa.PlaybackController", "cover.stop"),
+    ]
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.open"}, entity) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "position.closed"}, entity) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.PlaybackController", "Stop", {}, entity) == {"operation": "stop"}
 
 
 async def test_report_state_response_omits_null_brightness(
@@ -630,6 +666,17 @@ async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
     assert len(correlations) == 1
     mapping = next(event for event in events if event.event_type == "alexa.mapping_result")
     assert mapping.payload_redacted_json["operation"] == "open"
+    resolved = next(event for event in events if event.event_type == "alexa.endpoint_resolved")
+    assert resolved.payload_redacted_json["device_class"] is None
+    assert resolved.payload_redacted_json["display_categories"] == ["OTHER"]
+    assert resolved.payload_redacted_json["voice_name"] == "tapparella ufficio test"
+    assert resolved.payload_redacted_json["capabilities"] == [
+        {"interface": "Alexa", "instance": None},
+        {"interface": "Alexa.EndpointHealth", "instance": None},
+        {"interface": "Alexa.PowerController", "instance": None},
+        {"interface": "Alexa.ModeController", "instance": "cover.position"},
+        {"interface": "Alexa.PlaybackController", "instance": "cover.stop"},
+    ]
     service_call = next(
         event for event in events if event.event_type == "homeassistant.service_call"
     )
