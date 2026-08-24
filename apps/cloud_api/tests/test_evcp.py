@@ -10,11 +10,12 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from apps.cloud_api.app.domain.enums import InstallationStatus
-from apps.cloud_api.app.domain.models import ConnectorCredential, Installation
+from apps.cloud_api.app.domain.models import AuditEvent, ConnectorCredential, Installation
 from apps.cloud_api.app.evcp import (
     CommandResultPayload,
     ConnectorSessionRegistry,
@@ -257,7 +258,29 @@ async def test_websocket_inventory_session_remains_routable_through_command_resu
     assert isinstance(result, CommandResultPayload)
     assert result.session_id == UUID(str(session_id))
     assert result.status == "success"
+    event_types = [item["event_type"] for item in result.diagnostics]
+    assert "evcp.dispatch_session_selected" in event_types
+    assert "evcp.command_result_session_check" in event_types
 
     await websocket.inbound.put(WebSocketDisconnect())
     await asyncio.wait_for(endpoint, 2.0)
     assert installation_id not in sessions._sessions
+    activity = list(
+        (
+            await session.scalars(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.installation_id == installation_id,
+                    AuditEvent.event_type.in_(["evcp.session_registered", "evcp.session_removed"]),
+                )
+                .order_by(AuditEvent.created_at)
+            )
+        ).all()
+    )
+    assert [event.event_type for event in activity] == [
+        "evcp.session_registered",
+        "evcp.session_removed",
+    ]
+    assert activity[0].payload_redacted_json["new_session_id"] == session_id
+    assert activity[1].payload_redacted_json["requested_session_id"] == session_id
+    assert activity[1].payload_redacted_json["removed"] is True

@@ -162,6 +162,14 @@ class EkonexVoiceConnection:
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         self.state, self.retry_count, self.next_retry_delay = ConnectionState.ONLINE, 0, None
         self.last_error_code, self.last_connected_at = None, datetime.now(UTC)
+        _LOGGER.info(
+            "evcp_session_acknowledged %s",
+            {
+                "installation_id": self._installation_id,
+                "session_id": session_id,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+        )
         if self._inventory is not None:
             await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
@@ -242,6 +250,19 @@ class EkonexVoiceConnection:
             )
         except (ValueError, TypeError):
             raise EkonexVoiceProtocolError("invalid_command") from None
+        session_match = requested_session == session_id
+        session_check: dict[str, object] = {
+            "event_type": "connector.command_session_check",
+            "installation_id": self._installation_id,
+            "requested_session_id": requested_session,
+            "local_session_id": session_id,
+            "command_id": command_id,
+            "registry_id": registry_id,
+            "operation": command.get("operation"),
+            "session_match": session_match,
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        _LOGGER.info("connector_command_session_check %s", session_check)
         if requested_session != session_id:
             result = CommandResult(command_id, "stale_session", "STALE_SESSION", correlation_id)
         elif self._command_executor is None:
@@ -255,4 +276,22 @@ class EkonexVoiceConnection:
             result = await self._command_executor.async_execute(
                 command_id, registry_id, command, correlation_id=correlation_id
             )
+        result = CommandResult(
+            result.command_id,
+            result.status,
+            result.error_code,
+            result.correlation_id,
+            (session_check, *result.diagnostics[:14]),
+        )
+        _LOGGER.info(
+            "connector_command_result_session %s",
+            {
+                "local_session_id": session_id,
+                "result_session_id": session_id,
+                "command_id": result.command_id,
+                "status": result.status,
+                "error_code": result.error_code,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+        )
         await websocket.send_json(envelope("command_result", result.payload(session_id)))

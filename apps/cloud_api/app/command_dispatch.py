@@ -204,7 +204,8 @@ class CommandDispatchService:
             (
                 item.get("reason")
                 for item in result.diagnostics
-                if item.get("event_type") == "evcp.session_decision"
+                if item.get("event_type")
+                in {"evcp.session_decision", "evcp.dispatch_session_selected"}
             ),
             None,
         )

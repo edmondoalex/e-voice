@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from aiohttp import WSMessage, WSMsgType
 from homeassistant.core import HomeAssistant
 
@@ -53,7 +55,9 @@ class FakeWebSocket:
         self.closed = True
 
 
-async def test_transient_failure_uses_bounded_jitter_then_connects(hass: HomeAssistant) -> None:
+async def test_transient_failure_uses_bounded_jitter_then_connects(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
     websocket = FakeWebSocket()
     connect = AsyncMock(side_effect=[EkonexVoiceCannotConnect("safe"), websocket])
     delays: list[float] = []
@@ -68,11 +72,17 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(hass: HomeAss
     connection = EkonexVoiceConnection(
         hass, connect, "installation-1", sleep=record_sleep, random_value=lambda: 0.5
     )
+    caplog.set_level(logging.INFO, logger="custom_components.ekonex_voice.connection")
     connection.async_start()
     await online.wait()
     assert connection.state is ConnectionState.ONLINE
     assert delays[:2] == [0.5, 30.0]
     assert connection.retry_count == 0
+    acknowledged = next(
+        record.message for record in caplog.records if "evcp_session_acknowledged" in record.message
+    )
+    assert "installation-1" in acknowledged
+    assert "75a8dd73-7645-4e13-81c6-d90d75d8c261" in acknowledged
     await connection.async_stop()
     assert websocket.closed
 
@@ -110,7 +120,7 @@ async def test_start_is_idempotent_and_stop_cancels_backoff(hass: HomeAssistant)
 
 
 async def test_command_result_is_correlated_and_stale_session_is_rejected(
-    hass: HomeAssistant,
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
     executor = AsyncMock()
     executor.async_execute.return_value = CommandResult("command-1", "success")
@@ -118,6 +128,7 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
         hass, AsyncMock(), "installation-1", command_executor=executor
     )
     websocket = AsyncMock()
+    caplog.set_level(logging.INFO, logger="custom_components.ekonex_voice.connection")
     payload = {
         "session_id": "75a8dd73-7645-4e13-81c6-d90d75d8c261",
         "command_id": "6d6e299a-93cb-471f-9d1a-fe2855a665ea",
@@ -140,12 +151,33 @@ async def test_command_result_is_correlated_and_stale_session_is_rejected(
     assert sent["payload"]["command_id"] == payload["command_id"]
     assert sent["payload"]["correlation_id"] == payload["correlation_id"]
     assert sent["payload"]["status"] == "success"
+    session_check = sent["payload"]["diagnostics"][0]
+    assert session_check == {
+        "event_type": "connector.command_session_check",
+        "installation_id": "installation-1",
+        "requested_session_id": payload["session_id"],
+        "local_session_id": payload["session_id"],
+        "command_id": payload["command_id"],
+        "registry_id": "stable-light",
+        "operation": "power_on",
+        "session_match": True,
+        "timestamp": session_check["timestamp"],
+    }
+    logs = "\n".join(record.message for record in caplog.records)
+    assert "connector_command_session_check" in logs
+    assert "connector_command_result_session" in logs
+    assert "authorization" not in logs.casefold()
+    assert "token" not in logs.casefold()
 
     websocket.reset_mock()
     executor.reset_mock()
     await connection._handle_command(websocket, "different-session", payload)
     executor.async_execute.assert_not_awaited()
     assert websocket.send_json.await_args.args[0]["payload"]["status"] == "stale_session"
+    stale_check = websocket.send_json.await_args.args[0]["payload"]["diagnostics"][0]
+    assert stale_check["requested_session_id"] == payload["session_id"]
+    assert stale_check["local_session_id"] == "different-session"
+    assert stale_check["session_match"] is False
     assert (
         websocket.send_json.await_args.args[0]["payload"]["correlation_id"]
         == payload["correlation_id"]

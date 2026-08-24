@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from .database import get_database_session
-from .domain.models import ConnectorCredential, Installation, OperationalEvent
+from .domain.models import AuditEvent, ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
 
@@ -204,14 +204,24 @@ class ConnectorSessionRegistry:
         self._replacement_locks: dict[UUID, asyncio.Lock] = {}
         self._transitioning: set[UUID] = set()
 
-    async def replace(self, installation_id: UUID, handle: SessionHandle) -> None:
+    async def replace(self, installation_id: UUID, handle: SessionHandle) -> dict[str, object]:
         replacement_lock = self._replacement_locks.setdefault(installation_id, asyncio.Lock())
         async with replacement_lock:
             async with self._lock:
                 previous = self._sessions.get(installation_id)
                 if previous is None or previous.session_id == handle.session_id:
                     self._sessions[installation_id] = handle
-                    return
+                    diagnostic = _session_diagnostic(
+                        installation_id,
+                        handle,
+                        "new",
+                        event_type="evcp.session_registered",
+                    )
+                    diagnostic["new_session_id"] = str(handle.session_id)
+                    diagnostic["previous_session_id"] = (
+                        str(previous.session_id) if previous else None
+                    )
+                    return diagnostic
                 self._transitioning.add(installation_id)
                 draining = [
                     pending
@@ -237,6 +247,15 @@ class ConnectorSessionRegistry:
                 self._sessions[installation_id] = handle
                 self._transitioning.discard(installation_id)
             await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+            diagnostic = _session_diagnostic(
+                installation_id,
+                handle,
+                "replaced",
+                event_type="evcp.session_registered",
+            )
+            diagnostic["new_session_id"] = str(handle.session_id)
+            diagnostic["previous_session_id"] = str(previous.session_id)
+            return diagnostic
 
     async def touch(self, installation_id: UUID, session_id: UUID) -> bool:
         """Refresh liveness only for the currently owned session."""
@@ -247,10 +266,26 @@ class ConnectorSessionRegistry:
             current.last_seen = datetime.now(UTC)
             return True
 
-    async def remove(self, installation_id: UUID, session_id: UUID) -> None:
+    async def remove(self, installation_id: UUID, session_id: UUID) -> dict[str, object]:
         async with self._lock:
             current = self._sessions.get(installation_id)
-            if current is not None and current.session_id == session_id:
+            removed = current is not None and current.session_id == session_id
+            reason = (
+                "current_session_removed"
+                if removed
+                else "no_current_session"
+                if current is None
+                else "requested_session_not_current"
+            )
+            diagnostic = _session_diagnostic(
+                installation_id,
+                current,
+                reason,
+                event_type="evcp.session_removed",
+            )
+            diagnostic["requested_session_id"] = str(session_id)
+            diagnostic["removed"] = removed
+            if removed:
                 self._sessions.pop(installation_id, None)
                 for key, pending in list(self._pending.items()):
                     if (
@@ -273,6 +308,7 @@ class ConnectorSessionRegistry:
                                 ],
                             )
                         )
+            return diagnostic
 
     async def dispatch(
         self,
@@ -308,7 +344,14 @@ class ConnectorSessionRegistry:
                     status="unavailable",
                     error_code="INSTALLATION_OFFLINE",
                     diagnostics=[
-                        _session_diagnostic(installation_id, None, "no_registered_session")
+                        _session_diagnostic(
+                            installation_id,
+                            None,
+                            "no_registered_session",
+                            event_type="evcp.dispatch_session_selected",
+                            command_id=command_id,
+                            pending_key=key,
+                        )
                     ],
                 )
             diagnostic = _session_diagnostic(
@@ -317,6 +360,10 @@ class ConnectorSessionRegistry:
                 "session_transitioning"
                 if installation_id in self._transitioning
                 else _stale_reason(handle),
+                event_type="evcp.dispatch_session_selected",
+                command_id=command_id,
+                pending_key=key,
+                payload_session_id=handle.session_id,
             )
             stale_reason = str(diagnostic["reason"])
             if stale_reason != "active_session_ready":
@@ -361,7 +408,15 @@ class ConnectorSessionRegistry:
                 except Exception:
                     self._pending.pop(key, None)
                     self._command_fingerprints.pop(key, None)
-                    failed = _session_diagnostic(installation_id, handle, "websocket_send_failed")
+                    failed = _session_diagnostic(
+                        installation_id,
+                        handle,
+                        "websocket_send_failed",
+                        event_type="evcp.dispatch_session_selected",
+                        command_id=command_id,
+                        pending_key=key,
+                        payload_session_id=handle.session_id,
+                    )
                     return CommandResultPayload(
                         session_id=handle.session_id,
                         command_id=command_id,
@@ -399,22 +454,57 @@ class ConnectorSessionRegistry:
         self, installation_id: UUID, session_id: UUID, result: CommandResultPayload
     ) -> bool:
         """Resolve only a waiter owned by the current authenticated session."""
+        matched, _ = await self.resolve_with_diagnostic(installation_id, session_id, result)
+        return matched
+
+    async def resolve_with_diagnostic(
+        self, installation_id: UUID, session_id: UUID, result: CommandResultPayload
+    ) -> tuple[bool, dict[str, object]]:
+        """Resolve a result and return its allowlisted session ownership decision."""
         async with self._lock:
             current = self._sessions.get(installation_id)
-            if (
-                current is None
-                or current.session_id != session_id
-                or result.session_id != session_id
-            ):
-                return False
             pending = self._pending.get((installation_id, result.command_id))
+            reason = (
+                "no_current_session"
+                if current is None
+                else "websocket_session_not_current"
+                if current.session_id != session_id
+                else "result_session_mismatch"
+                if result.session_id != session_id
+                else "already_completed"
+                if pending is None and (installation_id, result.command_id) in self._completed
+                else "no_pending_command"
+                if pending is None
+                else "pending_owned_by_other_session"
+                if pending.session_id != session_id
+                else "pending_already_done"
+                if pending.future.done()
+                else "matched"
+            )
+            diagnostic = _session_diagnostic(
+                installation_id,
+                current,
+                reason,
+                event_type="evcp.command_result_session_check",
+                command_id=result.command_id,
+                pending_key=(installation_id, result.command_id),
+                payload_session_id=result.session_id,
+            )
+            diagnostic.update(
+                {
+                    "websocket_session_id": str(session_id),
+                    "result_session_id": str(result.session_id),
+                    "match": reason in {"matched", "already_completed"},
+                }
+            )
+            if reason not in {"matched", "already_completed"}:
+                return False, diagnostic
             if pending is None and (installation_id, result.command_id) in self._completed:
-                return True
-            if pending is None or pending.session_id != session_id or pending.future.done():
-                return False
-            result.diagnostics = [pending.diagnostic, *result.diagnostics[:15]]
+                return True, diagnostic
+            assert pending is not None
+            result.diagnostics = [pending.diagnostic, *result.diagnostics[:14], diagnostic]
             pending.future.set_result(result)
-            return True
+            return True, diagnostic
 
 
 def _stale_reason(handle: SessionHandle) -> str:
@@ -439,13 +529,37 @@ def _session_diagnostic(
     installation_id: UUID,
     handle: SessionHandle | None,
     reason: str,
+    *,
+    event_type: str = "evcp.session_decision",
+    command_id: UUID | None = None,
+    pending_key: tuple[UUID, UUID] | None = None,
+    payload_session_id: UUID | None = None,
 ) -> dict[str, object]:
+    websocket = handle.websocket if handle else None
+    client = getattr(websocket, "client", None)
     diagnostic: dict[str, object] = {
-        "event_type": "evcp.session_decision",
+        "event_type": event_type,
         "requested_installation_id": str(installation_id),
+        "installation_id": str(installation_id),
+        "command_id": str(command_id) if command_id else None,
         "active_session_id": str(handle.session_id) if handle else None,
         "registry_session_id": str(handle.session_id) if handle else None,
-        "connection_id": id(handle.websocket) if handle else None,
+        "current_session_id": str(handle.session_id) if handle else None,
+        "payload_session_id": str(payload_session_id) if payload_session_id else None,
+        "pending_key": (f"{pending_key[0]}:{pending_key[1]}" if pending_key is not None else None),
+        "connection_id": id(websocket) if websocket else None,
+        "websocket_state": {
+            "client": str(getattr(websocket, "client_state", None)),
+            "application": str(getattr(websocket, "application_state", None)),
+        }
+        if websocket
+        else None,
+        "websocket_client": {
+            "host": getattr(client, "host", None),
+            "port": getattr(client, "port", None),
+        }
+        if client is not None
+        else None,
         "connected_at": handle.connected_at.isoformat() if handle else None,
         "last_seen": handle.last_seen.isoformat() if handle else None,
         "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
@@ -453,11 +567,34 @@ def _session_diagnostic(
         "reason": reason,
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
-    logger.info("evcp_session_decision %s", diagnostic)
+    logger.info("%s %s", event_type.replace(".", "_"), diagnostic)
     return diagnostic
 
 
 sessions = ConnectorSessionRegistry()
+
+
+def _add_session_activity(
+    database: AsyncSession,
+    *,
+    tenant_id: UUID,
+    installation_id: UUID,
+    diagnostic: dict[str, object],
+    request_id: UUID | None = None,
+    result: str = "observed",
+) -> None:
+    event_type = str(diagnostic.get("event_type", "evcp.session_diagnostic"))
+    database.add(
+        AuditEvent(
+            tenant_id=tenant_id,
+            installation_id=installation_id,
+            source="connector" if event_type.startswith("connector.") else "evcp",
+            event_type=event_type,
+            request_id=str(request_id) if request_id else None,
+            payload_redacted_json=diagnostic,
+            result=result,
+        )
+    )
 
 
 class InventoryAccumulator:
@@ -634,8 +771,15 @@ async def connector_websocket(
         installation.last_seen_at = datetime.now(UTC)
         await database.commit()
         session_handle = SessionHandle(session_id=session_id, websocket=websocket)
-        await sessions.replace(installation_id, session_handle)
+        registration_diagnostic = await sessions.replace(installation_id, session_handle)
         registered = True
+        _add_session_activity(
+            database,
+            tenant_id=installation.tenant_id,
+            installation_id=installation_id,
+            diagnostic=registration_diagnostic,
+            result="registered",
+        )
         database.add(
             OperationalEvent(
                 tenant_id=installation.tenant_id,
@@ -643,9 +787,7 @@ async def connector_websocket(
                 event_type="connector_session",
                 source="connector",
                 outcome="connected",
-                metadata_json=_session_diagnostic(
-                    installation_id, session_handle, "active_session_ready"
-                ),
+                metadata_json=registration_diagnostic,
             )
         )
         await database.commit()
@@ -678,7 +820,31 @@ async def connector_websocket(
                 )
                 continue
             if isinstance(message, CommandResultMessage):
-                if not await sessions.resolve(installation_id, session_id, message.payload):
+                matched, resolution_diagnostic = await sessions.resolve_with_diagnostic(
+                    installation_id, session_id, message.payload
+                )
+                if not matched:
+                    _add_session_activity(
+                        database,
+                        tenant_id=installation.tenant_id,
+                        installation_id=installation_id,
+                        diagnostic=resolution_diagnostic,
+                        request_id=message.payload.command_id,
+                        result="mismatch",
+                    )
+                    for connector_diagnostic in message.payload.diagnostics:
+                        if connector_diagnostic.get("event_type") == (
+                            "connector.command_session_check"
+                        ):
+                            _add_session_activity(
+                                database,
+                                tenant_id=installation.tenant_id,
+                                installation_id=installation_id,
+                                diagnostic=connector_diagnostic,
+                                request_id=message.payload.command_id,
+                                result="mismatch",
+                            )
+                    await database.commit()
                     await _safe_close(websocket, 4002, "INVALID_MESSAGE")
                     return
                 continue
@@ -707,7 +873,14 @@ async def connector_websocket(
         if registered:
             assert session_handle is not None
             inventory_batches.clear_session(installation_id, session_id)
-            await sessions.remove(installation_id, session_id)
+            removal_diagnostic = await sessions.remove(installation_id, session_id)
+            _add_session_activity(
+                database,
+                tenant_id=credential.installation.tenant_id,
+                installation_id=installation_id,
+                diagnostic=removal_diagnostic,
+                result="removed" if removal_diagnostic["removed"] else "preserved",
+            )
             database.add(
                 OperationalEvent(
                     tenant_id=credential.installation.tenant_id,
@@ -715,9 +888,7 @@ async def connector_websocket(
                     event_type="connector_session",
                     source="connector",
                     outcome="disconnected",
-                    metadata_json=_session_diagnostic(
-                        installation_id, session_handle, "websocket_finalized"
-                    ),
+                    metadata_json=removal_diagnostic,
                 )
             )
             await database.commit()

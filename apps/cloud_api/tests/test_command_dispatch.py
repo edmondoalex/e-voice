@@ -98,7 +98,18 @@ async def test_session_registry_correlates_result_and_deduplicates_command_id() 
     await asyncio.sleep(0)
     result = CommandResultPayload(session_id=session_id, command_id=command_id, status="success")
     assert await registry.resolve(installation_id, session_id, result)
-    assert (await pending).status == "success"
+    outcome = await pending
+    assert outcome.status == "success"
+    selected = outcome.diagnostics[0]
+    assert selected["event_type"] == "evcp.dispatch_session_selected"
+    assert selected["installation_id"] == str(installation_id)
+    assert selected["command_id"] == str(command_id)
+    assert selected["current_session_id"] == str(session_id)
+    assert selected["payload_session_id"] == str(session_id)
+    assert selected["pending_key"] == f"{installation_id}:{command_id}"
+    resolved = outcome.diagnostics[-1]
+    assert resolved["event_type"] == "evcp.command_result_session_check"
+    assert resolved["match"] is True
     replay = await registry.dispatch(installation_id, command_id, "stable-light", command, 1.0)
     conflict = await registry.dispatch(installation_id, command_id, "different", command, 1.0)
     assert replay.status == "success"
@@ -294,6 +305,51 @@ async def test_session_registry_isolates_two_installations() -> None:
     )
     assert (await pending_a).status == "success"
     assert (await pending_b).status == "success"
+
+
+async def test_replace_resolve_mismatch_and_remove_report_exact_session_ids() -> None:
+    registry = ConnectorSessionRegistry()
+    installation_id = uuid4()
+    first_session, second_session, unrelated_session = uuid4(), uuid4(), uuid4()
+    first_socket, second_socket = AsyncMock(), AsyncMock()
+    first_socket.client_state = second_socket.client_state = WebSocketState.CONNECTED
+
+    registered = await registry.replace(installation_id, SessionHandle(first_session, first_socket))
+    assert registered["event_type"] == "evcp.session_registered"
+    assert registered["reason"] == "new"
+    assert registered["new_session_id"] == str(first_session)
+    assert registered["previous_session_id"] is None
+    replaced = await registry.replace(installation_id, SessionHandle(second_session, second_socket))
+    assert replaced["reason"] == "replaced"
+    assert replaced["new_session_id"] == str(second_session)
+    assert replaced["previous_session_id"] == str(first_session)
+
+    command_id = uuid4()
+    matched, mismatch = await registry.resolve_with_diagnostic(
+        installation_id,
+        unrelated_session,
+        CommandResultPayload(
+            session_id=unrelated_session,
+            command_id=command_id,
+            status="stale_session",
+            error_code="STALE_SESSION",
+        ),
+    )
+    assert matched is False
+    assert mismatch["registry_session_id"] == str(second_session)
+    assert mismatch["websocket_session_id"] == str(unrelated_session)
+    assert mismatch["result_session_id"] == str(unrelated_session)
+    assert mismatch["reason"] == "websocket_session_not_current"
+
+    preserved = await registry.remove(installation_id, first_session)
+    assert preserved["event_type"] == "evcp.session_removed"
+    assert preserved["requested_session_id"] == str(first_session)
+    assert preserved["current_session_id"] == str(second_session)
+    assert preserved["removed"] is False
+    assert preserved["reason"] == "requested_session_not_current"
+    removed = await registry.remove(installation_id, second_session)
+    assert removed["removed"] is True
+    assert removed["reason"] == "current_session_removed"
 
 
 def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> None:
