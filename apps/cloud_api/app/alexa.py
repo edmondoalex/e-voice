@@ -337,7 +337,13 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             open_mode = "Position.Up" if discrete else "position.open"
             close_mode = "Position.Down" if discrete else "position.closed"
             capability_friendly_names = (
-                [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+                [
+                    {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                    {
+                        "@type": "text",
+                        "value": {"text": "Posizione", "locale": "it-IT"},
+                    },
+                ]
                 if discrete
                 else [
                     {
@@ -353,6 +359,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                            {
+                                "@type": "text",
+                                "value": {"text": "Aperto", "locale": "it-IT"},
+                            },
+                            {
+                                "@type": "text",
+                                "value": {"text": "Su", "locale": "it-IT"},
+                            },
+                        ]
+                        if discrete
+                        else [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
                         ]
                     },
                 },
@@ -360,6 +378,18 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     "value": close_mode,
                     "modeResources": {
                         "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                            {
+                                "@type": "text",
+                                "value": {"text": "Chiuso", "locale": "it-IT"},
+                            },
+                            {
+                                "@type": "text",
+                                "value": {"text": "Giù", "locale": "it-IT"},
+                            },
+                        ]
+                        if discrete
+                        else [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
                         ]
                     },

@@ -1141,6 +1141,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert controller["capabilityResources"] == {
         "friendlyNames": [
             {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+            {"@type": "text", "value": {"text": "Posizione", "locale": "it-IT"}},
         ]
     }
     assert controller["configuration"] == {
@@ -1151,6 +1152,11 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                        {
+                            "@type": "text",
+                            "value": {"text": "Aperto", "locale": "it-IT"},
+                        },
+                        {"@type": "text", "value": {"text": "Su", "locale": "it-IT"}},
                     ]
                 },
             },
@@ -1159,6 +1165,11 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
                 "modeResources": {
                     "friendlyNames": [
                         {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                        {
+                            "@type": "text",
+                            "value": {"text": "Chiuso", "locale": "it-IT"},
+                        },
+                        {"@type": "text", "value": {"text": "Giù", "locale": "it-IT"}},
                     ]
                 },
             },
