@@ -282,10 +282,11 @@ def _is_office_range_ab(entity: Entity) -> bool:
 
 def _gate_mode_capability() -> dict[str, Any]:
     return _capability("Alexa.ModeController", ["mode"]) | {
-        "instance": "GarageDoor.Position",
+        "instance": "Gate.Position",
         "capabilityResources": {
             "friendlyNames": [
-                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Mode"}},
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
             ]
         },
         "configuration": {
@@ -296,7 +297,7 @@ def _gate_mode_capability() -> dict[str, Any]:
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                            {"@type": "text", "value": {"text": "Open", "locale": "en-US"}},
+                            {"@type": "text", "value": {"text": "Aperto", "locale": "it-IT"}},
                         ]
                     },
                 },
@@ -305,7 +306,7 @@ def _gate_mode_capability() -> dict[str, Any]:
                     "modeResources": {
                         "friendlyNames": [
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                            {"@type": "text", "value": {"text": "Closed", "locale": "en-US"}},
+                            {"@type": "text", "value": {"text": "Chiuso", "locale": "it-IT"}},
                         ]
                     },
                 },
@@ -315,12 +316,12 @@ def _gate_mode_capability() -> dict[str, Any]:
             "actionMappings": [
                 {
                     "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                    "actions": ["Alexa.Actions.Open"],
                     "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
                 },
                 {
                     "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                    "actions": ["Alexa.Actions.Close"],
                     "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
                 },
             ],
@@ -764,7 +765,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.ModeController",
                 "mode",
                 "Position.Up" if entity.state == "on" else "Position.Down",
-                instance="GarageDoor.Position",
+                instance="Gate.Position",
             )
         )
     elif entity.ha_domain in {"light", "switch", "fan"}:
@@ -1065,7 +1066,7 @@ def _command_response_properties(
                 "Alexa.ModeController",
                 "mode",
                 "Position.Up" if operation == "power_on" else "Position.Down",
-                instance="GarageDoor.Position",
+                instance="Gate.Position",
             )
         )
         return properties

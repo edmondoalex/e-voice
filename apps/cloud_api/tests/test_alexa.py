@@ -891,7 +891,7 @@ async def test_light_capabilities_state_and_typed_command_dispatch(
     await client.aclose()
 
 
-async def test_gate_discovery_and_open_close_directives_use_amazon_garage_contract(
+async def test_gate_discovery_and_open_close_directives_use_generic_openable_contract(
     session: AsyncSession, seeded_domain: object, monkeypatch: object
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
@@ -923,14 +923,14 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_garage_contra
     endpoints = discovery.json()["event"]["payload"]["endpoints"]
     gate = next(item for item in endpoints if item["endpointId"] == endpoint_id(entity))
     assert gate["friendlyName"] == "paperino"
-    assert gate["displayCategories"] == ["GARAGE_DOOR"]
+    assert gate["displayCategories"] == ["OTHER"]
     assert [item["interface"] for item in gate["capabilities"]] == [
         "Alexa",
         "Alexa.EndpointHealth",
         "Alexa.ModeController",
     ]
     mode = gate["capabilities"][2]
-    assert mode["instance"] == "GarageDoor.Position"
+    assert mode["instance"] == "Gate.Position"
     assert [item["value"] for item in mode["configuration"]["supportedModes"]] == [
         "Position.Up",
         "Position.Down",
@@ -938,15 +938,38 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_garage_contra
     assert mode["semantics"]["actionMappings"] == [
         {
             "@type": "ActionsToDirective",
-            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "actions": ["Alexa.Actions.Open"],
             "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
         },
         {
             "@type": "ActionsToDirective",
-            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+            "actions": ["Alexa.Actions.Close"],
             "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
         },
     ]
+    assert gate == {
+        "endpointId": endpoint_id(entity),
+        "manufacturerName": "Ekonex",
+        "friendlyName": "paperino",
+        "description": "Home Assistant entity via Ekonex Voice",
+        "displayCategories": ["OTHER"],
+        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
+        "cookie": {},
+        "capabilities": [
+            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.EndpointHealth",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "connectivity"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
+                },
+            },
+            mode,
+        ],
+    }
 
     for mode_value, expected_operation in (
         ("Position.Up", "power_on"),
@@ -954,7 +977,7 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_garage_contra
     ):
         body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
         body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
-        body["directive"]["header"]["instance"] = "GarageDoor.Position"  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "Gate.Position"  # type: ignore[index]
         body["directive"]["payload"] = {"mode": mode_value}  # type: ignore[index]
         response = await client.post("/alexa/v1/directive", json=body)
         assert response.status_code == 200
