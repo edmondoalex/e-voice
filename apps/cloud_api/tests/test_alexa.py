@@ -891,6 +891,79 @@ async def test_light_capabilities_state_and_typed_command_dispatch(
     await client.aclose()
 
 
+async def test_gate_discovery_and_open_close_directives_use_amazon_garage_contract(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_entity_id = "switch.km_tronic_gate"
+    entity.ha_registry_id = "stable-gate"
+    entity.ha_domain = "switch"
+    entity.friendly_name = "Paperino"
+    entity.voice_name = "paperino"
+    entity.alexa_device_type = "gate"
+    entity.state = "off"
+    entity.attributes_json = {}
+    await session.commit()
+
+    token = await _access(session, seeded_domain, "eaa_gate_contract")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    client = await _client(session)
+
+    discovery = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa.Discovery", "Discover"),
+    )
+    assert discovery.status_code == 200
+    endpoints = discovery.json()["event"]["payload"]["endpoints"]
+    gate = next(item for item in endpoints if item["endpointId"] == endpoint_id(entity))
+    assert gate["friendlyName"] == "paperino"
+    assert gate["displayCategories"] == ["GARAGE_DOOR"]
+    assert [item["interface"] for item in gate["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.ModeController",
+    ]
+    mode = gate["capabilities"][2]
+    assert mode["instance"] == "GarageDoor.Position"
+    assert [item["value"] for item in mode["configuration"]["supportedModes"]] == [
+        "Position.Up",
+        "Position.Down",
+    ]
+    assert mode["semantics"]["actionMappings"] == [
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+        },
+    ]
+
+    for mode_value, expected_operation in (
+        ("Position.Up", "power_on"),
+        ("Position.Down", "power_off"),
+    ):
+        body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
+        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "GarageDoor.Position"  # type: ignore[index]
+        body["directive"]["payload"] = {"mode": mode_value}  # type: ignore[index]
+        response = await client.post("/alexa/v1/directive", json=body)
+        assert response.status_code == 200
+        assert response.json()["event"]["header"]["name"] == "Response"
+        assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
+
+    await client.aclose()
+
+
 async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
     session: AsyncSession, seeded_domain: object, monkeypatch: object
 ) -> None:

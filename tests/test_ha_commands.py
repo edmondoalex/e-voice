@@ -24,6 +24,7 @@ def exposed_entity(
     ("domain", "attributes", "command", "expected_service", "expected_data"),
     [
         ("light", {}, {"operation": "power_on"}, "turn_on", {}),
+        ("switch", {}, {"operation": "power_on"}, "turn_on", {}),
         (
             "light",
             {"supported_color_modes": ["brightness"]},

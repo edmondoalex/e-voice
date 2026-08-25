@@ -20,9 +20,7 @@ _DISPLAY_CATEGORIES: dict[AlexaDeviceType, str] = {
     "switch": "SWITCH",
     "light": "LIGHT",
     "outlet": "SMARTPLUG",
-    # Gates use generic ModeController semantics instead of the GARAGE_DOOR
-    # template so Alexa does not impose garage-door-specific behavior.
-    "gate": "OTHER",
+    "gate": "GARAGE_DOOR",
 }
 
 
