@@ -21,6 +21,7 @@ from apps.cloud_api.app.alexa import (
     state_properties,
 )
 from apps.cloud_api.app.alexa_events import (
+    PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX,
     PAPERINO_DIAGNOSTIC_ENTITY_ID,
     PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX,
 )
@@ -1099,6 +1100,52 @@ async def test_paperino_v3_directive_ingress_and_dispatch_are_isolated(
     assert 'payload={"rangeValue":100}' in alexa_log
     assert "message_id=" in alexa_log
     assert token not in alexa_log
+
+    for state, expected_range in (("off", 0), ("on", 100)):
+        entity.state = state
+        entity.available = True
+        await session.commit()
+        report_state = _directive(token, "Alexa", "ReportState", diagnostic_endpoint_id)
+        report_state["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        report_response = await client.post("/alexa/v1/directive", json=report_state)
+        assert report_response.status_code == 200
+        assert report_response.json()["event"]["header"]["name"] == "StateReport"
+        properties = report_response.json()["context"]["properties"]
+        assert {
+            "namespace": "Alexa.RangeController",
+            "instance": "cover.position",
+            "name": "rangeValue",
+            "value": expected_range,
+        }.items() <= next(
+            item for item in properties if item["namespace"] == "Alexa.RangeController"
+        ).items()
+        assert {
+            "namespace": "Alexa.EndpointHealth",
+            "name": "connectivity",
+            "value": {"value": "OK"},
+        }.items() <= next(
+            item for item in properties if item["namespace"] == "Alexa.EndpointHealth"
+        ).items()
+    assert len(dispatched.await_args_list) == calls_before_invalid
+
+    v2_endpoint_id = endpoint_id(entity) + PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX
+    v2_report = _directive(token, "Alexa", "ReportState", v2_endpoint_id)
+    v2_report["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    v2_response = await client.post("/alexa/v1/directive", json=v2_report)
+    assert v2_response.status_code == 400
+    alexa_log = "\n".join(
+        record.message for record in caplog.records if record.name == "apps.cloud_api.app.alexa"
+    )
+    assert "endpoint_kind=diagnostic_v2" in alexa_log
+    assert "http_status=400" in alexa_log
+    assert "result=failure" in alexa_log
+    assert "reason=invalid_endpoint_id" in alexa_log
+    assert "alexa_directive_endpoint_resolved endpoint_kind=diagnostic_v3" in alexa_log
+    assert f"entity_id={entity.id}" in alexa_log
+    assert "alexa_directive_operation_mapped endpoint_kind=diagnostic_v3" in alexa_log
+    assert "operation=power_on" in alexa_log
+    assert "operation=power_off" in alexa_log
+    assert "alexa_directive_ingress_result endpoint_kind=diagnostic_v3" in alexa_log
     await client.aclose()
 
 

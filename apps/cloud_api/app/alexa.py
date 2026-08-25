@@ -1269,6 +1269,21 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         message_id,
         header.get("correlationToken"),
     )
+
+    def log_ingress_result(http_status: int, result: str, reason: str) -> None:
+        logger.info(
+            "alexa_directive_ingress_result endpoint_kind=%s endpoint_id=%s namespace=%s "
+            "name=%s message_id=%s http_status=%s result=%s reason=%s",
+            endpoint_kind,
+            incoming_endpoint_id,
+            header["namespace"],
+            header["name"],
+            message_id,
+            http_status,
+            result,
+            reason,
+        )
+
     if header["namespace"] == "Alexa.Authorization" and header["name"] == "AcceptGrant":
         payload = directive.get("payload", {})
         link = await _authenticate(payload.get("grantee", {}).get("token", ""), database)
@@ -1279,6 +1294,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             await gateway.accept_grant(link, str(payload.get("grant", {}).get("code", "")))
         finally:
             await gateway.close()
+        log_ingress_result(200, "success", "accept_grant_response")
         return JSONResponse(
             _event(
                 {
@@ -1296,6 +1312,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     link = await _authenticate(scope.get("token", ""), database)
     replay_key = f"{link.id}:{message_id}"
     if replay_key in _replay:
+        log_ingress_result(200, "success", "replayed_response")
         return JSONResponse(_replay[replay_key])
     correlation = header.get("correlationToken")
     diagnostic_correlation_id: UUID | None = None
@@ -1365,6 +1382,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint = directive.get("endpoint", {})
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
+            log_ingress_result(400, "failure", "invalid_endpoint_prefix")
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
         entity_endpoint_value = (
             endpoint_value[: -len(PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX)]
@@ -1374,6 +1392,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         try:
             entity_uuid = UUID(hex=entity_endpoint_value[4:])
         except ValueError as exc:
+            log_ingress_result(400, "failure", "invalid_endpoint_id")
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
             select(Entity)
@@ -1407,9 +1426,19 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     result="failure",
                 )
                 await database.commit()
+            log_ingress_result(404, "failure", "endpoint_not_resolved")
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
         if diagnostic_correlation_id is not None:
             published_endpoint = discovery_endpoint(entity)
+            logger.info(
+                "alexa_directive_endpoint_resolved endpoint_kind=%s endpoint_id=%s "
+                "entity_id=%s ha_entity_id=%s installation_id=%s",
+                endpoint_kind,
+                endpoint_value,
+                entity.id,
+                entity.ha_entity_id,
+                entity.installation_id,
+            )
             _alexa_audit(
                 database,
                 tenant_id=link.tenant_id,
@@ -1490,6 +1519,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
                 if diagnostic_v3
                 else _command(header["namespace"], header["name"], command_payload, entity)
+            )
+            logger.info(
+                "alexa_directive_operation_mapped endpoint_kind=%s endpoint_id=%s "
+                "entity_id=%s operation=%s",
+                endpoint_kind,
+                endpoint_value,
+                entity.id,
+                spec.get("operation") if spec else None,
             )
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
@@ -1605,6 +1642,12 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     _replay[replay_key] = response
     if len(_replay) > 2048:
         _replay.pop(next(iter(_replay)))
+    response_name = str(response.get("event", {}).get("header", {}).get("name", "unknown"))
+    log_ingress_result(
+        200,
+        "failure" if response_name == "ErrorResponse" else "success",
+        response_name,
+    )
     return JSONResponse(response)
 
 
