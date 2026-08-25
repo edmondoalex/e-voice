@@ -188,3 +188,38 @@ def test_gate_contract_does_not_change_standard_switch_light_outlet_or_cover() -
     cover_capabilities = [item["interface"] for item in discovery_endpoint(cover)["capabilities"]]
     assert "Alexa.ModeController" in cover_capabilities
     assert "Alexa.PlaybackController" in cover_capabilities
+
+
+def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> None:
+    gate_endpoint = discovery_endpoint(_switch(alexa_device_type="gate"))
+    gate_mode = next(
+        item
+        for item in gate_endpoint["capabilities"]
+        if item["interface"] == "Alexa.ModeController"
+    )
+
+    cover = _switch()
+    cover.ha_entity_id = "cover.discrete"
+    cover.ha_domain = "cover"
+    cover.supported_features = 11
+    cover.alexa_cover_mode = "discrete"
+    cover_endpoint = discovery_endpoint(cover)
+    cover_mode = next(
+        item
+        for item in cover_endpoint["capabilities"]
+        if item["interface"] == "Alexa.ModeController"
+    )
+
+    assert gate_endpoint["displayCategories"] == cover_endpoint["displayCategories"] == ["OTHER"]
+    assert gate_mode["instance"] == "Gate.Position"
+    assert cover_mode["instance"] == "Blinds.Position"
+    assert gate_mode["capabilityResources"] != cover_mode["capabilityResources"]
+    assert {
+        action
+        for mapping in gate_mode["semantics"]["actionMappings"]
+        for action in mapping["actions"]
+    } == {"Alexa.Actions.Open", "Alexa.Actions.Close"}
+    assert "Alexa.PowerController" not in [
+        item["interface"] for item in gate_endpoint["capabilities"]
+    ]
+    assert "Alexa.PowerController" in [item["interface"] for item in cover_endpoint["capabilities"]]
