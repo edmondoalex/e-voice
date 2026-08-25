@@ -40,7 +40,7 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
     entity = _switch(alexa_device_type="gate")
     endpoint = discovery_endpoint(entity)
 
-    assert endpoint["displayCategories"] == ["GARAGE_DOOR"]
+    assert endpoint["displayCategories"] == ["OTHER"]
     interfaces = [item["interface"] for item in endpoint["capabilities"]]
     assert "Alexa.ModeController" in interfaces
     assert "Alexa.PowerController" not in interfaces
@@ -57,9 +57,12 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
             "proactivelyReported": True,
             "retrievable": True,
         },
-        "instance": "GarageDoor.Position",
+        "instance": "Gate.Position",
         "capabilityResources": {
-            "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Mode"}}]
+            "friendlyNames": [
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
+            ]
         },
         "configuration": {
             "ordered": False,
@@ -71,7 +74,7 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
                             {
                                 "@type": "text",
-                                "value": {"text": "Open", "locale": "en-US"},
+                                "value": {"text": "Aperto", "locale": "it-IT"},
                             },
                         ]
                     },
@@ -83,7 +86,7 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
                             {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
                             {
                                 "@type": "text",
-                                "value": {"text": "Closed", "locale": "en-US"},
+                                "value": {"text": "Chiuso", "locale": "it-IT"},
                             },
                         ]
                     },
@@ -94,12 +97,12 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
             "actionMappings": [
                 {
                     "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                    "actions": ["Alexa.Actions.Open"],
                     "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
                 },
                 {
                     "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                    "actions": ["Alexa.Actions.Close"],
                     "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
                 },
             ],
@@ -137,7 +140,7 @@ def test_gate_state_reports_open_closed_mode() -> None:
     entity = _switch(alexa_device_type="gate", state="off")
     props = state_properties(entity)
     mode = next(item for item in props if item["namespace"] == "Alexa.ModeController")
-    assert mode["instance"] == "GarageDoor.Position"
+    assert mode["instance"] == "Gate.Position"
     assert mode["value"] == "Position.Down"
 
     entity.state = "on"
