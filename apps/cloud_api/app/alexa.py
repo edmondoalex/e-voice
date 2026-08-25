@@ -1164,6 +1164,25 @@ def _diagnostic_payload(value: object) -> object:
     return str(value)
 
 
+_DIRECTIVE_DIAGNOSTIC_PAYLOAD_KEYS = {
+    "mode",
+    "rangeValue",
+    "rangeValueDelta",
+    "targetSetpoint",
+    "thermostatMode",
+}
+
+
+def _directive_diagnostic_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _diagnostic_payload(item)
+        for key, item in value.items()
+        if str(key) in _DIRECTIVE_DIAGNOSTIC_PAYLOAD_KEYS
+    }
+
+
 def _sensitive_diagnostic_key(key: str) -> bool:
     normalized = key.casefold()
     return normalized in _SENSITIVE_DIAGNOSTIC_KEYS or any(
@@ -1243,7 +1262,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         header.get("instance"),
         incoming_endpoint_id,
         json.dumps(
-            _diagnostic_payload(directive.get("payload", {})),
+            _directive_diagnostic_payload(directive.get("payload", {})),
             ensure_ascii=False,
             separators=(",", ":"),
         ),

@@ -1058,7 +1058,7 @@ async def test_paperino_v3_directive_ingress_and_dispatch_are_isolated(
             diagnostic_endpoint_id,
         )
         body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
-        body["directive"]["header"]["instance"] = "door.opening"  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "cover.position"  # type: ignore[index]
         body["directive"]["payload"] = {"rangeValue": value}  # type: ignore[index]
         response = await client.post("/alexa/v1/directive", json=body)
         assert response.status_code == 200
@@ -1069,7 +1069,7 @@ async def test_paperino_v3_directive_ingress_and_dispatch_are_isolated(
             "name": "rangeValue",
             "value": value,
             "timeOfSample": response.json()["context"]["properties"][0]["timeOfSample"],
-            "uncertaintyInMilliseconds": 500,
+            "uncertaintyInMilliseconds": 1000,
         }
         assert dispatched.await_args_list[-1].args[3] == {"operation": operation}
 
