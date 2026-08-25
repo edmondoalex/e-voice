@@ -179,6 +179,173 @@ def test_state_properties_omit_other_invalid_numeric_attributes() -> None:
             assert _property_value(entity, namespace, name) is None
 
 
+def _climate(
+    hvac_modes: list[object],
+    *,
+    state: str = "heat",
+    current_temperature: object = 20.5,
+    temperature: object = 21.5,
+    extra_attributes: dict[str, object] | None = None,
+) -> Entity:
+    attributes: dict[str, object] = {
+        "hvac_modes": hvac_modes,
+        "temperature": temperature,
+        "current_temperature": current_temperature,
+    }
+    attributes.update(extra_attributes or {})
+    return Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="climate.office",
+        ha_domain="climate",
+        friendly_name="Clima ufficio",
+        available=True,
+        state=state,
+        attributes_json=attributes,
+    )
+
+
+@pytest.mark.parametrize(
+    ("hvac_modes", "expected"),
+    [
+        (["heat", "off"], ["HEAT", "OFF"]),
+        (["heat", "cool", "auto"], ["HEAT", "COOL", "AUTO"]),
+        (
+            ["dry", "fan_only", "heat", "heat_cool", "eco", "emergency_heat", 42],
+            ["HEAT", "AUTO", "ECO", "EM_HEAT"],
+        ),
+    ],
+)
+def test_climate_discovery_publishes_only_valid_supported_modes(
+    hvac_modes: list[object], expected: list[str]
+) -> None:
+    endpoint = discovery_endpoint(_climate(hvac_modes))
+    thermostat = next(
+        capability
+        for capability in endpoint["capabilities"]
+        if capability["interface"] == "Alexa.ThermostatController"
+    )
+
+    assert endpoint["displayCategories"] == ["THERMOSTAT"]
+    assert thermostat == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.ThermostatController",
+        "version": "3",
+        "properties": {
+            "supported": [{"name": "targetSetpoint"}, {"name": "thermostatMode"}],
+            "proactivelyReported": True,
+            "retrievable": True,
+        },
+        "configuration": {"supportedModes": expected},
+    }
+
+
+def test_climate_temperature_sensor_and_state_reporting_are_discovery_coherent() -> None:
+    entity = _climate(
+        ["off", "heat"],
+        state="heat",
+        extra_attributes={"temperature_unit": "F"},
+    )
+    endpoint = discovery_endpoint(entity)
+    interfaces = {item["interface"]: item for item in endpoint["capabilities"]}
+
+    assert interfaces["Alexa.TemperatureSensor"]["properties"]["supported"] == [
+        {"name": "temperature"}
+    ]
+    assert _property_value(entity, "Alexa.ThermostatController", "targetSetpoint") == {
+        "value": 21.5,
+        "scale": "FAHRENHEIT",
+    }
+    assert _property_value(entity, "Alexa.ThermostatController", "thermostatMode") == "HEAT"
+    assert _property_value(entity, "Alexa.TemperatureSensor", "temperature") == {
+        "value": 20.5,
+        "scale": "FAHRENHEIT",
+    }
+
+    entity.attributes_json = {"hvac_modes": ["heat", "off"], "temperature": 21.5}
+    assert not any(item["interface"] == "Alexa.TemperatureSensor" for item in capabilities(entity))
+    assert _property_value(entity, "Alexa.TemperatureSensor", "temperature") is None
+
+
+@pytest.mark.parametrize("invalid", [None, "unknown", float("nan"), float("inf")])
+def test_climate_invalid_current_temperature_omits_temperature_sensor(invalid: object) -> None:
+    entity = _climate(["heat", "off"], current_temperature=invalid)
+
+    assert not any(item["interface"] == "Alexa.TemperatureSensor" for item in capabilities(entity))
+    assert _property_value(entity, "Alexa.TemperatureSensor", "temperature") is None
+
+
+def test_incomplete_climate_never_publishes_an_invalid_thermostat_capability() -> None:
+    for entity in (
+        _climate(["off", "dry"]),
+        _climate(["heat", "off"], temperature=None),
+        _climate([], temperature=None, current_temperature=None),
+    ):
+        assert not any(
+            item["interface"] == "Alexa.ThermostatController" for item in capabilities(entity)
+        )
+        assert not any(
+            item["namespace"] == "Alexa.ThermostatController" for item in state_properties(entity)
+        )
+
+
+def test_climate_directives_are_allowlisted_against_advertised_modes() -> None:
+    entity = _climate(["off", "heat", "heat_cool", "dry"])
+
+    assert _command(
+        "Alexa.ThermostatController",
+        "SetTargetTemperature",
+        {"targetSetpoint": {"value": 22.5, "scale": "CELSIUS"}},
+        entity,
+    ) == {"operation": "set_target_temperature", "temperature": 22.5}
+    assert _command(
+        "Alexa.ThermostatController",
+        "SetThermostatMode",
+        {"thermostatMode": "HEAT"},
+        entity,
+    ) == {"operation": "set_hvac_mode", "hvac_mode": "heat"}
+    assert _command(
+        "Alexa.ThermostatController",
+        "SetThermostatMode",
+        {"thermostatMode": {"value": "AUTO"}},
+        entity,
+    ) == {"operation": "set_hvac_mode", "hvac_mode": "heat_cool"}
+    assert (
+        _command(
+            "Alexa.ThermostatController",
+            "SetThermostatMode",
+            {"thermostatMode": "COOL"},
+            entity,
+        )
+        is None
+    )
+    assert (
+        _command(
+            "Alexa.ThermostatController",
+            "SetThermostatMode",
+            {"thermostatMode": "CUSTOM"},
+            entity,
+        )
+        is None
+    )
+
+
+def test_heat_cool_round_trips_deterministically_through_alexa_auto() -> None:
+    entity = _climate(["heat", "off", "heat_cool"], state="heat_cool")
+
+    thermostat = next(
+        item for item in capabilities(entity) if item["interface"] == "Alexa.ThermostatController"
+    )
+    assert thermostat["configuration"]["supportedModes"] == ["HEAT", "OFF", "AUTO"]
+    assert _property_value(entity, "Alexa.ThermostatController", "thermostatMode") == "AUTO"
+    assert _command(
+        "Alexa.ThermostatController",
+        "SetThermostatMode",
+        {"thermostatMode": "AUTO"},
+        entity,
+    ) == {"operation": "set_hvac_mode", "hvac_mode": "heat_cool"}
+
+
 @pytest.mark.parametrize(
     ("state", "expected"),
     [
@@ -394,6 +561,39 @@ async def test_oauth_authorization_code_is_one_use_and_refresh_rotates(
     )
     assert refreshed.status_code == 200
     assert refreshed.json()["refresh_token"] != tokens.json()["refresh_token"]
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        {"current_temperature": 20.5, "temperature": 21.0, "hvac_modes": ["off"]},
+        {"current_temperature": 20.5, "temperature": None, "hvac_modes": ["heat", "off"]},
+        {"current_temperature": 20.5, "temperature": float("nan"), "hvac_modes": ["cool"]},
+        {"current_temperature": 20.5, "temperature": 21.0, "hvac_modes": ["dry"]},
+    ],
+)
+async def test_discovery_excludes_incomplete_climate_endpoint_entirely(
+    session: AsyncSession, seeded_domain: object, attributes: dict[str, object]
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.incomplete"
+    entity.ha_registry_id = "climate-incomplete"
+    entity.state = "heat"
+    entity.attributes_json = attributes
+    await session.commit()
+    token = await _access(session, seeded_domain, f"eaa_incomplete_{uuid4().hex}")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa.Discovery", "Discover"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["event"]["payload"]["endpoints"] == []
     await client.aclose()
 
 
@@ -754,10 +954,12 @@ def test_supported_directives_map_only_to_closed_m6_vocabulary() -> None:
         "operation": "set_position",
         "position": 70,
     }
+    climate = _climate(["heat", "off"])
     assert _command(
         "Alexa.ThermostatController",
         "SetTargetTemperature",
         {"targetSetpoint": {"value": 21}},
+        climate,
     ) == {"operation": "set_target_temperature", "temperature": 21.0}
     assert _command("Alexa.PercentageController", "SetPercentage", {"percentage": 40}) == {
         "operation": "set_percentage",
