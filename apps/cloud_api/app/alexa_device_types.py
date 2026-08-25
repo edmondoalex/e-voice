@@ -28,7 +28,9 @@ _DISPLAY_CATEGORIES: dict[AlexaDeviceType, str] = {
 
 def allowed_alexa_device_types(entity: Entity) -> tuple[AlexaDeviceType, ...]:
     """Return explicit Alexa types that are safe for this HA entity domain."""
-    return tuple(value for value in ALEXA_DEVICE_TYPES if entity.ha_domain in _DEVICE_DOMAINS[value])
+    return tuple(
+        value for value in ALEXA_DEVICE_TYPES if entity.ha_domain in _DEVICE_DOMAINS[value]
+    )
 
 
 def validate_alexa_device_type(entity: Entity, value: str) -> AlexaDeviceType:

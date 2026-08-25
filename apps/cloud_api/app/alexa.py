@@ -294,28 +294,44 @@ def _gate_mode_capability() -> dict[str, Any]:
             "supportedModes": [
                 {
                     "value": "Position.Up",
-                    "modeResources": {"friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                        {"@type": "text", "value": {"text": "Aperto", "locale": "it-IT"}},
-                    ]},
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                            {"@type": "text", "value": {"text": "Aperto", "locale": "it-IT"}},
+                        ]
+                    },
                 },
                 {
                     "value": "Position.Down",
-                    "modeResources": {"friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                        {"@type": "text", "value": {"text": "Chiuso", "locale": "it-IT"}},
-                    ]},
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                            {"@type": "text", "value": {"text": "Chiuso", "locale": "it-IT"}},
+                        ]
+                    },
                 },
             ],
         },
         "semantics": {
             "actionMappings": [
-                {"@type": "ActionsToDirective", "actions": ["Alexa.Actions.Open"], "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}}},
-                {"@type": "ActionsToDirective", "actions": ["Alexa.Actions.Close"], "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}}},
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Open"],
+                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+                },
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Close"],
+                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+                },
             ],
             "stateMappings": [
                 {"@type": "StatesToValue", "states": ["Alexa.States.Open"], "value": "Position.Up"},
-                {"@type": "StatesToValue", "states": ["Alexa.States.Closed"], "value": "Position.Down"},
+                {
+                    "@type": "StatesToValue",
+                    "states": ["Alexa.States.Closed"],
+                    "value": "Position.Down",
+                },
             ],
         },
     }
@@ -643,14 +659,17 @@ def _cover_display_category(entity: Entity) -> str:
 
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
-    category = overridden_display_category(entity) or {
-        "light": "LIGHT",
-        "switch": "SWITCH",
-        "cover": _cover_display_category(entity),
-        "climate": "THERMOSTAT",
-        "fan": "FAN",
-        "scene": "SCENE_TRIGGER",
-    }[entity.ha_domain]
+    category = (
+        overridden_display_category(entity)
+        or {
+            "light": "LIGHT",
+            "switch": "SWITCH",
+            "cover": _cover_display_category(entity),
+            "climate": "THERMOSTAT",
+            "fan": "FAN",
+            "scene": "SCENE_TRIGGER",
+        }[entity.ha_domain]
+    )
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",

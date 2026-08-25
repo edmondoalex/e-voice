@@ -987,7 +987,13 @@ async def update_entity_names(
     changed_fields = [
         name
         for name, before, after in zip(
-            ("display_name", "voice_name", "voice_aliases", "alexa_cover_mode", "alexa_device_type"),
+            (
+                "display_name",
+                "voice_name",
+                "voice_aliases",
+                "alexa_cover_mode",
+                "alexa_device_type",
+            ),
             previous,
             current,
             strict=True,
@@ -1009,7 +1015,9 @@ async def update_entity_names(
     )
     await session.commit()
     await reconcile_discovery_safely(session, installation)
-    return _names_page(installation, entity, context, _csrf(context), message="Configurazione entità salvata.")
+    return _names_page(
+        installation, entity, context, _csrf(context), message="Configurazione entità salvata."
+    )
 
 
 def _command_data(operation: str, value: str) -> dict[str, object]:

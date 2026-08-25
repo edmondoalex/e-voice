@@ -50,21 +50,19 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
     )
     assert mode["instance"] == "Gate.Position"
     actions = {
-        action
-        for mapping in mode["semantics"]["actionMappings"]
-        for action in mapping["actions"]
+        action for mapping in mode["semantics"]["actionMappings"] for action in mapping["actions"]
     }
     assert {"Alexa.Actions.Open", "Alexa.Actions.Close"} <= actions
 
 
 def test_gate_open_close_maps_to_switch_power() -> None:
     entity = _switch(alexa_device_type="gate")
-    assert _command(
-        "Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity
-    ) == {"operation": "power_on"}
-    assert _command(
-        "Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity
-    ) == {"operation": "power_off"}
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
+        "operation": "power_on"
+    }
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity) == {
+        "operation": "power_off"
+    }
 
 
 def test_gate_state_reports_open_closed_mode() -> None:
@@ -88,6 +86,4 @@ def test_visual_switch_overrides_keep_power_controller() -> None:
     ):
         endpoint = discovery_endpoint(_switch(alexa_device_type=device_type))
         assert endpoint["displayCategories"] == [category]
-        assert "Alexa.PowerController" in [
-            item["interface"] for item in endpoint["capabilities"]
-        ]
+        assert "Alexa.PowerController" in [item["interface"] for item in endpoint["capabilities"]]
