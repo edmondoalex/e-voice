@@ -283,11 +283,10 @@ def _is_office_range_ab(entity: Entity) -> bool:
 def _gate_toggle_capability() -> dict[str, Any]:
     """Model a switch-backed gate as Amazon's generic binary openable device."""
     return _capability("Alexa.ToggleController", ["toggleState"]) | {
-        "instance": "Gate.Opening",
+        "instance": "door.opening",
         "capabilityResources": {
             "friendlyNames": [
                 {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
             ]
         },
         "semantics": {
@@ -743,7 +742,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.ToggleController",
                 "toggleState",
                 "ON" if entity.state == "on" else "OFF",
-                instance="Gate.Opening",
+                instance="door.opening",
             )
         )
     elif entity.ha_domain in {"light", "switch", "fan"}:
@@ -1050,7 +1049,7 @@ def _command_response_properties(
                 "Alexa.ToggleController",
                 "toggleState",
                 "ON" if operation == "power_on" else "OFF",
-                instance="Gate.Opening",
+                instance="door.opening",
             )
         )
         return properties

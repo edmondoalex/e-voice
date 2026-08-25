@@ -923,14 +923,14 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
     endpoints = discovery.json()["event"]["payload"]["endpoints"]
     gate = next(item for item in endpoints if item["endpointId"] == endpoint_id(entity))
     assert gate["friendlyName"] == "paperino"
-    assert gate["displayCategories"] == ["OTHER"]
+    assert gate["displayCategories"] == ["DOOR"]
     assert [item["interface"] for item in gate["capabilities"]] == [
         "Alexa",
         "Alexa.EndpointHealth",
         "Alexa.ToggleController",
     ]
     toggle = gate["capabilities"][2]
-    assert toggle["instance"] == "Gate.Opening"
+    assert toggle["instance"] == "door.opening"
     assert toggle["properties"]["supported"] == [{"name": "toggleState"}]
     assert "configuration" not in toggle
     assert toggle["semantics"]["actionMappings"] == [
@@ -950,7 +950,7 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
         "manufacturerName": "Ekonex",
         "friendlyName": "paperino",
         "description": "Home Assistant entity via Ekonex Voice",
-        "displayCategories": ["OTHER"],
+        "displayCategories": ["DOOR"],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
         "cookie": {},
         "capabilities": [
@@ -975,7 +975,7 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
     ):
         body = _directive(token, "Alexa.ToggleController", directive_name, endpoint_id(entity))
         body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
-        body["directive"]["header"]["instance"] = "Gate.Opening"  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "door.opening"  # type: ignore[index]
         body["directive"]["payload"] = {}  # type: ignore[index]
         response = await client.post("/alexa/v1/directive", json=body)
         assert response.status_code == 200
@@ -985,7 +985,7 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
             for item in response.json()["context"]["properties"]
             if item["namespace"] == "Alexa.ToggleController"
         )
-        assert toggle_property["instance"] == "Gate.Opening"
+        assert toggle_property["instance"] == "door.opening"
         assert toggle_property["value"] == ("ON" if expected_operation == "power_on" else "OFF")
         assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
 
