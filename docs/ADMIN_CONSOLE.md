@@ -12,8 +12,8 @@ system. Open `/dashboard` after logging in at `/login`.
   name as the primary label, local icons, synchronized e-Control metadata, current state and
   availability. It distinguishes the latest complete Alexa Discovery snapshot from the estimated
   current inventory derived from active proactive deliveries, and shows redacted outcomes for the
-  latest AddOrUpdateReport/DeleteReport. Tombstoned entities remain visible but cannot be
-  controlled.
+  latest AddOrUpdateReport/DeleteReport. Soft-deleted entities remain stored for history, audit
+  and Alexa delivery reconciliation, but are omitted from the ordinary device list.
   Administrators can force a tenant-scoped proactive Alexa Discovery refresh for all current
   endpoints. The CSRF-protected action reports its outcome in the page and records an audit event.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
@@ -42,6 +42,11 @@ Lights expose direct ON/OFF controls and a 0–100% level slider. The portal val
 percentage and maps it to the existing typed 0–255 M6 brightness field before dispatch. Controls
 are disabled for unavailable or removed entities. Other supported domains expose only their
 allowlisted value-free operations; no generic service or operation selector is rendered.
+
+Available climate entities expose target-temperature and HVAC-mode controls only when the
+corresponding synchronized attributes are present. Temperature bounds and step come from the
+entity; the mode selector contains only advertised `hvac_modes`. Both commands pass through the
+existing typed dispatcher, and unavailable entities render their controls disabled.
 
 The effective voice name is the primary entity title and is also explicitly labelled. State
 indicators distinguish on (green), off (grey), unavailable (red) and removed (orange), with the
