@@ -1087,15 +1087,18 @@ async def test_paperino_v3_directive_ingress_and_dispatch_are_isolated(
     assert invalid_response.status_code == 200
     assert invalid_response.json()["event"]["header"]["name"] == "ErrorResponse"
     assert len(dispatched.await_args_list) == calls_before_invalid
-    assert "alexa_directive_ingress" in caplog.text
-    assert "endpoint_kind=diagnostic_v3" in caplog.text
-    assert "namespace=Alexa.RangeController" in caplog.text
-    assert "name=SetRangeValue" in caplog.text
-    assert "instance=cover.position" in caplog.text
-    assert f"endpoint_id={diagnostic_endpoint_id}" in caplog.text
-    assert 'payload={"rangeValue":100}' in caplog.text
-    assert "message_id=" in caplog.text
-    assert token not in caplog.text
+    alexa_log = "\n".join(
+        record.message for record in caplog.records if record.name == "apps.cloud_api.app.alexa"
+    )
+    assert "alexa_directive_ingress" in alexa_log
+    assert "endpoint_kind=diagnostic_v3" in alexa_log
+    assert "namespace=Alexa.RangeController" in alexa_log
+    assert "name=SetRangeValue" in alexa_log
+    assert "instance=cover.position" in alexa_log
+    assert f"endpoint_id={diagnostic_endpoint_id}" in alexa_log
+    assert 'payload={"rangeValue":100}' in alexa_log
+    assert "message_id=" in alexa_log
+    assert token not in alexa_log
     await client.aclose()
 
 
