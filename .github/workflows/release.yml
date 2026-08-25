@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - custom_components/ekonex_voice/manifest.json
+      - .github/workflows/release.yml
   release:
     types: [published]
 
