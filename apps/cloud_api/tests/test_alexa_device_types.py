@@ -36,24 +36,25 @@ def test_switch_device_types_are_bounded_by_domain() -> None:
         validate_alexa_device_type(entity, "gate")
 
 
-def test_gate_override_discovers_open_close_mode_controller() -> None:
+def test_gate_override_discovers_binary_range_controller() -> None:
     entity = _switch(alexa_device_type="gate")
     endpoint = discovery_endpoint(entity)
 
     assert endpoint["displayCategories"] == ["OTHER"]
     interfaces = [item["interface"] for item in endpoint["capabilities"]]
-    assert "Alexa.ModeController" in interfaces
+    assert "Alexa.RangeController" in interfaces
+    assert "Alexa.ModeController" not in interfaces
     assert "Alexa.PowerController" not in interfaces
 
-    mode = next(
-        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.ModeController"
+    controller = next(
+        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.RangeController"
     )
-    assert mode == {
+    assert controller == {
         "type": "AlexaInterface",
-        "interface": "Alexa.ModeController",
+        "interface": "Alexa.RangeController",
         "version": "3",
         "properties": {
-            "supported": [{"name": "mode"}],
+            "supported": [{"name": "rangeValue"}],
             "proactivelyReported": True,
             "retrievable": True,
         },
@@ -65,88 +66,73 @@ def test_gate_override_discovers_open_close_mode_controller() -> None:
             ]
         },
         "configuration": {
-            "ordered": False,
-            "supportedModes": [
-                {
-                    "value": "Position.Up",
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                            {
-                                "@type": "text",
-                                "value": {"text": "Aperto", "locale": "it-IT"},
-                            },
-                        ]
-                    },
-                },
-                {
-                    "value": "Position.Down",
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                            {
-                                "@type": "text",
-                                "value": {"text": "Chiuso", "locale": "it-IT"},
-                            },
-                        ]
-                    },
-                },
-            ],
+            "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 100}
         },
         "semantics": {
             "actionMappings": [
                 {
                     "@type": "ActionsToDirective",
                     "actions": ["Alexa.Actions.Open"],
-                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+                    "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},
                 },
                 {
                     "@type": "ActionsToDirective",
                     "actions": ["Alexa.Actions.Close"],
-                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+                    "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
                 },
             ],
             "stateMappings": [
                 {
                     "@type": "StatesToValue",
                     "states": ["Alexa.States.Open"],
-                    "value": "Position.Up",
+                    "value": 100,
                 },
                 {
                     "@type": "StatesToValue",
                     "states": ["Alexa.States.Closed"],
-                    "value": "Position.Down",
+                    "value": 0,
                 },
             ],
         },
     }
     actions = {
-        action for mapping in mode["semantics"]["actionMappings"] for action in mapping["actions"]
+        action
+        for mapping in controller["semantics"]["actionMappings"]
+        for action in mapping["actions"]
     }
     assert {"Alexa.Actions.Open", "Alexa.Actions.Close"} <= actions
 
 
 def test_gate_open_close_maps_to_switch_power() -> None:
     entity = _switch(alexa_device_type="gate")
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, entity) == {
         "operation": "power_on"
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, entity) == {
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, entity) == {
         "operation": "power_off"
     }
+    for invalid in (1, 50, 99, -1, 101, True, None, "100", float("nan"), float("inf")):
+        assert (
+            _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": invalid}, entity)
+            is None
+        )
+    assert (
+        _command("Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 100}, entity)
+        is None
+    )
 
 
-def test_gate_state_reports_open_closed_mode() -> None:
+def test_gate_state_reports_binary_range() -> None:
     entity = _switch(alexa_device_type="gate", state="off")
     props = state_properties(entity)
-    mode = next(item for item in props if item["namespace"] == "Alexa.ModeController")
-    assert mode["instance"] == "Gate.Position"
-    assert mode["value"] == "Position.Down"
+    position = next(item for item in props if item["namespace"] == "Alexa.RangeController")
+    assert position["instance"] == "Gate.Position"
+    assert position["value"] == 0
 
     entity.state = "on"
     props = state_properties(entity)
-    mode = next(item for item in props if item["namespace"] == "Alexa.ModeController")
-    assert mode["value"] == "Position.Up"
+    position = next(item for item in props if item["namespace"] == "Alexa.RangeController")
+    assert position["value"] == 100
 
 
 def test_visual_switch_overrides_keep_power_controller() -> None:
@@ -192,10 +178,10 @@ def test_gate_contract_does_not_change_standard_switch_light_outlet_or_cover() -
 
 def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> None:
     gate_endpoint = discovery_endpoint(_switch(alexa_device_type="gate"))
-    gate_mode = next(
+    gate_range = next(
         item
         for item in gate_endpoint["capabilities"]
-        if item["interface"] == "Alexa.ModeController"
+        if item["interface"] == "Alexa.RangeController"
     )
 
     cover = _switch()
@@ -211,12 +197,12 @@ def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> Non
     )
 
     assert gate_endpoint["displayCategories"] == cover_endpoint["displayCategories"] == ["OTHER"]
-    assert gate_mode["instance"] == "Gate.Position"
+    assert gate_range["instance"] == "Gate.Position"
     assert cover_mode["instance"] == "Blinds.Position"
-    assert gate_mode["capabilityResources"] != cover_mode["capabilityResources"]
+    assert gate_range["capabilityResources"] != cover_mode["capabilityResources"]
     assert {
         action
-        for mapping in gate_mode["semantics"]["actionMappings"]
+        for mapping in gate_range["semantics"]["actionMappings"]
         for action in mapping["actions"]
     } == {"Alexa.Actions.Open", "Alexa.Actions.Close"}
     assert "Alexa.PowerController" not in [

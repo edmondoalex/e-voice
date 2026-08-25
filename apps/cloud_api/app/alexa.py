@@ -280,8 +280,9 @@ def _is_office_range_ab(entity: Entity) -> bool:
     return entity.ha_domain == "cover" and entity.ha_entity_id == OFFICE_RANGE_AB_ENTITY_ID
 
 
-def _gate_mode_capability() -> dict[str, Any]:
-    return _capability("Alexa.ModeController", ["mode"]) | {
+def _gate_range_capability() -> dict[str, Any]:
+    """Model a switch-backed gate as a binary Alexa range."""
+    return _capability("Alexa.RangeController", ["rangeValue"]) | {
         "instance": "Gate.Position",
         "capabilityResources": {
             "friendlyNames": [
@@ -290,47 +291,27 @@ def _gate_mode_capability() -> dict[str, Any]:
             ]
         },
         "configuration": {
-            "ordered": False,
-            "supportedModes": [
-                {
-                    "value": "Position.Up",
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                            {"@type": "text", "value": {"text": "Aperto", "locale": "it-IT"}},
-                        ]
-                    },
-                },
-                {
-                    "value": "Position.Down",
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                            {"@type": "text", "value": {"text": "Chiuso", "locale": "it-IT"}},
-                        ]
-                    },
-                },
-            ],
+            "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 100}
         },
         "semantics": {
             "actionMappings": [
                 {
                     "@type": "ActionsToDirective",
                     "actions": ["Alexa.Actions.Open"],
-                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+                    "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},
                 },
                 {
                     "@type": "ActionsToDirective",
                     "actions": ["Alexa.Actions.Close"],
-                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+                    "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
                 },
             ],
             "stateMappings": [
-                {"@type": "StatesToValue", "states": ["Alexa.States.Open"], "value": "Position.Up"},
+                {"@type": "StatesToValue", "states": ["Alexa.States.Open"], "value": 100},
                 {
                     "@type": "StatesToValue",
                     "states": ["Alexa.States.Closed"],
-                    "value": "Position.Down",
+                    "value": 0,
                 },
             ],
         },
@@ -343,7 +324,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
     if entity.ha_domain in {"light", "switch", "fan"} and not is_gate_override(entity):
         result.append(_capability("Alexa.PowerController", ["powerState"]))
     if is_gate_override(entity):
-        result.append(_gate_mode_capability())
+        result.append(_gate_range_capability())
     if entity.ha_domain == "light":
         result.append(_capability("Alexa.BrightnessController", ["brightness"]))
         if "rgb_color" in attributes:
@@ -762,9 +743,9 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
     if is_gate_override(entity):
         props.append(
             _property(
-                "Alexa.ModeController",
-                "mode",
-                "Position.Up" if entity.state == "on" else "Position.Down",
+                "Alexa.RangeController",
+                "rangeValue",
+                100 if entity.state == "on" else 0,
                 instance="Gate.Position",
             )
         )
@@ -958,6 +939,19 @@ def _command(
             "color_temp_kelvin": float(payload["colorTemperatureInKelvin"]),
         }
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
+        if entity is not None and is_gate_override(entity):
+            range_value = payload.get("rangeValue")
+            if (
+                isinstance(range_value, bool)
+                or not isinstance(range_value, (int, float))
+                or not math.isfinite(float(range_value))
+            ):
+                return None
+            if float(range_value) == 100:
+                return {"operation": "power_on"}
+            if float(range_value) == 0:
+                return {"operation": "power_off"}
+            return None
         if entity is not None and _is_office_range_ab(entity):
             range_value = float(payload["rangeValue"])
             if range_value == 100:
@@ -969,6 +963,8 @@ def _command(
             return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
+        if is_gate_override(entity):
+            return None
         if _is_office_range_ab(entity):
             return None
         if effective_cover_mode(entity) not in {"percentage", "hybrid"}:
@@ -1059,13 +1055,13 @@ def _command_response_properties(
         properties = [
             item
             for item in properties
-            if (item["namespace"], item["name"]) != ("Alexa.ModeController", "mode")
+            if (item["namespace"], item["name"]) != ("Alexa.RangeController", "rangeValue")
         ]
         properties.append(
             _property(
-                "Alexa.ModeController",
-                "mode",
-                "Position.Up" if operation == "power_on" else "Position.Down",
+                "Alexa.RangeController",
+                "rangeValue",
+                100 if operation == "power_on" else 0,
                 instance="Gate.Position",
             )
         )
