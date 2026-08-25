@@ -623,6 +623,15 @@ def _finite_number(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _climate_current_temperature(entity: Entity) -> float | None:
+    """Return only the synchronized ambient temperature when it is usable."""
+    return _finite_number((entity.attributes_json or {}).get("current_temperature"))
+
+
+def _format_temperature(value: float) -> str:
+    return f"{value:.1f}".replace(".", ",")
+
+
 def _climate_target_config(
     entity: Entity,
 ) -> tuple[float, float | None, float | None, float | None] | None:
@@ -680,6 +689,12 @@ def _control_form(
 def _climate_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
     disabled = "" if enabled else " disabled"
     controls: list[str] = []
+    current_temperature = _climate_current_temperature(entity)
+    if current_temperature is not None:
+        controls.append(
+            '<span class="climate-current-temperature">'
+            f"Temperatura attuale: {_format_temperature(current_temperature)} &deg;C</span>"
+        )
     target = _climate_target_config(entity)
     if target is not None:
         value, minimum, maximum, step = target
