@@ -9,7 +9,7 @@ from zipfile import ZipFile
 from scripts.build_hacs_release import build
 
 
-def test_hacs_zip_contains_installable_beta13_connector(tmp_path: Path) -> None:
+def test_hacs_zip_contains_installable_beta14_connector(tmp_path: Path) -> None:
     output = tmp_path / "ekonex_voice.zip"
     build(output)
 
@@ -20,7 +20,7 @@ def test_hacs_zip_contains_installable_beta13_connector(tmp_path: Path) -> None:
         assert not any(name.startswith("custom_components/") for name in names)
         assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["version"] == "0.1.8-beta.13"
+        assert manifest["version"] == "0.1.8-beta.14"
         assert b"correlation_id" in archive.read("evcp.py")
 
 
