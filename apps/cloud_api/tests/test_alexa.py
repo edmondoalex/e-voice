@@ -811,59 +811,117 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
 
 
-def test_office_cover_alone_uses_experimental_discrete_range_profile() -> None:
+def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
     installation_id = uuid4()
     experimental = Entity(
         id=uuid4(),
         installation_id=installation_id,
         ha_entity_id="cover.buspro_cover_porta_ufficio",
         ha_domain="cover",
+        friendly_name="Tapparella ufficio",
+        device_class="blind",
         supported_features=15,
         alexa_cover_mode="discrete",
         state="unknown",
     )
     endpoint = discovery_endpoint(experimental)
-    assert [item["interface"] for item in endpoint["capabilities"]] == [
-        "Alexa",
-        "Alexa.EndpointHealth",
-        "Alexa.RangeController",
-    ]
-    assert endpoint["capabilities"][2] == {
-        "type": "AlexaInterface",
-        "interface": "Alexa.RangeController",
-        "version": "3",
-        "properties": {
-            "supported": [{"name": "rangeValue"}],
-            "proactivelyReported": True,
-            "retrievable": True,
-        },
-        "instance": "Blind.Lift",
-        "capabilityResources": {
-            "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
-        },
-        "configuration": {
-            "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
-        },
-        "semantics": {
-            "actionMappings": [
-                {
-                    "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Open"],
-                    "directive": {
-                        "name": "SetRangeValue",
-                        "payload": {"rangeValue": 100},
-                    },
+    assert endpoint == {
+        "endpointId": endpoint_id(experimental),
+        "manufacturerName": "Ekonex",
+        "friendlyName": "Tapparella ufficio",
+        "description": "Home Assistant entity via Ekonex Voice",
+        "displayCategories": ["INTERIOR_BLIND"],
+        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
+        "cookie": {},
+        "capabilities": [
+            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.EndpointHealth",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "connectivity"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
                 },
-                {
-                    "@type": "ActionsToDirective",
-                    "actions": ["Alexa.Actions.Close"],
-                    "directive": {
-                        "name": "SetRangeValue",
-                        "payload": {"rangeValue": 0},
-                    },
+            },
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.PowerController",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "powerState"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
                 },
-            ]
-        },
+            },
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.RangeController",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "rangeValue"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
+                },
+                "instance": "cover.position",
+                "capabilityResources": {
+                    "friendlyNames": [
+                        {
+                            "@type": "text",
+                            "value": {"text": "Position", "locale": "en-US"},
+                        },
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                    ]
+                },
+                "configuration": {
+                    "supportedRange": {
+                        "minimumValue": 0,
+                        "maximumValue": 100,
+                        "precision": 1,
+                    },
+                    "unitOfMeasure": "Alexa.Unit.Percent",
+                },
+                "semantics": {
+                    "actionMappings": [
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 0},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 100},
+                            },
+                        },
+                    ],
+                    "stateMappings": [
+                        {
+                            "@type": "StatesToValue",
+                            "states": ["Alexa.States.Closed"],
+                            "value": 0,
+                        },
+                        {
+                            "@type": "StatesToRange",
+                            "states": ["Alexa.States.Open"],
+                            "range": {"minimumValue": 1, "maximumValue": 100},
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.PlaybackController",
+                "version": "3",
+                "supportedOperations": ["Stop"],
+            },
+        ],
     }
     assert _command(
         "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, experimental
@@ -871,16 +929,25 @@ def test_office_cover_alone_uses_experimental_discrete_range_profile() -> None:
     assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, experimental) == {
         "operation": "close"
     }
-    assert (
-        _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, experimental) is None
-    )
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, experimental) == {
+        "operation": "set_position",
+        "position": 50,
+    }
     assert (
         _command("Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, experimental)
         is None
     )
-    assert _command("Alexa.PowerController", "TurnOn", {}, experimental) is None
+    assert _command("Alexa.PowerController", "TurnOn", {}, experimental) == {"operation": "open"}
+    assert _command("Alexa.PowerController", "TurnOff", {}, experimental) == {"operation": "close"}
     assert (
         _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, experimental) is None
+    )
+    assert _command("Alexa.PlaybackController", "Stop", {}, experimental) == {"operation": "stop"}
+
+    experimental.supported_features = 7
+    assert all(
+        item["interface"] != "Alexa.PlaybackController"
+        for item in discovery_endpoint(experimental)["capabilities"]
     )
     assert _command("Alexa.PlaybackController", "Stop", {}, experimental) is None
 
