@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from apps.cloud_api.app.alexa import _command, capabilities, discovery_endpoint, state_properties
+from apps.cloud_api.app.alexa import _command, discovery_endpoint, state_properties
 from apps.cloud_api.app.alexa_device_types import (
     allowed_alexa_device_types,
     validate_alexa_device_type,

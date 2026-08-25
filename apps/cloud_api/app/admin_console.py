@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
 from .alexa_events import reconcile_discovery_safely
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
@@ -31,7 +32,6 @@ from .connector_compatibility import (
     REQUIRED_EVCP_PROTOCOL_VERSION,
     ConnectorCompatibilityStatus,
 )
-from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
 from .cover_modes import COVER_STOP, effective_cover_mode, validate_cover_mode
 from .database import get_database_session
 from .domain.enums import TenantRole
