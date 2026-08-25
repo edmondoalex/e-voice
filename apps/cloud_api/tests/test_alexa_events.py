@@ -1,6 +1,7 @@
 """Proactive Alexa Event Gateway authorization and delivery tests."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud_api.app.alexa_events import AlexaEventGateway
+from apps.cloud_api.app.alexa_events import AlexaEventGateway, _ensure_diagnostic_logger
 from apps.cloud_api.app.config import Settings
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -19,6 +20,30 @@ from apps.cloud_api.app.domain.models import (
     Entity,
     Installation,
 )
+
+
+def test_alexa_event_diagnostics_reach_api_handler_with_root_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[logging.LogRecord] = []
+
+    class RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    module_logger = logging.getLogger("apps.cloud_api.app.alexa_events")
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    handler = RecordingHandler()
+    monkeypatch.setattr(module_logger, "handlers", [])
+    monkeypatch.setattr(module_logger, "propagate", True)
+    monkeypatch.setattr(uvicorn_logger, "handlers", [handler])
+    monkeypatch.setattr(logging.getLogger(), "level", logging.WARNING)
+
+    _ensure_diagnostic_logger()
+    module_logger.info("alexa_resync_logging_probe")
+
+    assert [record.getMessage() for record in records] == ["alexa_resync_logging_probe"]
+    assert module_logger.propagate is False
 
 
 async def test_change_report_refresh_retry_and_idempotency(
@@ -199,6 +224,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
         == (forced["event"]["payload"]["endpoints"])
     )
     assert diagnostic_payload["http_status"] == 202
+    assert diagnostic_payload["accepted_endpoint_count"] == 1
     assert diagnostic_payload["response_body"] == {
         "accepted": True,
         "credentials": {"token": "[REDACTED]"},
@@ -210,7 +236,13 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert '"friendly_name":"Kitchen"' in caplog.text
     assert '"interface":"Alexa.PowerController"' in caplog.text
     assert "alexa_add_or_update_response" in caplog.text
+    assert "alexa_event_gateway_request" in caplog.text
+    assert "event_type=AddOrUpdateReport" in caplog.text
+    assert "endpoint_count=1" in caplog.text
     assert "http_status=202" in caplog.text
+    assert "accepted_endpoint_count=1" in caplog.text
+    assert "alexa_resync_completed" in caplog.text
+    assert "accepted_add_or_update_count=1" in caplog.text
     assert "amazon-access-secret" not in caplog.text
 
     entity.state = "on"
@@ -410,6 +442,7 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert '"instance":"door.opening"' in caplog.text
     assert "http_status=202" in caplog.text
     assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert "accepted_endpoint_count=1" in caplog.text
     assert 'response_body={"requestId":"amazon-request-42"}' in caplog.text
     assert "gate-access-secret" not in caplog.text
     assert "gate-refresh-secret" not in caplog.text

@@ -38,6 +38,25 @@ SENSITIVE_DIAGNOSTIC_KEYS = {
     "refresh_token",
     "token",
 }
+_DIAGNOSTIC_HANDLER_MARKER = "_ekonex_alexa_events_diagnostic"
+
+
+def _ensure_diagnostic_logger() -> None:
+    """Route this module's INFO diagnostics to the running API log exactly once."""
+    logger.setLevel(logging.INFO)
+    if any(getattr(handler, _DIAGNOSTIC_HANDLER_MARKER, False) for handler in logger.handlers):
+        return
+    handlers = logging.getLogger("uvicorn.error").handlers
+    if not handlers:
+        if logging.getLogger().handlers:
+            return
+        fallback = logging.StreamHandler()
+        fallback.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+        handlers = [fallback]
+    for handler in handlers:
+        setattr(handler, _DIAGNOSTIC_HANDLER_MARKER, True)
+        logger.addHandler(handler)
+    logger.propagate = False
 
 
 def _endpoint_log_summary(endpoint: dict[str, Any]) -> dict[str, Any]:
@@ -268,6 +287,8 @@ class AlexaEventGateway:
         from .alexa_device_types import is_gate_override
         from .entity_names import unambiguous_voice_entities
 
+        _ensure_diagnostic_logger()
+
         entities = list(
             (
                 await self._session.scalars(
@@ -300,6 +321,8 @@ class AlexaEventGateway:
             ).all()
         )
         sent = 0
+        accepted_updates = 0
+        accepted_deletions = 0
         for link in links:
             authorization = await self._session.scalar(
                 select(AlexaEventAuthorization).where(
@@ -373,6 +396,8 @@ class AlexaEventGateway:
                     event,
                     diagnostic_installation=installation,
                 )
+                if success:
+                    accepted_updates += len(updates)
                 now = datetime.now(UTC)
                 for entity, endpoint, fingerprint in updates:
                     endpoint_value = str(endpoint["endpointId"])
@@ -406,6 +431,8 @@ class AlexaEventGateway:
                     [{"endpointId": item.alexa_endpoint_id} for item in deletions],
                 )
                 success = await self._send(authorization, event)
+                if success:
+                    accepted_deletions += len(deletions)
                 now = datetime.now(UTC)
                 for delivery in deletions:
                     if success:
@@ -419,6 +446,15 @@ class AlexaEventGateway:
                         "success" if success else "error",
                     )
             await self._session.commit()
+        logger.info(
+            "alexa_resync_completed installation_id=%s active_link_count=%d "
+            "accepted_add_or_update_count=%d accepted_delete_count=%d sent_count=%d",
+            installation.id,
+            len(links),
+            accepted_updates,
+            accepted_deletions,
+            sent,
+        )
         return sent
 
     @staticmethod
@@ -489,6 +525,17 @@ class AlexaEventGateway:
             serialized = json.dumps(
                 request_event, ensure_ascii=False, separators=(",", ":")
             ).encode()
+            header = event_body.get("header", {})
+            endpoint_count = len(event_body.get("payload", {}).get("endpoints", []))
+            logger.info(
+                "alexa_event_gateway_request event_type=%s message_id=%s url=%s "
+                "attempt=%d endpoint_count=%d",
+                header.get("name"),
+                header.get("messageId"),
+                self._settings.alexa_event_gateway_url,
+                attempt + 1,
+                endpoint_count,
+            )
             try:
                 response = await self._client.post(
                     self._settings.alexa_event_gateway_url,
@@ -590,11 +637,14 @@ class AlexaEventGateway:
             "error": _safe_diagnostic_value(str(error), secrets) if error is not None else None,
             "error_type": type(error).__name__ if error is not None else None,
             "attempts": attempts,
+            "accepted_endpoint_count": (
+                len(endpoint_ids) if response is not None and response.is_success else 0
+            ),
         }
         logger.info(
             "alexa_add_or_update_response message_id=%s installation_id=%s "
             "amazon_request_id=%s http_status=%s response_body=%s "
-            "error_type=%s error=%s attempts=%d",
+            "error_type=%s error=%s attempts=%d accepted_endpoint_count=%d",
             message_id,
             installation.id,
             amazon_request_id,
@@ -603,6 +653,7 @@ class AlexaEventGateway:
             payload["error_type"],
             payload["error"],
             attempts,
+            payload["accepted_endpoint_count"],
         )
         self._session.add(
             AuditEvent(
