@@ -891,7 +891,7 @@ async def test_light_capabilities_state_and_typed_command_dispatch(
     await client.aclose()
 
 
-async def test_gate_discovery_and_open_close_directives_use_generic_openable_contract(
+async def test_gate_discovery_and_open_close_directives_use_binary_range_contract(
     session: AsyncSession, seeded_domain: object, monkeypatch: object
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
@@ -927,24 +927,23 @@ async def test_gate_discovery_and_open_close_directives_use_generic_openable_con
     assert [item["interface"] for item in gate["capabilities"]] == [
         "Alexa",
         "Alexa.EndpointHealth",
-        "Alexa.ModeController",
+        "Alexa.RangeController",
     ]
-    mode = gate["capabilities"][2]
-    assert mode["instance"] == "Gate.Position"
-    assert [item["value"] for item in mode["configuration"]["supportedModes"]] == [
-        "Position.Up",
-        "Position.Down",
-    ]
-    assert mode["semantics"]["actionMappings"] == [
+    position = gate["capabilities"][2]
+    assert position["instance"] == "Gate.Position"
+    assert position["configuration"] == {
+        "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 100}
+    }
+    assert position["semantics"]["actionMappings"] == [
         {
             "@type": "ActionsToDirective",
             "actions": ["Alexa.Actions.Open"],
-            "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},
         },
         {
             "@type": "ActionsToDirective",
             "actions": ["Alexa.Actions.Close"],
-            "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
         },
     ]
     assert gate == {
@@ -967,22 +966,38 @@ async def test_gate_discovery_and_open_close_directives_use_generic_openable_con
                     "retrievable": True,
                 },
             },
-            mode,
+            position,
         ],
     }
 
-    for mode_value, expected_operation in (
-        ("Position.Up", "power_on"),
-        ("Position.Down", "power_off"),
+    for range_value, expected_operation in (
+        (100, "power_on"),
+        (0, "power_off"),
     ):
-        body = _directive(token, "Alexa.ModeController", "SetMode", endpoint_id(entity))
+        body = _directive(token, "Alexa.RangeController", "SetRangeValue", endpoint_id(entity))
         body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
         body["directive"]["header"]["instance"] = "Gate.Position"  # type: ignore[index]
-        body["directive"]["payload"] = {"mode": mode_value}  # type: ignore[index]
+        body["directive"]["payload"] = {"rangeValue": range_value}  # type: ignore[index]
         response = await client.post("/alexa/v1/directive", json=body)
         assert response.status_code == 200
         assert response.json()["event"]["header"]["name"] == "Response"
+        response_position = next(
+            item
+            for item in response.json()["context"]["properties"]
+            if item["namespace"] == "Alexa.RangeController" and item["instance"] == "Gate.Position"
+        )
+        assert response_position["value"] == range_value
         assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
+
+    invalid = _directive(token, "Alexa.RangeController", "SetRangeValue", endpoint_id(entity))
+    invalid["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    invalid["directive"]["header"]["instance"] = "Gate.Position"  # type: ignore[index]
+    invalid["directive"]["payload"] = {"rangeValue": 50}  # type: ignore[index]
+    rejected = await client.post("/alexa/v1/directive", json=invalid)
+    assert rejected.status_code == 200
+    assert rejected.json()["event"]["header"]["name"] == "ErrorResponse"
+    assert rejected.json()["event"]["payload"]["type"] == "INVALID_DIRECTIVE"
+    assert dispatched.await_count == 2
 
     await client.aclose()
 
