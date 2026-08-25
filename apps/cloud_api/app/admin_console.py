@@ -1016,7 +1016,7 @@ async def update_entity_names(
     await session.commit()
     await reconcile_discovery_safely(session, installation)
     return _names_page(
-        installation, entity, context, _csrf(context), message="Configurazione entità salvata."
+        installation, entity, context, _csrf(context), message="Nomi salvati."
     )
 
 
