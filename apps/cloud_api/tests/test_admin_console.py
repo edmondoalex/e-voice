@@ -389,6 +389,178 @@ async def test_light_direct_controls_icons_levels_and_unavailable_state(
     await client.aclose()
 
 
+async def test_installation_hides_soft_deleted_entities(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    active = await session.get(Entity, seeded_domain.entity_a_id)
+    assert active is not None
+    removed = Entity(
+        installation_id=seeded_domain.installation_a_id,
+        ha_entity_id="light.removed_from_inventory",
+        ha_domain="light",
+        friendly_name="Removed inventory entity",
+        deleted_at=datetime.now(UTC),
+    )
+    session.add(removed)
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    assert active.ha_entity_id in page.text
+    assert removed.ha_entity_id not in page.text
+    assert "Removed inventory entity" not in page.text
+    assert await session.get(Entity, removed.id) is removed
+    await client.aclose()
+
+
+async def test_climate_controls_render_and_dispatch_closed_commands(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.office"
+    entity.ha_registry_id = "registry-climate-office"
+    entity.friendly_name = "Clima ufficio"
+    entity.available = True
+    entity.state = "heat"
+    entity.attributes_json = {
+        "current_temperature": 20.5,
+        "temperature": 21.5,
+        "min_temp": 16,
+        "max_temp": 30,
+        "target_temp_step": 0.5,
+        "hvac_modes": ["off", "heat", "cool"],
+    }
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        dispatched.append(command)
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'name="operation" value="set_target_temperature"' in page.text
+    assert 'type="number" name="value" value="21.5" min="16.0" max="30.0" step="0.5"' in page.text
+    assert 'name="operation" value="set_hvac_mode"' in page.text
+    assert '<option value="heat" selected>heat</option>' in page.text
+    assert '<option value="cool">cool</option>' in page.text
+
+    invalid_csrf = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data={
+            "csrf_token": "invalid",
+            "entity_id": str(entity.id),
+            "operation": "set_target_temperature",
+            "value": "22.5",
+        },
+    )
+    assert invalid_csrf.status_code == 403
+    assert dispatched == []
+
+    for operation, value in (
+        ("set_target_temperature", "22.5"),
+        ("set_hvac_mode", "cool"),
+    ):
+        command_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+        response = await client.post(
+            f"/installations/{seeded_domain.installation_a_id}/commands",
+            data={
+                "csrf_token": _csrf(command_page),
+                "entity_id": str(entity.id),
+                "operation": operation,
+                "value": value,
+            },
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 200
+        assert response.json()["value"] == (
+            22.5 if operation == "set_target_temperature" else "cool"
+        )
+
+    assert dispatched == [
+        {"operation": "set_target_temperature", "temperature": 22.5},
+        {"operation": "set_hvac_mode", "hvac_mode": "cool"},
+    ]
+    invalid_mode_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    invalid_mode = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data={
+            "csrf_token": _csrf(invalid_mode_page),
+            "entity_id": str(entity.id),
+            "operation": "set_hvac_mode",
+            "value": "dry",
+        },
+    )
+    assert invalid_mode.status_code == 422
+    assert len(dispatched) == 2
+    assert "Object.hasOwn(payload, 'value')" in page.text
+    await client.aclose()
+
+    readonly = await _client(session)
+    await _login(readonly, "readonly@example.test", "readonly-password-123")
+    rejected = await readonly.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data={
+            "entity_id": str(entity.id),
+            "operation": "set_hvac_mode",
+            "value": "heat",
+        },
+    )
+    assert rejected.status_code == 403
+    assert len(dispatched) == 2
+    await readonly.aclose()
+
+
+async def test_climate_controls_tolerate_incomplete_attributes_and_disable_unavailable(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.incomplete"
+    entity.ha_registry_id = "registry-climate-incomplete"
+    entity.available = True
+    entity.attributes_json = {"target_temp": 19}
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    target_only = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'value="set_target_temperature"' in target_only.text
+    assert 'step="any"' in target_only.text
+    assert 'value="set_hvac_mode"' not in target_only.text
+
+    entity.attributes_json = {"hvac_modes": ["off", "heat", 123, "heat"]}
+    await session.commit()
+    modes_only = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert 'value="set_target_temperature"' not in modes_only.text
+    assert 'value="set_hvac_mode"' in modes_only.text
+    assert modes_only.text.count('<option value="heat"') == 1
+    assert "123</option>" not in modes_only.text
+
+    entity.available = False
+    await session.commit()
+    unavailable = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert '<select name="value" disabled>' in unavailable.text
+    assert "IMPOSTA MODALIT&Agrave;</button>" in unavailable.text
+    assert "disabled" in unavailable.text
+
+    entity.available = True
+    entity.attributes_json = {}
+    await session.commit()
+    missing = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Nessun controllo diretto" in missing.text
+    assert 'value="set_target_temperature"' not in missing.text
+    assert 'value="set_hvac_mode"' not in missing.text
+    await client.aclose()
+
+
 async def test_entity_state_colors_active_power_and_light_percentages(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
@@ -422,9 +594,8 @@ async def test_entity_state_colors_active_power_and_light_percentages(
     entity.deleted_at = datetime.now(UTC)
     await session.commit()
     removed = await client.get(f"/installations/{seeded_domain.installation_a_id}")
-    assert 'class="status-dot state-removed"' in removed.text
-    assert "rimossa" in removed.text
-    assert "disabled" in removed.text
+    assert f'data-entity-row="{entity.id}"' not in removed.text
+    assert entity.ha_entity_id not in removed.text
     await client.aclose()
 
 

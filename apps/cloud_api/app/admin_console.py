@@ -9,6 +9,7 @@ import csv
 import html
 import io
 import json
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict
@@ -178,6 +179,7 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
       if (!response.ok || !payload.ok) throw new Error(payload.detail || payload.message || 'Comando non riuscito');
       feedback.className = 'command-feedback ok';
       feedback.textContent = 'Comando eseguito';
+      if (Object.hasOwn(payload, 'value')) feedback.textContent = `Comando eseguito: ${{payload.value}}`;
       if (payload.state === 'on' || payload.state === 'off') {{
         row.classList.remove('state-on', 'state-off');
         row.classList.add(`state-${{payload.state}}`);
@@ -382,7 +384,10 @@ async def installation_detail(
     item = await _installation(session, context, installation_id)
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     page = max(1, int(request.query_params.get("page", "1")))
-    query = select(Entity).where(Entity.installation_id == item.id)
+    query = select(Entity).where(
+        Entity.installation_id == item.id,
+        Entity.deleted_at.is_(None),
+    )
     if q:
         query = query.where(
             or_(
@@ -611,6 +616,41 @@ def _light_level(entity: Entity) -> int:
     return min(100, max(0, round(brightness * 100 / 255)))
 
 
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _climate_target_config(
+    entity: Entity,
+) -> tuple[float, float | None, float | None, float | None] | None:
+    attributes = entity.attributes_json or {}
+    target = _finite_number(attributes.get("target_temp"))
+    if target is None:
+        target = _finite_number(attributes.get("temperature"))
+    if target is None:
+        return None
+    minimum = _finite_number(attributes.get("min_temp"))
+    maximum = _finite_number(attributes.get("max_temp"))
+    if minimum is not None and maximum is not None and minimum > maximum:
+        minimum = maximum = None
+    step = _finite_number(attributes.get("target_temp_step"))
+    return target, minimum, maximum, step if step is not None and step > 0 else None
+
+
+def _climate_hvac_modes(entity: Entity) -> list[str]:
+    values = (entity.attributes_json or {}).get("hvac_modes")
+    if not isinstance(values, list):
+        return []
+    modes: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value and value not in modes:
+            modes.append(value)
+    return modes
+
+
 def _control_form(
     installation: Installation,
     entity: Entity,
@@ -635,6 +675,34 @@ def _control_form(
     power_data = f' data-power="{power}" aria-pressed="{str(active).lower()}"' if power else ""
     active_class = f" active-{power}" if active and power else ""
     return f'<form class="entity-command {form_class}" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{operation}">{level_input}<button class="command-button {css_class}{active_class}"{power_data}{disabled}>{label}</button></form>'
+
+
+def _climate_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
+    disabled = "" if enabled else " disabled"
+    controls: list[str] = []
+    target = _climate_target_config(entity)
+    if target is not None:
+        value, minimum, maximum, step = target
+        bounds = "".join(
+            (
+                f' min="{_e(minimum)}"' if minimum is not None else "",
+                f' max="{_e(maximum)}"' if maximum is not None else "",
+                f' step="{_e(step)}"' if step is not None else ' step="any"',
+            )
+        )
+        controls.append(
+            f'<form class="entity-command inline climate-temperature-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="set_target_temperature"><label>Temperatura target <input type="number" name="value" value="{_e(value)}"{bounds}{disabled}></label><button class="command-button"{disabled}>IMPOSTA TEMPERATURA</button></form>'
+        )
+    modes = _climate_hvac_modes(entity)
+    if modes:
+        options = "".join(
+            f'<option value="{_e(mode)}"{" selected" if mode == entity.state else ""}>{_e(mode)}</option>'
+            for mode in modes
+        )
+        controls.append(
+            f'<form class="entity-command inline climate-mode-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="set_hvac_mode"><label>Modalit&agrave; HVAC <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>IMPOSTA MODALIT&Agrave;</button></form>'
+        )
+    return "".join(controls) or '<span class="muted">Nessun controllo diretto</span>'
 
 
 def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
@@ -673,6 +741,8 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                 ),
             )
         )
+    if entity.ha_domain == "climate":
+        return _climate_controls(installation, entity, csrf, enabled)
     simple_labels = {
         "power_on": "ON",
         "power_off": "OFF",
@@ -919,6 +989,21 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     return data
 
 
+def _validate_climate_value(entity: Entity, operation: str, value: str) -> None:
+    if operation == "set_target_temperature":
+        config = _climate_target_config(entity)
+        if config is None:
+            raise ValueError("target temperature capability unavailable")
+        requested = float(value)
+        _, minimum, maximum, _ = config
+        if minimum is not None and requested < minimum:
+            raise ValueError("target temperature below entity minimum")
+        if maximum is not None and requested > maximum:
+            raise ValueError("target temperature above entity maximum")
+    elif operation == "set_hvac_mode" and value not in _climate_hvac_modes(entity):
+        raise ValueError("HVAC mode not advertised by entity")
+
+
 @router.post("/installations/{installation_id}/commands", response_model=None)
 async def send_command(
     installation_id: UUID,
@@ -949,6 +1034,12 @@ async def send_command(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità non trovata")
         if values.get("operation", "") not in DOMAIN_OPERATIONS.get(entity.ha_domain, set()):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Comando non consentito")
+        if entity.ha_domain == "climate":
+            _validate_climate_value(
+                entity,
+                values.get("operation", ""),
+                values.get("value", ""),
+            )
         command = command_adapter.validate_python(
             _command_data(values.get("operation", ""), values.get("value", ""))
         )
@@ -989,13 +1080,19 @@ async def send_command(
         target_state = None
         if succeeded and command.operation in {"power_on", "power_off"}:
             target_state = "on" if command.operation == "power_on" else "off"
+        response_payload: dict[str, object] = {
+            "ok": succeeded,
+            "message": "Comando eseguito" if succeeded else "Comando non riuscito",
+            "status": outcome.status,
+            "state": target_state,
+        }
+        if succeeded and command.operation in {"set_target_temperature", "set_hvac_mode"}:
+            command_payload = command.model_dump(mode="json")
+            response_payload["value"] = command_payload.get(
+                "temperature" if command.operation == "set_target_temperature" else "hvac_mode"
+            )
         return JSONResponse(
-            {
-                "ok": succeeded,
-                "message": "Comando eseguito" if succeeded else "Comando non riuscito",
-                "status": outcome.status,
-                "state": target_state,
-            },
+            response_payload,
             status_code=status.HTTP_200_OK if succeeded else status.HTTP_502_BAD_GATEWAY,
         )
     csrf = _csrf(context)
