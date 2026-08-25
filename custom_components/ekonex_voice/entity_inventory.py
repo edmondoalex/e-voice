@@ -36,7 +36,9 @@ ATTRIBUTE_ALLOWLIST = {
         }
     ),
     "cover": frozenset({"current_position"}),
-    "climate": frozenset({"temperature", "hvac_modes", "min_temp", "max_temp"}),
+    "climate": frozenset(
+        {"temperature", "current_temperature", "hvac_modes", "min_temp", "max_temp"}
+    ),
     "fan": frozenset({"percentage"}),
 }
 CHUNK_TARGET_BYTES = 48_000

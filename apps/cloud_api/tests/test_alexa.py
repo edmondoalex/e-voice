@@ -597,6 +597,134 @@ async def test_discovery_excludes_incomplete_climate_endpoint_entirely(
     await client.aclose()
 
 
+async def test_discover_response_contains_climate_temperature_sensor(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.office"
+    entity.ha_registry_id = "climate-office"
+    entity.state = "heat"
+    entity.attributes_json = {
+        "temperature": 21.5,
+        "current_temperature": 20.25,
+        "hvac_modes": ["off", "heat"],
+    }
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_climate_temperature_sensor")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa.Discovery", "Discover"),
+    )
+
+    [endpoint] = response.json()["event"]["payload"]["endpoints"]
+    temperature_sensor = next(
+        item for item in endpoint["capabilities"] if item["interface"] == "Alexa.TemperatureSensor"
+    )
+    assert temperature_sensor["properties"] == {
+        "supported": [{"name": "temperature"}],
+        "proactivelyReported": True,
+        "retrievable": True,
+    }
+    assert next(
+        item["value"]
+        for item in state_properties(entity)
+        if item["namespace"] == "Alexa.TemperatureSensor"
+    ) == {"value": 20.25, "scale": "CELSIUS"}
+    await client.aclose()
+
+
+async def test_climate_command_responses_reflect_successful_command(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.office"
+    entity.ha_registry_id = "climate-office"
+    entity.state = "off"
+    entity.available = True
+    entity.attributes_json = {
+        "temperature": 19.0,
+        "current_temperature": 18.5,
+        "hvac_modes": ["off", "heat"],
+    }
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(*args):  # type: ignore[no-untyped-def]
+        dispatched.append(args[3])
+        return CommandResultPayload(session_id=uuid4(), command_id=args[1], status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    token = await _access(session, seeded_domain, "eaa_climate_commands")
+    client = await _client(session)
+
+    cases = [
+        (
+            "Alexa.ThermostatController",
+            "SetThermostatMode",
+            {"thermostatMode": "HEAT"},
+            {"operation": "set_hvac_mode", "hvac_mode": "heat"},
+            ("Alexa.ThermostatController", "thermostatMode", "HEAT"),
+        ),
+        (
+            "Alexa.PowerController",
+            "TurnOn",
+            {},
+            {"operation": "set_hvac_mode", "hvac_mode": "heat"},
+            ("Alexa.PowerController", "powerState", "ON"),
+        ),
+        (
+            "Alexa.PowerController",
+            "TurnOff",
+            {},
+            {"operation": "set_hvac_mode", "hvac_mode": "off"},
+            ("Alexa.PowerController", "powerState", "OFF"),
+        ),
+        (
+            "Alexa.ThermostatController",
+            "SetTargetTemperature",
+            {"targetSetpoint": {"value": 22.0, "scale": "CELSIUS"}},
+            {"operation": "set_target_temperature", "temperature": 22.0},
+            (
+                "Alexa.ThermostatController",
+                "targetSetpoint",
+                {"value": 22.0, "scale": "CELSIUS"},
+            ),
+        ),
+    ]
+    for namespace, name, payload, expected_command, expected_property in cases:
+        body = _directive(token, namespace, name, endpoint_id(entity))
+        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        body["directive"]["payload"] = payload  # type: ignore[index]
+        response = await client.post("/alexa/v1/directive", json=body)
+
+        assert response.status_code == 200
+        assert response.json()["event"]["header"]["name"] == "Response"
+        property_namespace, property_name, property_value = expected_property
+        assert (
+            next(
+                item["value"]
+                for item in response.json()["context"]["properties"]
+                if item["namespace"] == property_namespace and item["name"] == property_name
+            )
+            == property_value
+        )
+        if name == "SetThermostatMode":
+            assert not any(
+                item["namespace"] == "Alexa.ThermostatController"
+                and item["name"] == "thermostatMode"
+                and item["value"] == "OFF"
+                for item in response.json()["context"]["properties"]
+            )
+        assert dispatched[-1] == expected_command
+    await client.aclose()
+
+
 async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
     session: AsyncSession, seeded_domain: object
 ) -> None:
