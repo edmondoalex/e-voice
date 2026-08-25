@@ -2,7 +2,7 @@
 
 Status: open investigation with Amazon Developer Support.
 
-Amazon case: `21738300901`
+Amazon case: `21738300901182`
 
 ## Summary
 
@@ -142,7 +142,7 @@ Matter WindowCovering devices on the same Alexa account and Italian locale corre
 
 Case opened with Amazon Developer Support:
 
-`21738300901`
+`21738300901182`
 
 The support request includes:
 
