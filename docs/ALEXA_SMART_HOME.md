@@ -140,7 +140,7 @@ independently of HA pairing.
 | light | Power, Brightness; Color/ColorTemperature only when M5 attributes support them | on/off, brightness, RGB, Kelvin |
 | switch | PowerController | on/off |
 | cover | Per-entity Discrete: PowerController + ModeController `Blinds.Position`, and PlaybackController when STOP is supported; Percentage: RangeController `Blind.Lift`; Hybrid: range + mode | stateless open/close/stop and/or absolute/relative position |
-| climate | ThermostatController | target temperature, thermostat mode |
+| climate | ThermostatController; TemperatureSensor when ambient temperature is available | target temperature, allowlisted thermostat mode |
 | fan | PowerController, PercentageController | on/off, percentage |
 | scene | SceneController | activate |
 
@@ -177,6 +177,13 @@ cover also exposes
 and TurnOff mapped to close. Unknown or transitional HA states do not produce an invented mode
 property. Endpoint IDs are always derived from the immutable cloud entity UUID; there are no
 per-entity Discovery overrides or diagnostic endpoint identities.
+
+Climate endpoints publish `Alexa.ThermostatController` only when the synchronized inventory has a
+finite target temperature and at least one Amazon-valid heating or cooling mode. Its
+`configuration.supportedModes` is derived from the entity's HA `hvac_modes`; unrepresentable modes
+are omitted and incoming mode directives are accepted only when that mapped mode was advertised.
+When HA supplies a finite `current_temperature`, the endpoint also publishes
+`Alexa.TemperatureSensor` and reports that ambient value separately from the target setpoint.
 
 `AddOrUpdateReport` updates the endpoint representation while preserving `endpointId`. Amazon can
 retain cached controller metadata, especially after a previously incompatible representation;

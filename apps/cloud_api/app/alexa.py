@@ -45,6 +45,15 @@ SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
+HA_TO_ALEXA_THERMOSTAT_MODE = {
+    "off": "OFF",
+    "heat": "HEAT",
+    "cool": "COOL",
+    "auto": "AUTO",
+    "heat_cool": "AUTO",
+    "eco": "ECO",
+    "emergency_heat": "EM_HEAT",
+}
 
 
 def alexa_entity_eligible(entity: Entity) -> bool:
@@ -537,9 +546,14 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
             )
     elif entity.ha_domain == "climate":
-        result.append(
-            _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
-        )
+        thermostat_modes = _climate_supported_modes(entity)
+        if _climate_target_temperature(entity) is not None and thermostat_modes:
+            result.append(
+                _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
+                | {"configuration": {"supportedModes": thermostat_modes}}
+            )
+        if _numeric_attribute(attributes, "current_temperature") is not None:
+            result.append(_capability("Alexa.TemperatureSensor", ["temperature"]))
     elif entity.ha_domain == "fan":
         result.append(_capability("Alexa.PercentageController", ["percentage"]))
     elif entity.ha_domain == "scene":
@@ -617,6 +631,52 @@ def _numeric_attribute(attributes: dict[str, Any], name: str) -> int | float | N
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value if math.isfinite(value) else None
+
+
+def _climate_target_temperature(entity: Entity) -> int | float | None:
+    attributes = entity.attributes_json or {}
+    target = _numeric_attribute(attributes, "temperature")
+    return target if target is not None else _numeric_attribute(attributes, "target_temp")
+
+
+def _climate_temperature_scale(entity: Entity) -> str:
+    attributes = entity.attributes_json or {}
+    unit = attributes.get("temperature_unit", attributes.get("unit_of_measurement"))
+    if isinstance(unit, str):
+        normalized = unit.strip().casefold()
+        if normalized in {"°f", "f", "fahrenheit"}:
+            return "FAHRENHEIT"
+        if normalized in {"k", "kelvin"}:
+            return "KELVIN"
+    return "CELSIUS"
+
+
+def _climate_hvac_modes(entity: Entity) -> list[str]:
+    modes = (entity.attributes_json or {}).get("hvac_modes")
+    if not isinstance(modes, list):
+        return []
+    return [mode for mode in modes if isinstance(mode, str)]
+
+
+def _climate_supported_modes(entity: Entity) -> list[str]:
+    supported: list[str] = []
+    for ha_mode in _climate_hvac_modes(entity):
+        alexa_mode = HA_TO_ALEXA_THERMOSTAT_MODE.get(ha_mode)
+        if alexa_mode is not None and alexa_mode not in supported:
+            supported.append(alexa_mode)
+    # Amazon requires every ThermostatController to support HEAT or COOL.
+    return supported if {"HEAT", "COOL"} & set(supported) else []
+
+
+def _ha_mode_for_alexa(entity: Entity, alexa_mode: str) -> str | None:
+    return next(
+        (
+            ha_mode
+            for ha_mode in _climate_hvac_modes(entity)
+            if HA_TO_ALEXA_THERMOSTAT_MODE.get(ha_mode) == alexa_mode
+        ),
+        None,
+    )
 
 
 def state_properties(entity: Entity) -> list[dict[str, Any]]:
@@ -736,18 +796,31 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 )
             )
     if entity.ha_domain == "climate":
-        temperature = _numeric_attribute(attributes, "temperature")
-        if temperature is not None:
+        supported_modes = _climate_supported_modes(entity)
+        target_temperature = _climate_target_temperature(entity)
+        scale = _climate_temperature_scale(entity)
+        if target_temperature is not None and supported_modes:
             props.append(
                 _property(
                     "Alexa.ThermostatController",
                     "targetSetpoint",
-                    {"value": temperature, "scale": "CELSIUS"},
+                    {"value": target_temperature, "scale": scale},
                 )
             )
-        props.append(
-            _property("Alexa.ThermostatController", "thermostatMode", str(entity.state).upper())
-        )
+            thermostat_mode = HA_TO_ALEXA_THERMOSTAT_MODE.get(str(entity.state))
+            if thermostat_mode in supported_modes:
+                props.append(
+                    _property("Alexa.ThermostatController", "thermostatMode", thermostat_mode)
+                )
+        current_temperature = _numeric_attribute(attributes, "current_temperature")
+        if current_temperature is not None:
+            props.append(
+                _property(
+                    "Alexa.TemperatureSensor",
+                    "temperature",
+                    {"value": current_temperature, "scale": scale},
+                )
+            )
     return props
 
 
@@ -840,12 +913,36 @@ def _command(
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
+        if (
+            entity is None
+            or entity.ha_domain != "climate"
+            or not _climate_supported_modes(entity)
+            or _climate_target_temperature(entity) is None
+        ):
+            return None
+        target = payload.get("targetSetpoint")
+        if not isinstance(target, dict):
+            return None
+        value = target.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        temperature = float(value)
+        if not math.isfinite(temperature):
+            return None
         return {
             "operation": "set_target_temperature",
-            "temperature": float(payload["targetSetpoint"]["value"]),
+            "temperature": temperature,
         }
     if namespace == "Alexa.ThermostatController" and name == "SetThermostatMode":
-        return {"operation": "set_hvac_mode", "hvac_mode": str(payload["thermostatMode"]).lower()}
+        if entity is None or entity.ha_domain != "climate":
+            return None
+        requested = payload.get("thermostatMode")
+        if isinstance(requested, dict):
+            requested = requested.get("value")
+        if not isinstance(requested, str) or requested not in _climate_supported_modes(entity):
+            return None
+        ha_mode = _ha_mode_for_alexa(entity, requested)
+        return {"operation": "set_hvac_mode", "hvac_mode": ha_mode} if ha_mode else None
     return None
 
 
