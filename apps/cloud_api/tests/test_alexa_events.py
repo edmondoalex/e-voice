@@ -10,7 +10,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud_api.app.alexa_events import AlexaEventGateway, _ensure_diagnostic_logger
+from apps.cloud_api.app.alexa import discovery_endpoint
+from apps.cloud_api.app.alexa_events import (
+    PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX,
+    PAPERINO_DIAGNOSTIC_ENTITY_ID,
+    AlexaEventGateway,
+    _ensure_diagnostic_logger,
+)
 from apps.cloud_api.app.config import Settings
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -403,11 +409,13 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
     assert installation is not None and entity is not None
     entity.ha_domain = "switch"
-    entity.ha_entity_id = "switch.paperino"
+    entity.ha_entity_id = PAPERINO_DIAGNOSTIC_ENTITY_ID
     entity.voice_name = "Paperino"
     entity.alexa_device_type = "gate"
     session.add(link)
     await session.commit()
+
+    requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "api.amazon.com":
@@ -419,6 +427,7 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
                     "expires_in": 3600,
                 },
             )
+        requests.append(request)
         return httpx.Response(
             202,
             json={"requestId": "amazon-request-42"},
@@ -444,6 +453,27 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert "amazon_request_id=amazon-header-request-42" in caplog.text
     assert "accepted_endpoint_count=1" in caplog.text
     assert 'response_body={"requestId":"amazon-request-42"}' in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
+
+    caplog.clear()
+    expected_endpoint = discovery_endpoint(entity)
+    expected_endpoint["endpointId"] += PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX
+    assert await gateway.send_paperino_diagnostic_v2(installation, entity) == 1
+    diagnostic_request = json.loads(requests[-1].content)
+    assert diagnostic_request["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert diagnostic_request["event"]["payload"]["endpoints"] == [expected_endpoint]
+    assert len(diagnostic_request["event"]["payload"]["endpoints"]) == 1
+    assert "alexa_diagnostic_single_endpoint_payload" in caplog.text
+    assert "alexa_diagnostic_single_endpoint_http_payload" in caplog.text
+    assert str(expected_endpoint["endpointId"]) in caplog.text
+    assert '"friendlyName":"Paperino"' in caplog.text
+    assert '"displayCategories":["DOOR"]' in caplog.text
+    assert '"interface":"Alexa.ToggleController"' in caplog.text
+    assert '"instance":"door.opening"' in caplog.text
+    assert '"token":"[REDACTED]"' in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
     assert "gate-access-secret" not in caplog.text
     assert "gate-refresh-secret" not in caplog.text
     await client.aclose()

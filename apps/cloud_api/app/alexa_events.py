@@ -28,6 +28,8 @@ from .domain.models import (
 )
 
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
+PAPERINO_DIAGNOSTIC_ENTITY_ID = "switch.km_tronic_web_realy_scatola_esterna_rele_5"
+PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX = "_diagnostic_v2"
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 REDACTED = "[REDACTED]"
@@ -457,6 +459,76 @@ class AlexaEventGateway:
         )
         return sent
 
+    async def send_paperino_diagnostic_v2(self, installation: Installation, entity: Entity) -> int:
+        """Send only Paperino under a never-before-used diagnostic endpoint ID."""
+        from .alexa import discovery_endpoint
+
+        if (
+            entity.installation_id != installation.id
+            or entity.ha_entity_id != PAPERINO_DIAGNOSTIC_ENTITY_ID
+            or entity.deleted_at is not None
+        ):
+            raise ValueError("invalid Paperino diagnostic entity")
+        _ensure_diagnostic_logger()
+        endpoint = discovery_endpoint(entity)
+        endpoint["endpointId"] = f"{endpoint['endpointId']}{PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX}"
+        event = self._discovery_event("AddOrUpdateReport", [endpoint])
+        message_id = str(event["event"]["header"]["messageId"])
+        logger.info(
+            "alexa_diagnostic_single_endpoint_payload message_id=%s installation_id=%s "
+            "endpoint_id=%s payload=%s",
+            message_id,
+            installation.id,
+            endpoint["endpointId"],
+            json.dumps(
+                _safe_diagnostic_value(event, ()),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        accepted = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            if authorization is None:
+                logger.info(
+                    "alexa_diagnostic_single_endpoint_skipped message_id=%s "
+                    "installation_id=%s endpoint_id=%s reason=authorization_missing",
+                    message_id,
+                    installation.id,
+                    endpoint["endpointId"],
+                )
+                continue
+            if await self._send(
+                authorization,
+                event,
+                diagnostic_installation=installation,
+            ):
+                accepted += 1
+        logger.info(
+            "alexa_diagnostic_single_endpoint_completed message_id=%s installation_id=%s "
+            "endpoint_id=%s accepted_account_count=%d",
+            message_id,
+            installation.id,
+            endpoint["endpointId"],
+            accepted,
+        )
+        return accepted
+
     @staticmethod
     def _discovery_event(name: str, endpoints: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -526,7 +598,23 @@ class AlexaEventGateway:
                 request_event, ensure_ascii=False, separators=(",", ":")
             ).encode()
             header = event_body.get("header", {})
-            endpoint_count = len(event_body.get("payload", {}).get("endpoints", []))
+            endpoints = event_body.get("payload", {}).get("endpoints", [])
+            endpoint_count = len(endpoints)
+            if any(
+                str(endpoint.get("endpointId", "")).endswith(PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX)
+                for endpoint in endpoints
+                if isinstance(endpoint, dict)
+            ):
+                logger.info(
+                    "alexa_diagnostic_single_endpoint_http_payload message_id=%s url=%s payload=%s",
+                    header.get("messageId"),
+                    self._settings.alexa_event_gateway_url,
+                    json.dumps(
+                        _safe_diagnostic_value(request_event, (access,)),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
             logger.info(
                 "alexa_event_gateway_request event_type=%s message_id=%s url=%s "
                 "attempt=%d endpoint_count=%d",
@@ -678,6 +766,25 @@ async def reconcile_discovery_safely(
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
         logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        return None
+    finally:
+        await gateway.close()
+
+
+async def send_paperino_diagnostic_v2_safely(
+    session: AsyncSession, installation: Installation, entity: Entity
+) -> int | None:
+    """Run the isolated Paperino proactive-discovery diagnostic safely."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.send_paperino_diagnostic_v2(installation, entity)
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "alexa_diagnostic_single_endpoint_failed installation_id=%s entity_id=%s",
+            installation.id,
+            entity.id,
+        )
         return None
     finally:
         await gateway.close()
