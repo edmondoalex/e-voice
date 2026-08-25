@@ -410,7 +410,7 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert installation is not None and entity is not None
     entity.ha_domain = "switch"
     entity.ha_entity_id = PAPERINO_DIAGNOSTIC_ENTITY_ID
-    entity.voice_name = "Paperino"
+    entity.voice_name = "paperino"
     entity.alexa_device_type = "gate"
     session.add(link)
     await session.commit()
@@ -445,7 +445,7 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
 
     assert await gateway.reconcile_discovery(installation, force=True) == 1
     assert "alexa_add_or_update_gate_payload" in caplog.text
-    assert '"friendlyName":"Paperino"' in caplog.text
+    assert '"friendlyName":"paperino"' in caplog.text
     assert '"displayCategories":["DOOR"]' in caplog.text
     assert '"interface":"Alexa.ToggleController"' in caplog.text
     assert '"instance":"door.opening"' in caplog.text
@@ -457,6 +457,7 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert "gate-refresh-secret" not in caplog.text
 
     caplog.clear()
+    original_endpoint_id = str(discovery_endpoint(entity)["endpointId"])
     expected_endpoint = discovery_endpoint(entity)
     expected_endpoint["endpointId"] += PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX
     assert await gateway.send_paperino_diagnostic_v2(installation, entity) == 1
@@ -467,7 +468,10 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert "alexa_diagnostic_single_endpoint_payload" in caplog.text
     assert "alexa_diagnostic_single_endpoint_http_payload" in caplog.text
     assert str(expected_endpoint["endpointId"]) in caplog.text
-    assert '"friendlyName":"Paperino"' in caplog.text
+    assert f"original_endpoint_id={original_endpoint_id}" in caplog.text
+    assert f"diagnostic_endpoint_id={expected_endpoint['endpointId']}" in caplog.text
+    assert "endpoint_count=1" in caplog.text
+    assert '"friendlyName":"paperino"' in caplog.text
     assert '"displayCategories":["DOOR"]' in caplog.text
     assert '"interface":"Alexa.ToggleController"' in caplog.text
     assert '"instance":"door.opening"' in caplog.text

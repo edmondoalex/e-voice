@@ -471,14 +471,16 @@ class AlexaEventGateway:
             raise ValueError("invalid Paperino diagnostic entity")
         _ensure_diagnostic_logger()
         endpoint = discovery_endpoint(entity)
-        endpoint["endpointId"] = f"{endpoint['endpointId']}{PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX}"
+        original_endpoint_id = str(endpoint["endpointId"])
+        endpoint["endpointId"] = f"{original_endpoint_id}{PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX}"
         event = self._discovery_event("AddOrUpdateReport", [endpoint])
         message_id = str(event["event"]["header"]["messageId"])
         logger.info(
             "alexa_diagnostic_single_endpoint_payload message_id=%s installation_id=%s "
-            "endpoint_id=%s payload=%s",
+            "original_endpoint_id=%s diagnostic_endpoint_id=%s endpoint_count=1 payload=%s",
             message_id,
             installation.id,
+            original_endpoint_id,
             endpoint["endpointId"],
             json.dumps(
                 _safe_diagnostic_value(event, ()),
