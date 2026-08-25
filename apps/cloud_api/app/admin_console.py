@@ -1015,9 +1015,7 @@ async def update_entity_names(
     )
     await session.commit()
     await reconcile_discovery_safely(session, installation)
-    return _names_page(
-        installation, entity, context, _csrf(context), message="Nomi salvati."
-    )
+    return _names_page(installation, entity, context, _csrf(context), message="Nomi salvati.")
 
 
 def _command_data(operation: str, value: str) -> dict[str, object]:
