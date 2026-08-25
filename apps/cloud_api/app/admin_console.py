@@ -26,6 +26,7 @@ from .alexa_events import (
     PAPERINO_DIAGNOSTIC_ENTITY_ID,
     reconcile_discovery_safely,
     send_paperino_diagnostic_v2_safely,
+    send_paperino_diagnostic_v3_safely,
 )
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
@@ -471,7 +472,7 @@ async def installation_detail(
     )
     resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
     paperino_test_form = (
-        f'<form method="post" action="/installations/{item.id}/alexa/diagnostic/paperino-v2" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Test Alexa Paperino v2</button></form>'
+        f'<form method="post" action="/installations/{item.id}/alexa/diagnostic/paperino-v2" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Test Alexa Paperino v2</button></form><form method="post" action="/installations/{item.id}/alexa/diagnostic/paperino-v3" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Test Alexa Paperino v3 Blind</button></form>'
         if any(entity.ha_entity_id == PAPERINO_DIAGNOSTIC_ENTITY_ID for entity in entities)
         else ""
     )
@@ -550,6 +551,51 @@ async def diagnostic_paperino_v2(
             user_id=context.user_id,
             source="admin_console",
             event_type="alexa.discovery.paperino_v2_requested",
+            payload_redacted_json={"accepted_account_count": accepted or 0},
+            result="success" if accepted is not None and accepted > 0 else "error",
+        )
+    )
+    await session.commit()
+    outcome = "success" if accepted is not None and accepted > 0 else "error"
+    return RedirectResponse(
+        f"/installations/{installation.id}?alexa_resync={outcome}&sent={accepted or 0}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/installations/{installation_id}/alexa/diagnostic/paperino-v3",
+    response_class=RedirectResponse,
+)
+async def diagnostic_paperino_v3(
+    installation_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Send the isolated Paperino v3 RangeController endpoint to Amazon."""
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    entity = await session.scalar(
+        select(Entity).where(
+            Entity.installation_id == installation.id,
+            Entity.ha_entity_id == PAPERINO_DIAGNOSTIC_ENTITY_ID,
+            Entity.deleted_at.is_(None),
+        )
+    )
+    if entity is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità diagnostica non trovata")
+    accepted = await send_paperino_diagnostic_v3_safely(session, installation, entity)
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            user_id=context.user_id,
+            source="admin_console",
+            event_type="alexa.discovery.paperino_v3_requested",
             payload_redacted_json={"accepted_account_count": accepted or 0},
             result="success" if accepted is not None and accepted > 0 else "error",
         )

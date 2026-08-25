@@ -14,6 +14,7 @@ from apps.cloud_api.app.alexa import discovery_endpoint
 from apps.cloud_api.app.alexa_events import (
     PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX,
     PAPERINO_DIAGNOSTIC_ENTITY_ID,
+    PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX,
     AlexaEventGateway,
     _ensure_diagnostic_logger,
 )
@@ -476,6 +477,86 @@ async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_saf
     assert '"interface":"Alexa.ToggleController"' in caplog.text
     assert '"instance":"door.opening"' in caplog.text
     assert '"token":"[REDACTED]"' in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
+
+    caplog.clear()
+    expected_v3 = discovery_endpoint(entity)
+    expected_v3["endpointId"] += PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX
+    expected_v3["displayCategories"] = ["EXTERIOR_BLIND"]
+    expected_v3["capabilities"] = expected_v3["capabilities"][:2] + [
+        {
+            "type": "AlexaInterface",
+            "interface": "Alexa.RangeController",
+            "version": "3",
+            "properties": {
+                "supported": [{"name": "rangeValue"}],
+                "proactivelyReported": True,
+                "retrievable": True,
+            },
+            "instance": "cover.position",
+            "capabilityResources": {
+                "friendlyNames": [
+                    {
+                        "@type": "asset",
+                        "value": {"assetId": "Alexa.Setting.Opening"},
+                    }
+                ]
+            },
+            "configuration": {
+                "supportedRange": {
+                    "minimumValue": 0,
+                    "maximumValue": 100,
+                    "precision": 1,
+                }
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 0},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 100},
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 0,
+                    },
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 1, "maximumValue": 100},
+                    },
+                ],
+            },
+        }
+    ]
+    assert await gateway.send_paperino_diagnostic_v3(installation, entity) == 1
+    v3_request = json.loads(requests[-1].content)
+    assert v3_request["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert v3_request["event"]["payload"]["endpoints"] == [expected_v3]
+    assert len(v3_request["event"]["payload"]["endpoints"]) == 1
+    assert "unitOfMeasure" not in json.dumps(expected_v3)
+    assert "Alexa.ToggleController" not in json.dumps(expected_v3)
+    assert "alexa_diagnostic_v3_payload" in caplog.text
+    assert "alexa_diagnostic_v3_http_payload" in caplog.text
+    assert "alexa_diagnostic_v3_completed" in caplog.text
+    assert "endpoint_count=1" in caplog.text
     assert "http_status=202" in caplog.text
     assert "amazon_request_id=amazon-header-request-42" in caplog.text
     assert "gate-access-secret" not in caplog.text

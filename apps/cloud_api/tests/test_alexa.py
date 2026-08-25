@@ -14,10 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.cloud_api.app.alexa import (
     _command,
     _digest,
+    _paperino_diagnostic_v3_command,
     capabilities,
     discovery_endpoint,
     endpoint_id,
     state_properties,
+)
+from apps.cloud_api.app.alexa_events import (
+    PAPERINO_DIAGNOSTIC_ENTITY_ID,
+    PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX,
 )
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
@@ -975,7 +980,7 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
     ):
         body = _directive(token, "Alexa.ToggleController", directive_name, endpoint_id(entity))
         body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
-        body["directive"]["header"]["instance"] = "door.opening"  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "cover.position"  # type: ignore[index]
         body["directive"]["payload"] = {}  # type: ignore[index]
         response = await client.post("/alexa/v1/directive", json=body)
         assert response.status_code == 200
@@ -989,6 +994,108 @@ async def test_gate_discovery_and_open_close_directives_use_amazon_toggle_contra
         assert toggle_property["value"] == ("ON" if expected_operation == "power_on" else "OFF")
         assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
 
+    await client.aclose()
+
+
+def test_paperino_v3_binary_range_mapping_rejects_intermediate_values() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id=PAPERINO_DIAGNOSTIC_ENTITY_ID,
+        ha_domain="switch",
+        alexa_device_type="gate",
+        supported_features=0,
+        attributes_json={},
+        available=True,
+    )
+    assert _paperino_diagnostic_v3_command(
+        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, entity
+    ) == {"operation": "power_on"}
+    assert _paperino_diagnostic_v3_command(
+        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, entity
+    ) == {"operation": "power_off"}
+    assert (
+        _paperino_diagnostic_v3_command(
+            "Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity
+        )
+        is None
+    )
+
+
+async def test_paperino_v3_directive_ingress_and_dispatch_are_isolated(
+    session: AsyncSession,
+    seeded_domain: object,
+    monkeypatch: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_entity_id = PAPERINO_DIAGNOSTIC_ENTITY_ID
+    entity.ha_registry_id = "paperino-diagnostic-registry"
+    entity.ha_domain = "switch"
+    entity.voice_name = "paperino"
+    entity.alexa_device_type = "gate"
+    entity.state = "off"
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_paperino_v3")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id,
+            command_id=entity.id,
+            status="success",
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    client = await _client(session)
+    caplog.set_level("INFO", logger="apps.cloud_api.app.alexa")
+    diagnostic_endpoint_id = endpoint_id(entity) + PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX
+
+    for value, operation in ((100, "power_on"), (0, "power_off")):
+        body = _directive(
+            token,
+            "Alexa.RangeController",
+            "SetRangeValue",
+            diagnostic_endpoint_id,
+        )
+        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "door.opening"  # type: ignore[index]
+        body["directive"]["payload"] = {"rangeValue": value}  # type: ignore[index]
+        response = await client.post("/alexa/v1/directive", json=body)
+        assert response.status_code == 200
+        assert response.json()["event"]["header"]["name"] == "Response"
+        assert response.json()["context"]["properties"][0] == {
+            "namespace": "Alexa.RangeController",
+            "instance": "cover.position",
+            "name": "rangeValue",
+            "value": value,
+            "timeOfSample": response.json()["context"]["properties"][0]["timeOfSample"],
+            "uncertaintyInMilliseconds": 500,
+        }
+        assert dispatched.await_args_list[-1].args[3] == {"operation": operation}
+
+    calls_before_invalid = len(dispatched.await_args_list)
+    invalid = _directive(
+        token,
+        "Alexa.RangeController",
+        "SetRangeValue",
+        diagnostic_endpoint_id,
+    )
+    invalid["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+    invalid["directive"]["header"]["instance"] = "cover.position"  # type: ignore[index]
+    invalid["directive"]["payload"] = {"rangeValue": 50}  # type: ignore[index]
+    invalid_response = await client.post("/alexa/v1/directive", json=invalid)
+    assert invalid_response.status_code == 200
+    assert invalid_response.json()["event"]["header"]["name"] == "ErrorResponse"
+    assert len(dispatched.await_args_list) == calls_before_invalid
+    assert "alexa_directive_ingress" in caplog.text
+    assert "endpoint_kind=diagnostic_v3" in caplog.text
+    assert "namespace=Alexa.RangeController" in caplog.text
+    assert "name=SetRangeValue" in caplog.text
+    assert "instance=cover.position" in caplog.text
+    assert f"endpoint_id={diagnostic_endpoint_id}" in caplog.text
+    assert 'payload={"rangeValue":100}' in caplog.text
+    assert "message_id=" in caplog.text
+    assert token not in caplog.text
     await client.aclose()
 
 
