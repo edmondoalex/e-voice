@@ -31,6 +31,7 @@ from .connector_compatibility import (
     REQUIRED_EVCP_PROTOCOL_VERSION,
     ConnectorCompatibilityStatus,
 )
+from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
 from .cover_modes import COVER_STOP, effective_cover_mode, validate_cover_mode
 from .database import get_database_session
 from .domain.enums import TenantRole
@@ -794,6 +795,20 @@ def _entity_names_form(
 ) -> str:
     aliases = "\n".join(entity.voice_aliases or [])
     notice = f'<p class="{"bad" if error else "ok"}">{_e(message)}</p>' if message else ""
+    selected_device_type = entity.alexa_device_type or "auto"
+    device_type_labels = {
+        "auto": "Automatico (in base al tipo Home Assistant)",
+        "switch": "Interruttore — accendi / spegni",
+        "light": "Luce — accendi / spegni",
+        "outlet": "Presa — accendi / spegni",
+        "gate": "Cancello — apri / chiudi",
+    }
+    allowed_types = ("auto", *allowed_alexa_device_types(entity))
+    device_type_options = "".join(
+        f'<option value="{value}"{" selected" if value == selected_device_type else ""}>{device_type_labels[value]}</option>'
+        for value in allowed_types
+    )
+    device_type = f"""<label class="field"><b>Tipo dispositivo Alexa</b><select name="alexa_device_type">{device_type_options}</select><span class="muted">Non cambia il tipo reale in Home Assistant. Determina categoria, capability e verbi vocali pubblicati ad Alexa.</span></label>"""
     cover_mode = ""
     if entity.ha_domain == "cover":
         selected = entity.alexa_cover_mode or "auto"
@@ -822,6 +837,7 @@ def _entity_names_form(
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>
 <label class="field"><b>Nome vocale</b><input name="voice_name" maxlength="120" value="{_e(entity.voice_name)}" placeholder="Fallback: {_e(effective_display_name(entity))}"><span class="muted">Se vuoto: Nome visualizzato → Nome e-Control.</span></label>
 <label class="field"><b>Alias vocali</b><textarea name="voice_aliases" maxlength="2420" placeholder="Un alias per riga">{_e(aliases)}</textarea><span class="muted">Massimo 20 alias; spazi e duplicati senza distinzione maiuscole/minuscole vengono normalizzati.</span></label>
+{device_type}
 {cover_mode}
 <p><b>Nome dashboard effettivo:</b> {_e(effective_display_name(entity))}<br><b>Nome vocale effettivo:</b> {_e(effective_voice_name(entity))}<br><b>Tutti i nomi vocali:</b> {_e(", ".join(all_voice_names(entity)))}</p>
 <div class="actions"><button name="action" value="save">Salva</button><a class="button" href="/installations/{installation.id}">Annulla</a><button class="danger" name="action" value="reset">Ripristina nomi personalizzati</button></div></form></div>'''
@@ -890,6 +906,7 @@ async def update_entity_names(
         entity.voice_name,
         list(entity.voice_aliases or []),
         entity.alexa_cover_mode,
+        entity.alexa_device_type,
     )
     try:
         if values.get("action") == "reset":
@@ -899,6 +916,12 @@ async def update_entity_names(
             entity.voice_name = clean_optional_name(values.get("voice_name", ""))
             entity.voice_aliases = clean_voice_aliases(
                 re.split(r"[\r\n,]+", values.get("voice_aliases", ""))
+            )
+            requested_device_type = values.get("alexa_device_type", "auto")
+            entity.alexa_device_type = (
+                None
+                if requested_device_type == "auto"
+                else validate_alexa_device_type(entity, requested_device_type)
             )
             if entity.ha_domain == "cover":
                 requested_mode = values.get("alexa_cover_mode", "auto")
@@ -913,6 +936,7 @@ async def update_entity_names(
             entity.voice_name,
             entity.voice_aliases,
             entity.alexa_cover_mode,
+            entity.alexa_device_type,
         ) = previous
         return _names_page(
             installation,
@@ -942,6 +966,7 @@ async def update_entity_names(
             entity.voice_name,
             entity.voice_aliases,
             entity.alexa_cover_mode,
+            entity.alexa_device_type,
         ) = previous
         return _names_page(
             installation,
@@ -957,11 +982,12 @@ async def update_entity_names(
         entity.voice_name,
         list(entity.voice_aliases or []),
         entity.alexa_cover_mode,
+        entity.alexa_device_type,
     )
     changed_fields = [
         name
         for name, before, after in zip(
-            ("display_name", "voice_name", "voice_aliases", "alexa_cover_mode"),
+            ("display_name", "voice_name", "voice_aliases", "alexa_cover_mode", "alexa_device_type"),
             previous,
             current,
             strict=True,
@@ -983,7 +1009,7 @@ async def update_entity_names(
     )
     await session.commit()
     await reconcile_discovery_safely(session, installation)
-    return _names_page(installation, entity, context, _csrf(context), message="Nomi salvati.")
+    return _names_page(installation, entity, context, _csrf(context), message="Configurazione entità salvata.")
 
 
 def _command_data(operation: str, value: str) -> dict[str, object]:
