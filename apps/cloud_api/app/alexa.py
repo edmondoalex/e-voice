@@ -558,6 +558,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.ThermostatController", ["targetSetpoint", "thermostatMode"])
                 | {"configuration": {"supportedModes": thermostat_modes}}
             )
+            if {"heat", "off"}.issubset(_climate_hvac_modes(entity)):
+                result.append(_capability("Alexa.PowerController", ["powerState"]))
         if _numeric_attribute(attributes, "current_temperature") is not None:
             result.append(_capability("Alexa.TemperatureSensor", ["temperature"]))
     elif entity.ha_domain == "fan":
@@ -818,6 +820,14 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 props.append(
                     _property("Alexa.ThermostatController", "thermostatMode", thermostat_mode)
                 )
+            if {"heat", "off"}.issubset(_climate_hvac_modes(entity)):
+                props.append(
+                    _property(
+                        "Alexa.PowerController",
+                        "powerState",
+                        "OFF" if entity.state == "off" else "ON",
+                    )
+                )
         current_temperature = _numeric_attribute(attributes, "current_temperature")
         if current_temperature is not None:
             props.append(
@@ -846,6 +856,13 @@ def _command(
                 return {"operation": "open"}
             if (namespace, name) == ("Alexa.PowerController", "TurnOff"):
                 return {"operation": "close"}
+            return None
+        if entity is not None and entity.ha_domain == "climate":
+            modes = _climate_hvac_modes(entity)
+            if (namespace, name) == ("Alexa.PowerController", "TurnOn") and "heat" in modes:
+                return {"operation": "set_hvac_mode", "hvac_mode": "heat"}
+            if (namespace, name) == ("Alexa.PowerController", "TurnOff") and "off" in modes:
+                return {"operation": "set_hvac_mode", "hvac_mode": "off"}
             return None
         return mapping[(namespace, name)]
     if namespace == "Alexa.BrightnessController" and name == "SetBrightness":
@@ -950,6 +967,36 @@ def _command(
         ha_mode = _ha_mode_for_alexa(entity, requested)
         return {"operation": "set_hvac_mode", "hvac_mode": ha_mode} if ha_mode else None
     return None
+
+
+def _command_response_properties(
+    entity: Entity, command: dict[str, object]
+) -> list[dict[str, Any]]:
+    """Return state context updated with values confirmed by a successful command."""
+    properties = state_properties(entity)
+    operation = command.get("operation")
+    replacements: dict[tuple[str, str], Any] = {}
+    if operation == "set_target_temperature":
+        replacements[("Alexa.ThermostatController", "targetSetpoint")] = {
+            "value": command["temperature"],
+            "scale": _climate_temperature_scale(entity),
+        }
+    elif operation == "set_hvac_mode":
+        ha_mode = command.get("hvac_mode")
+        alexa_mode = HA_TO_ALEXA_THERMOSTAT_MODE.get(ha_mode) if isinstance(ha_mode, str) else None
+        if alexa_mode is not None:
+            replacements[("Alexa.ThermostatController", "thermostatMode")] = alexa_mode
+            if {"heat", "off"}.issubset(_climate_hvac_modes(entity)):
+                replacements[("Alexa.PowerController", "powerState")] = (
+                    "OFF" if ha_mode == "off" else "ON"
+                )
+    for key, value in replacements.items():
+        namespace, name = key
+        properties = [
+            item for item in properties if (item["namespace"], item["name"]) != (namespace, name)
+        ]
+        properties.append(_property(namespace, name, value))
+    return properties
 
 
 def _hsv_rgb(hue: float, saturation: float, brightness: float) -> tuple[int, int, int]:
@@ -1326,7 +1373,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         },
                         {},
                         {"endpointId": endpoint_value},
-                        state_properties(entity),
+                        _command_response_properties(entity, spec),
                     )
     if diagnostic_correlation_id is not None:
         response_event = response["event"]

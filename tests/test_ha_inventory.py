@@ -75,6 +75,37 @@ async def test_initial_inventory_sync_sends_selected_entities(hass: HomeAssistan
     await sync.async_stop()
 
 
+async def test_climate_inventory_includes_current_temperature(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "climate", "test", "stable-climate-1", suggested_object_id="office"
+    )
+    hass.states.async_set(
+        entry.entity_id,
+        "heat",
+        {
+            "temperature": 21.5,
+            "current_temperature": 20.25,
+            "hvac_modes": ["off", "heat"],
+            "access_token": "never-share",
+        },
+    )
+    websocket = AsyncMock()
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    await sync.async_start(websocket, str(uuid4()), cloud_revision=0)
+
+    message = websocket.send_json.await_args_list[0].args[0]
+    [item] = message["payload"]["entities"]
+    assert item["attributes"] == {
+        "current_temperature": 20.25,
+        "hvac_modes": ["off", "heat"],
+        "temperature": 21.5,
+    }
+    assert "access_token" not in item["attributes"]
+    await sync.async_stop()
+
+
 async def test_zero_selected_entities_sends_explicit_empty_snapshot(
     hass: HomeAssistant,
 ) -> None:
