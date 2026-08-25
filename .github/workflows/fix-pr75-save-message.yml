@@ -1,0 +1,48 @@
+name: Fix PR75 save message
+
+on:
+  push:
+    branches:
+      - agent/alexa-device-type-override
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/alexa-device-type-override
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply exact regression fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('apps/cloud_api/app/admin_console.py')
+          text = p.read_text(encoding='utf-8')
+          old = 'message="Configurazione entità salvata."'
+          new = 'message="Nomi salvati."'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one match, found {count}')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+      - name: Run focused regression test
+        run: pytest -q apps/cloud_api/tests/test_admin_console.py -k entity_names
+      - name: Remove temporary workflow and commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-pr75-save-message.yml
+          git add apps/cloud_api/app/admin_console.py
+          git commit -m 'fix: preserve entity names save confirmation'
+          git push origin HEAD:agent/alexa-device-type-override
