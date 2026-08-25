@@ -445,6 +445,7 @@ async def test_climate_controls_render_and_dispatch_closed_commands(
     client = await _client(session)
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Temperatura attuale: 20,5 &deg;C" in page.text
     assert 'name="operation" value="set_target_temperature"' in page.text
     assert 'type="number" name="value" value="21.5" min="16.0" max="30.0" step="0.5"' in page.text
     assert 'name="operation" value="set_hvac_mode"' in page.text
@@ -515,6 +516,43 @@ async def test_climate_controls_render_and_dispatch_closed_commands(
     assert rejected.status_code == 403
     assert len(dispatched) == 2
     await readonly.aclose()
+
+
+async def test_climate_current_temperature_is_read_only_and_never_uses_setpoint(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.state = "heat"
+    entity.attributes_json = {
+        "current_temperature": 19.6,
+        "temperature": 24,
+        "target_temp": 25,
+        "hvac_modes": ["heat"],
+    }
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Temperatura attuale: 19,6 &deg;C" in page.text
+    assert 'class="climate-current-temperature"' in page.text
+    assert 'value="25.0"' in page.text
+    assert "Temperatura attuale: 25,0" not in page.text
+
+    for invalid in (None, "unknown", float("nan"), float("inf"), float("-inf")):
+        entity.attributes_json = {
+            "current_temperature": invalid,
+            "temperature": 24,
+            "hvac_modes": ["heat"],
+        }
+        await session.commit()
+        invalid_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+        assert "Temperatura attuale:" not in invalid_page.text
+        assert 'value="24.0"' in invalid_page.text
+
+    await client.aclose()
 
 
 async def test_climate_controls_tolerate_incomplete_attributes_and_disable_unavailable(
