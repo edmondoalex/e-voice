@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa_device_types import is_gate_override, overridden_display_category
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
@@ -279,11 +280,70 @@ def _is_office_range_ab(entity: Entity) -> bool:
     return entity.ha_domain == "cover" and entity.ha_entity_id == OFFICE_RANGE_AB_ENTITY_ID
 
 
+def _gate_mode_capability() -> dict[str, Any]:
+    return _capability("Alexa.ModeController", ["mode"]) | {
+        "instance": "Gate.Position",
+        "capabilityResources": {
+            "friendlyNames": [
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
+            ]
+        },
+        "configuration": {
+            "ordered": False,
+            "supportedModes": [
+                {
+                    "value": "Position.Up",
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
+                            {"@type": "text", "value": {"text": "Aperto", "locale": "it-IT"}},
+                        ]
+                    },
+                },
+                {
+                    "value": "Position.Down",
+                    "modeResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
+                            {"@type": "text", "value": {"text": "Chiuso", "locale": "it-IT"}},
+                        ]
+                    },
+                },
+            ],
+        },
+        "semantics": {
+            "actionMappings": [
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Open"],
+                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+                },
+                {
+                    "@type": "ActionsToDirective",
+                    "actions": ["Alexa.Actions.Close"],
+                    "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+                },
+            ],
+            "stateMappings": [
+                {"@type": "StatesToValue", "states": ["Alexa.States.Open"], "value": "Position.Up"},
+                {
+                    "@type": "StatesToValue",
+                    "states": ["Alexa.States.Closed"],
+                    "value": "Position.Down",
+                },
+            ],
+        },
+    }
+
+
 def capabilities(entity: Entity) -> list[dict[str, Any]]:
     attributes = entity.attributes_json or {}
     result = [_capability("Alexa"), _capability("Alexa.EndpointHealth", ["connectivity"])]
-    if entity.ha_domain in {"light", "switch", "fan"}:
+    if entity.ha_domain in {"light", "switch", "fan"} and not is_gate_override(entity):
         result.append(_capability("Alexa.PowerController", ["powerState"]))
+    if is_gate_override(entity):
+        result.append(_gate_mode_capability())
     if entity.ha_domain == "light":
         result.append(_capability("Alexa.BrightnessController", ["brightness"]))
         if "rgb_color" in attributes:
@@ -599,14 +659,17 @@ def _cover_display_category(entity: Entity) -> str:
 
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
-    category = {
-        "light": "LIGHT",
-        "switch": "SWITCH",
-        "cover": _cover_display_category(entity),
-        "climate": "THERMOSTAT",
-        "fan": "FAN",
-        "scene": "SCENE_TRIGGER",
-    }[entity.ha_domain]
+    category = (
+        overridden_display_category(entity)
+        or {
+            "light": "LIGHT",
+            "switch": "SWITCH",
+            "cover": _cover_display_category(entity),
+            "climate": "THERMOSTAT",
+            "fan": "FAN",
+            "scene": "SCENE_TRIGGER",
+        }[entity.ha_domain]
+    )
     return {
         "endpointId": endpoint_id(entity),
         "manufacturerName": "Ekonex",
@@ -696,7 +759,16 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
             {"value": "OK" if entity.available else "UNREACHABLE"},
         )
     ]
-    if entity.ha_domain in {"light", "switch", "fan"}:
+    if is_gate_override(entity):
+        props.append(
+            _property(
+                "Alexa.ModeController",
+                "mode",
+                "Position.Up" if entity.state == "on" else "Position.Down",
+                instance="Gate.Position",
+            )
+        )
+    elif entity.ha_domain in {"light", "switch", "fan"}:
         props.append(
             _property(
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
@@ -849,6 +921,8 @@ def _command(
         ("Alexa.SceneController", "Activate"): {"operation": "activate"},
     }
     if (namespace, name) in mapping:
+        if entity is not None and is_gate_override(entity) and namespace == "Alexa.PowerController":
+            return None
         if entity is not None and entity.ha_domain == "cover":
             if effective_cover_mode(entity) != "discrete":
                 return None
@@ -905,6 +979,11 @@ def _command(
             "position": round(min(100, max(0, current + float(payload["rangeValueDelta"])))),
         }
     if namespace == "Alexa.ModeController" and name == "SetMode":
+        if entity is not None and is_gate_override(entity):
+            gate_modes = {"Position.Up": "power_on", "Position.Down": "power_off"}
+            requested_mode = payload.get("mode")
+            operation = gate_modes.get(requested_mode) if isinstance(requested_mode, str) else None
+            return {"operation": operation} if operation is not None else None
         if (
             entity is None
             or _is_office_range_ab(entity)
@@ -976,6 +1055,21 @@ def _command_response_properties(
     properties = state_properties(entity)
     operation = command.get("operation")
     replacements: dict[tuple[str, str], Any] = {}
+    if is_gate_override(entity) and operation in {"power_on", "power_off"}:
+        properties = [
+            item
+            for item in properties
+            if (item["namespace"], item["name"]) != ("Alexa.ModeController", "mode")
+        ]
+        properties.append(
+            _property(
+                "Alexa.ModeController",
+                "mode",
+                "Position.Up" if operation == "power_on" else "Position.Down",
+                instance="Gate.Position",
+            )
+        )
+        return properties
     if operation == "set_target_temperature":
         replacements[("Alexa.ThermostatController", "targetSetpoint")] = {
             "value": command["temperature"],

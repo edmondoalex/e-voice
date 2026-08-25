@@ -207,6 +207,7 @@ class Entity(TimestampMixin, Base):
     voice_name: Mapped[str | None] = mapped_column(String(120))
     voice_aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     alexa_cover_mode: Mapped[str | None] = mapped_column(String(20))
+    alexa_device_type: Mapped[str | None] = mapped_column(String(32))
     area_id: Mapped[str | None] = mapped_column(String(255))
     area_name: Mapped[str | None] = mapped_column(String(255))
     device_id: Mapped[str | None] = mapped_column(String(64))
