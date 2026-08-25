@@ -29,6 +29,7 @@ from .domain.models import (
 
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 REDACTED = "[REDACTED]"
 SENSITIVE_DIAGNOSTIC_KEYS = {
     "access_token",
@@ -37,6 +38,27 @@ SENSITIVE_DIAGNOSTIC_KEYS = {
     "refresh_token",
     "token",
 }
+
+
+def _endpoint_log_summary(endpoint: dict[str, Any]) -> dict[str, Any]:
+    """Return the allowlisted Discovery fields needed to diagnose resync."""
+    return {
+        "endpoint_id": endpoint.get("endpointId"),
+        "friendly_name": endpoint.get("friendlyName"),
+        "display_categories": endpoint.get("displayCategories", []),
+        "capabilities": [
+            {
+                "interface": capability.get("interface"),
+                **(
+                    {"instance": capability["instance"]}
+                    if capability.get("instance") is not None
+                    else {}
+                ),
+            }
+            for capability in endpoint.get("capabilities", [])
+            if isinstance(capability, dict)
+        ],
+    }
 
 
 def _utc(value: datetime) -> datetime:
@@ -243,6 +265,7 @@ class AlexaEventGateway:
     async def reconcile_discovery(self, installation: Installation, *, force: bool = False) -> int:
         """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
+        from .alexa_device_types import is_gate_override
         from .entity_names import unambiguous_voice_entities
 
         entities = list(
@@ -325,6 +348,26 @@ class AlexaEventGateway:
                 event = self._discovery_event(
                     "AddOrUpdateReport", [endpoint for _, endpoint, _ in updates]
                 )
+                message_id = event["event"]["header"]["messageId"]
+                for entity, endpoint, _ in updates:
+                    logger.info(
+                        "alexa_add_or_update_endpoint message_id=%s installation_id=%s endpoint=%s",
+                        message_id,
+                        installation.id,
+                        json.dumps(
+                            _endpoint_log_summary(endpoint),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    if is_gate_override(entity):
+                        logger.info(
+                            "alexa_add_or_update_gate_payload message_id=%s "
+                            "installation_id=%s endpoint=%s",
+                            message_id,
+                            installation.id,
+                            json.dumps(endpoint, ensure_ascii=False, separators=(",", ":")),
+                        )
                 success = await self._send(
                     authorization,
                     event,
@@ -530,6 +573,11 @@ class AlexaEventGateway:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 response_body = response.text
         secrets = (access_token,)
+        amazon_request_id = (
+            response.headers.get("x-amzn-requestid") or response.headers.get("x-amz-request-id")
+            if response is not None
+            else None
+        )
         payload = {
             "correlation_id": message_id,
             "message_id": message_id,
@@ -538,10 +586,24 @@ class AlexaEventGateway:
             "request_payload": _safe_diagnostic_value(request_event, secrets),
             "http_status": response.status_code if response is not None else None,
             "response_body": _safe_diagnostic_value(response_body, secrets),
+            "amazon_request_id": amazon_request_id,
             "error": _safe_diagnostic_value(str(error), secrets) if error is not None else None,
             "error_type": type(error).__name__ if error is not None else None,
             "attempts": attempts,
         }
+        logger.info(
+            "alexa_add_or_update_response message_id=%s installation_id=%s "
+            "amazon_request_id=%s http_status=%s response_body=%s "
+            "error_type=%s error=%s attempts=%d",
+            message_id,
+            installation.id,
+            amazon_request_id,
+            payload["http_status"],
+            json.dumps(payload["response_body"], ensure_ascii=False, separators=(",", ":")),
+            payload["error_type"],
+            payload["error"],
+            attempts,
+        )
         self._session.add(
             AuditEvent(
                 tenant_id=installation.tenant_id,

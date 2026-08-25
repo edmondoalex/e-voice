@@ -120,7 +120,7 @@ async def test_no_event_authorization_means_no_advertised_delivery_target(
 
 
 async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
-    session: AsyncSession, seeded_domain: object
+    session: AsyncSession, seeded_domain: object, caplog: pytest.LogCaptureFixture
 ) -> None:
     link = AlexaAccountLink(
         tenant_id=seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
@@ -159,6 +159,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
         client=client,
         settings=Settings(alexa_token_encryption_key="proactive-test-encryption-key"),
     )
+    caplog.set_level("INFO", logger="apps.cloud_api.app.alexa_events")
     await gateway.accept_grant(link, "one-use-grant")
 
     assert await gateway.reconcile_discovery(installation) == 1
@@ -204,6 +205,13 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     }
     assert diagnostic_payload["error"] is None
     assert "amazon-access-secret" not in json.dumps(diagnostic_payload)
+    assert "alexa_add_or_update_endpoint" in caplog.text
+    assert endpoint_value in caplog.text
+    assert '"friendly_name":"Kitchen"' in caplog.text
+    assert '"interface":"Alexa.PowerController"' in caplog.text
+    assert "alexa_add_or_update_response" in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon-access-secret" not in caplog.text
 
     entity.state = "on"
     await session.commit()
@@ -343,4 +351,66 @@ async def test_proactive_discovery_gateway_error_is_secret_free_and_retryable(
     )
     assert "never-log-amazon" not in json.dumps(diagnostic.payload_redacted_json)
     assert "never-log-amazon" not in caplog.text
+    await client.aclose()
+
+
+async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_safely(
+    session: AsyncSession,
+    seeded_domain: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    link = AlexaAccountLink(
+        tenant_id=seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
+        user_id=seeded_domain.user_a_id,  # type: ignore[attr-defined]
+        provider_subject="gate-resync-diagnostic-subject",
+    )
+    installation = await session.get(
+        Installation,
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+    )
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert installation is not None and entity is not None
+    entity.ha_domain = "switch"
+    entity.ha_entity_id = "switch.paperino"
+    entity.voice_name = "Paperino"
+    entity.alexa_device_type = "gate"
+    session.add(link)
+    await session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.amazon.com":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "gate-access-secret",
+                    "refresh_token": "gate-refresh-secret",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(
+            202,
+            json={"requestId": "amazon-request-42"},
+            headers={"x-amzn-requestid": "amazon-header-request-42"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = AlexaEventGateway(
+        session,
+        client=client,
+        settings=Settings(alexa_token_encryption_key="gate-resync-encryption-key"),
+    )
+    caplog.set_level("INFO", logger="apps.cloud_api.app.alexa_events")
+    await gateway.accept_grant(link, "one-use-grant")
+
+    assert await gateway.reconcile_discovery(installation, force=True) == 1
+    assert "alexa_add_or_update_gate_payload" in caplog.text
+    assert '"friendlyName":"Paperino"' in caplog.text
+    assert '"displayCategories":["DOOR"]' in caplog.text
+    assert '"interface":"Alexa.ToggleController"' in caplog.text
+    assert '"instance":"door.opening"' in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert 'response_body={"requestId":"amazon-request-42"}' in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
     await client.aclose()
