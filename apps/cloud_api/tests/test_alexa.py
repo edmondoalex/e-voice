@@ -330,6 +330,22 @@ def test_climate_directives_are_allowlisted_against_advertised_modes() -> None:
     )
 
 
+def test_heat_cool_round_trips_deterministically_through_alexa_auto() -> None:
+    entity = _climate(["heat", "off", "heat_cool"], state="heat_cool")
+
+    thermostat = next(
+        item for item in capabilities(entity) if item["interface"] == "Alexa.ThermostatController"
+    )
+    assert thermostat["configuration"]["supportedModes"] == ["HEAT", "OFF", "AUTO"]
+    assert _property_value(entity, "Alexa.ThermostatController", "thermostatMode") == "AUTO"
+    assert _command(
+        "Alexa.ThermostatController",
+        "SetThermostatMode",
+        {"thermostatMode": "AUTO"},
+        entity,
+    ) == {"operation": "set_hvac_mode", "hvac_mode": "heat_cool"}
+
+
 @pytest.mark.parametrize(
     ("state", "expected"),
     [
@@ -545,6 +561,39 @@ async def test_oauth_authorization_code_is_one_use_and_refresh_rotates(
     )
     assert refreshed.status_code == 200
     assert refreshed.json()["refresh_token"] != tokens.json()["refresh_token"]
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        {"current_temperature": 20.5, "temperature": 21.0, "hvac_modes": ["off"]},
+        {"current_temperature": 20.5, "temperature": None, "hvac_modes": ["heat", "off"]},
+        {"current_temperature": 20.5, "temperature": float("nan"), "hvac_modes": ["cool"]},
+        {"current_temperature": 20.5, "temperature": 21.0, "hvac_modes": ["dry"]},
+    ],
+)
+async def test_discovery_excludes_incomplete_climate_endpoint_entirely(
+    session: AsyncSession, seeded_domain: object, attributes: dict[str, object]
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "climate"
+    entity.ha_entity_id = "climate.incomplete"
+    entity.ha_registry_id = "climate-incomplete"
+    entity.state = "heat"
+    entity.attributes_json = attributes
+    await session.commit()
+    token = await _access(session, seeded_domain, f"eaa_incomplete_{uuid4().hex}")
+    client = await _client(session)
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa.Discovery", "Discover"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["event"]["payload"]["endpoints"] == []
     await client.aclose()
 
 

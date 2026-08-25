@@ -58,9 +58,15 @@ HA_TO_ALEXA_THERMOSTAT_MODE = {
 
 def alexa_entity_eligible(entity: Entity) -> bool:
     """Return whether an entity has a safe, publishable Alexa representation."""
-    return entity.ha_domain in SUPPORTED_DOMAINS and (
-        entity.ha_domain != "cover" or effective_cover_mode(entity) is not None
-    )
+    if entity.ha_domain not in SUPPORTED_DOMAINS:
+        return False
+    if entity.ha_domain == "cover":
+        return effective_cover_mode(entity) is not None
+    if entity.ha_domain == "climate":
+        return _climate_target_temperature(entity) is not None and bool(
+            _climate_supported_modes(entity)
+        )
+    return True
 
 
 def _digest(value: str) -> str:
