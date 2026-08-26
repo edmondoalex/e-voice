@@ -19,6 +19,7 @@ from apps.cloud_api.app.alexa import (
     discrete_cover_diagnostic_endpoint,
     endpoint_id,
     fresh_skill_cover_diagnostic_endpoint,
+    openhab_cover_diagnostic_endpoint,
     positioned_cover_diagnostic_discovery,
     positioned_cover_diagnostic_endpoint,
     state_properties,
@@ -527,11 +528,18 @@ async def test_report_state_response_omits_null_brightness(
 
 
 @pytest.mark.parametrize(
-    "diagnostic_suffix",
-    ["_diagnostic_clean_range_v1", "_diagnostic_fresh_skill_v1"],
+    ("diagnostic_suffix", "expected_instance"),
+    [
+        ("_diagnostic_clean_range_v1", "Blind.Lift"),
+        ("_diagnostic_fresh_skill_v1", "Blind.Lift"),
+        ("_diagnostic_openhab_rollershutter_v1", "PositionState"),
+    ],
 )
 async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
-    session: AsyncSession, seeded_domain: object, diagnostic_suffix: str
+    session: AsyncSession,
+    seeded_domain: object,
+    diagnostic_suffix: str,
+    expected_instance: str,
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
     assert entity is not None
@@ -556,7 +564,7 @@ async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
     assert response.json()["event"]["endpoint"]["endpointId"] == diagnostic_id
     properties = response.json()["context"]["properties"]
     range_property = next(item for item in properties if item["name"] == "rangeValue")
-    assert range_property["instance"] == "Blind.Lift"
+    assert range_property["instance"] == expected_instance
     assert range_property["value"] == 78
     assert all(item["namespace"] != "Alexa.PowerController" for item in properties)
     await client.aclose()
@@ -1368,11 +1376,70 @@ def test_positioned_cover_diagnostic_is_clean_canonical_range_endpoint() -> None
     assert positioned_cover_diagnostic_discovery([entity], "") == []
     assert positioned_cover_diagnostic_discovery([entity], "ev1_wrong") == []
     fresh_endpoint = fresh_skill_cover_diagnostic_endpoint(entity)
-    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [fresh_endpoint]
+    openhab_endpoint = openhab_cover_diagnostic_endpoint(entity)
+    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [
+        fresh_endpoint,
+        openhab_endpoint,
+    ]
     assert fresh_endpoint["endpointId"] == f"{endpoint_id(entity)}_diagnostic_fresh_skill_v1"
     assert fresh_endpoint["friendlyName"] == "tenda ufficio skill nuova"
     assert fresh_endpoint["displayCategories"] == endpoint["displayCategories"]
     assert fresh_endpoint["capabilities"] == endpoint["capabilities"]
+
+    assert openhab_endpoint["endpointId"] == (
+        f"{endpoint_id(entity)}_diagnostic_openhab_rollershutter_v1"
+    )
+    assert openhab_endpoint["friendlyName"] == "tenda ufficio openhab"
+    assert openhab_endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    assert [item["interface"] for item in openhab_endpoint["capabilities"]] == [
+        "Alexa.ModeController",
+        "Alexa.RangeController",
+        "Alexa.PlaybackController",
+        "Alexa.EndpointHealth",
+        "Alexa",
+    ]
+    openhab_mode = openhab_endpoint["capabilities"][0]
+    assert "properties" not in openhab_mode
+    assert openhab_mode["instance"] == "PositionCommand"
+    assert [item["value"] for item in openhab_mode["configuration"]["supportedModes"]] == [
+        "UP",
+        "DOWN",
+        "STOP",
+    ]
+    assert openhab_mode["semantics"] == {
+        "actionMappings": [
+            {
+                "@type": "ActionsToDirective",
+                "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
+            },
+            {
+                "@type": "ActionsToDirective",
+                "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
+            },
+        ]
+    }
+    openhab_range = openhab_endpoint["capabilities"][1]
+    assert openhab_range["instance"] == "PositionState"
+    assert openhab_range["properties"] == {
+        "supported": [{"name": "rangeValue"}],
+        "proactivelyReported": False,
+        "retrievable": True,
+    }
+    assert "actionMappings" not in openhab_range["semantics"]
+    assert openhab_range["semantics"]["stateMappings"] == [
+        {
+            "@type": "StatesToRange",
+            "states": ["Alexa.States.Open"],
+            "range": {"minimumValue": 1, "maximumValue": 100},
+        },
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Closed"],
+            "value": 0,
+        },
+    ]
 
     mode_endpoint = discrete_cover_diagnostic_endpoint(entity)
 
@@ -1653,6 +1720,65 @@ async def test_office_cover_range_directive_response_matches_advertised_context(
         assert properties[1]["instance"] == "Blind.Lift"
         assert properties[1]["value"] == range_value
         assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
+
+    await client.aclose()
+
+
+async def test_openhab_cover_diagnostic_routes_commands_without_semantic_collision(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_entity_id = "cover.aqara_shade_dx_porta_ufficio_2"
+    entity.ha_registry_id = "aqara-openhab-diagnostic"
+    entity.ha_domain = "cover"
+    entity.device_class = "curtain"
+    entity.supported_features = 15
+    entity.state = "open"
+    entity.attributes_json = {"current_position": 78}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_openhab_diagnostic")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    client = await _client(session)
+    diagnostic_id = f"{endpoint_id(entity)}_diagnostic_openhab_rollershutter_v1"
+
+    cases = [
+        ("Alexa.ModeController", "SetMode", "PositionCommand", {"mode": "UP"}, "open"),
+        ("Alexa.ModeController", "SetMode", "PositionCommand", {"mode": "DOWN"}, "close"),
+        ("Alexa.ModeController", "SetMode", "PositionCommand", {"mode": "STOP"}, "stop"),
+        (
+            "Alexa.RangeController",
+            "SetRangeValue",
+            "PositionState",
+            {"rangeValue": 45},
+            "set_position",
+        ),
+        ("Alexa.PlaybackController", "Stop", None, {}, "stop"),
+    ]
+    for namespace, name, instance, payload, expected_operation in cases:
+        body = _directive(token, namespace, name, diagnostic_id)
+        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        if instance is not None:
+            body["directive"]["header"]["instance"] = instance  # type: ignore[index]
+        body["directive"]["payload"] = payload  # type: ignore[index]
+
+        response = await client.post("/alexa/v1/directive", json=body)
+
+        assert response.status_code == 200
+        assert response.json()["event"]["header"]["name"] == "Response"
+        assert dispatched.await_args_list[-1].args[3]["operation"] == expected_operation
+        properties = response.json()["context"]["properties"]
+        assert all(item["namespace"] != "Alexa.PowerController" for item in properties)
+        if namespace == "Alexa.RangeController":
+            assert properties[-1]["instance"] == "PositionState"
+            assert properties[-1]["value"] == 45
+        else:
+            assert [item["namespace"] for item in properties] == ["Alexa.EndpointHealth"]
 
     await client.aclose()
 
