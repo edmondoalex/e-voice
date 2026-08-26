@@ -1386,6 +1386,7 @@ def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
     assert (
         _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, experimental) is None
     )
+
     assert [item["interface"] for item in endpoint["capabilities"]] == [
         "Alexa",
         "Alexa.EndpointHealth",
@@ -1430,6 +1431,56 @@ def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
         "operation": "close"
     }
     assert _command("Alexa.PlaybackController", "Stop", {}, normal) == {"operation": "stop"}
+
+
+async def test_office_cover_range_directive_response_matches_advertised_context(
+    session: AsyncSession, seeded_domain: object, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
+    entity.ha_registry_id = "office-cover-range-response"
+    entity.ha_domain = "cover"
+    entity.device_class = "shutter"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    entity.state = "unknown"
+    entity.attributes_json = {"current_position": None}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_office_range_response")
+    dispatched = AsyncMock(
+        return_value=CommandResultPayload(
+            session_id=entity.id, command_id=entity.id, status="success"
+        )
+    )
+    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
+    client = await _client(session)
+
+    for range_value, expected_operation in ((100, "open"), (0, "close")):
+        body = _directive(
+            token,
+            "Alexa.RangeController",
+            "SetRangeValue",
+            endpoint_id(entity),
+        )
+        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
+        body["directive"]["header"]["instance"] = "Blind.Lift"  # type: ignore[index]
+        body["directive"]["payload"] = {"rangeValue": range_value}  # type: ignore[index]
+
+        response = await client.post("/alexa/v1/directive", json=body)
+
+        assert response.status_code == 200
+        assert response.json()["event"]["header"]["name"] == "Response"
+        properties = response.json()["context"]["properties"]
+        assert [(item["namespace"], item["name"]) for item in properties] == [
+            ("Alexa.EndpointHealth", "connectivity"),
+            ("Alexa.RangeController", "rangeValue"),
+        ]
+        assert properties[1]["instance"] == "Blind.Lift"
+        assert properties[1]["value"] == range_value
+        assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
+
+    await client.aclose()
 
 
 def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -> None:
