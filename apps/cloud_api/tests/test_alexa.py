@@ -1250,18 +1250,20 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
         ha_entity_id="cover.buspro_cover_porta_ufficio",
         ha_domain="cover",
         friendly_name="Tapparella ufficio",
-        device_class="blind",
+        voice_name="tapparella pippo",
+        device_class="shutter",
         supported_features=15,
         alexa_cover_mode="discrete",
-        state="unknown",
+        state="open",
+        attributes_json={"current_position": 40},
     )
     endpoint = discovery_endpoint(experimental)
     assert endpoint == {
         "endpointId": endpoint_id(experimental),
         "manufacturerName": "Ekonex",
-        "friendlyName": "Tapparella ufficio",
+        "friendlyName": "tapparella pippo",
         "description": "Home Assistant entity via Ekonex Voice",
-        "displayCategories": ["INTERIOR_BLIND"],
+        "displayCategories": ["EXTERIOR_BLIND"],
         "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
         "cookie": {},
         "capabilities": [
@@ -1272,16 +1274,6 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
                 "version": "3",
                 "properties": {
                     "supported": [{"name": "connectivity"}],
-                    "proactivelyReported": True,
-                    "retrievable": True,
-                },
-            },
-            {
-                "type": "AlexaInterface",
-                "interface": "Alexa.PowerController",
-                "version": "3",
-                "properties": {
-                    "supported": [{"name": "powerState"}],
                     "proactivelyReported": True,
                     "retrievable": True,
                 },
@@ -1317,7 +1309,15 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
                     "actionMappings": [
                         {
                             "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+                            "actions": ["Alexa.Actions.Open"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 100},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Close"],
                             "directive": {
                                 "name": "SetRangeValue",
                                 "payload": {"rangeValue": 0},
@@ -1325,10 +1325,24 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
                         },
                         {
                             "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                            "actions": ["Alexa.Actions.Raise"],
                             "directive": {
-                                "name": "SetRangeValue",
-                                "payload": {"rangeValue": 100},
+                                "name": "AdjustRangeValue",
+                                "payload": {
+                                    "rangeValueDelta": 10,
+                                    "rangeValueDeltaDefault": False,
+                                },
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Lower"],
+                            "directive": {
+                                "name": "AdjustRangeValue",
+                                "payload": {
+                                    "rangeValueDelta": -10,
+                                    "rangeValueDeltaDefault": False,
+                                },
                             },
                         },
                     ],
@@ -1346,14 +1360,17 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
                     ],
                 },
             },
-            {
-                "type": "AlexaInterface",
-                "interface": "Alexa.PlaybackController",
-                "version": "3",
-                "supportedOperations": ["Stop"],
-            },
         ],
     }
+    range_properties = [
+        item
+        for item in state_properties(experimental)
+        if item["namespace"] == "Alexa.RangeController"
+    ]
+    assert len(range_properties) == 1
+    assert range_properties[0]["instance"] == "cover.position"
+    assert range_properties[0]["name"] == "rangeValue"
+    assert range_properties[0]["value"] == 40
     assert _command(
         "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, experimental
     ) == {"operation": "open"}
@@ -1364,23 +1381,20 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
         "operation": "set_position",
         "position": 50,
     }
-    assert (
-        _command("Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, experimental)
-        is None
-    )
-    assert _command("Alexa.PowerController", "TurnOn", {}, experimental) == {"operation": "open"}
-    assert _command("Alexa.PowerController", "TurnOff", {}, experimental) == {"operation": "close"}
+    assert _command(
+        "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, experimental
+    ) == {"operation": "set_position", "position": 50}
+    assert _command(
+        "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": -10}, experimental
+    ) == {"operation": "set_position", "position": 30}
     assert (
         _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, experimental) is None
     )
-    assert _command("Alexa.PlaybackController", "Stop", {}, experimental) == {"operation": "stop"}
-
-    experimental.supported_features = 7
-    assert all(
-        item["interface"] != "Alexa.PlaybackController"
-        for item in discovery_endpoint(experimental)["capabilities"]
-    )
-    assert _command("Alexa.PlaybackController", "Stop", {}, experimental) is None
+    assert [item["interface"] for item in endpoint["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.RangeController",
+    ]
 
     normal = Entity(
         id=uuid4(),
