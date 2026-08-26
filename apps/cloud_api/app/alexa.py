@@ -1053,6 +1053,21 @@ def _command_response_properties(
     properties = state_properties(entity)
     operation = command.get("operation")
     replacements: dict[tuple[str, str], Any] = {}
+    if _is_office_range_ab(entity) and operation in {"open", "close"}:
+        properties = [
+            item
+            for item in properties
+            if item["namespace"] not in {"Alexa.PowerController", "Alexa.RangeController"}
+        ]
+        properties.append(
+            _property(
+                "Alexa.RangeController",
+                "rangeValue",
+                100 if operation == "open" else 0,
+                instance="Blind.Lift",
+            )
+        )
+        return properties
     if is_gate_override(entity) and operation in {"power_on", "power_off"}:
         properties = [
             item
