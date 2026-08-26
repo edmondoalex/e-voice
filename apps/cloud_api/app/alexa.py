@@ -755,6 +755,20 @@ def positioned_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
     return endpoint
 
 
+def positioned_cover_diagnostic_discovery(
+    entities: list[Entity], configured_endpoint_id: str
+) -> list[dict[str, Any]]:
+    """Return the opt-in diagnostic endpoint for a complete Discover.Response."""
+    if not configured_endpoint_id:
+        return []
+    return [
+        positioned_cover_diagnostic_endpoint(entity)
+        for entity in entities
+        if entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
+        and endpoint_id(entity) == configured_endpoint_id
+    ]
+
+
 def _property(
     namespace: str, name: str, value: Any, *, instance: str | None = None
 ) -> dict[str, Any]:
@@ -1376,6 +1390,9 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             [entity for entity in entities if alexa_entity_eligible(entity)]
         )
         published = [(entity, discovery_endpoint(entity)) for entity in entities]
+        diagnostic_endpoints = positioned_cover_diagnostic_discovery(
+            entities, get_settings().alexa_discovery_diagnostic_endpoint_id
+        )
         response = _event(
             {
                 "namespace": "Alexa.Discovery",
@@ -1383,7 +1400,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 "payloadVersion": "3",
                 "messageId": str(uuid4()),
             },
-            {"endpoints": [endpoint for _, endpoint in published]},
+            {"endpoints": [endpoint for _, endpoint in published] + diagnostic_endpoints},
         )
         try:
             await record_discovery(database, link.tenant_id, link.id, installations, published)

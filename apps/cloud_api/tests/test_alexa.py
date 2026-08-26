@@ -17,6 +17,7 @@ from apps.cloud_api.app.alexa import (
     capabilities,
     discovery_endpoint,
     endpoint_id,
+    positioned_cover_diagnostic_discovery,
     positioned_cover_diagnostic_endpoint,
     state_properties,
 )
@@ -1324,6 +1325,10 @@ def test_positioned_cover_diagnostic_is_clean_canonical_range_endpoint() -> None
     range_property = next(item for item in reported if item["name"] == "rangeValue")
     assert range_property["instance"] == "Blind.Lift"
     assert range_property["value"] == 78
+
+    assert positioned_cover_diagnostic_discovery([entity], "") == []
+    assert positioned_cover_diagnostic_discovery([entity], "ev1_wrong") == []
+    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [endpoint]
 
 
 def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
