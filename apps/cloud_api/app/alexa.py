@@ -335,13 +335,9 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             result.append(
                 _capability("Alexa.RangeController", ["rangeValue"])
                 | {
-                    "instance": "cover.position",
+                    "instance": "Blind.Lift",
                     "capabilityResources": {
                         "friendlyNames": [
-                            {
-                                "@type": "text",
-                                "value": {"text": "Position", "locale": "en-US"},
-                            },
                             {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                         ]
                     },
@@ -839,7 +835,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "Alexa.RangeController",
                     "rangeValue",
                     current_position,
-                    instance="cover.position" if _is_office_range_ab(entity) else "Blind.Lift",
+                    instance="Blind.Lift",
                 )
             )
         if mode == "discrete" and discrete_position is not None:
