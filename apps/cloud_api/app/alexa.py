@@ -645,6 +645,19 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     instance="PositionState",
                 )
             )
+        elif (
+            entity.ha_entity_id == OFFICE_COVER_ENTITY_ID
+            and supports_percentage(entity)
+            and entity.state in {"open", "closed"}
+        ):
+            props.append(
+                _property(
+                    "Alexa.RangeController",
+                    "rangeValue",
+                    100 if entity.state == "open" else 0,
+                    instance="PositionState",
+                )
+            )
     if entity.ha_domain == "fan":
         percentage = _numeric_attribute(attributes, "percentage")
         if percentage is not None:

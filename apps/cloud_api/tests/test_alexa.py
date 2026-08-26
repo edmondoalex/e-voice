@@ -360,6 +360,44 @@ def test_discrete_cover_does_not_invent_reportable_controller_state(state: str |
     assert [item["namespace"] for item in state_properties(entity)] == ["Alexa.EndpointHealth"]
 
 
+@pytest.mark.parametrize(("state", "expected"), [("open", 100), ("closed", 0)])
+def test_office_cover_reports_binary_range_state_when_position_is_absent(
+    state: str, expected: int
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.buspro_cover_porta_ufficio",
+        ha_domain="cover",
+        supported_features=15,
+        alexa_cover_mode="discrete",
+        state=state,
+        attributes_json={"current_position": None},
+    )
+
+    assert _property_value(entity, "Alexa.RangeController", "rangeValue") == expected
+    range_property = next(
+        item for item in state_properties(entity) if item["namespace"] == "Alexa.RangeController"
+    )
+    assert range_property["instance"] == "PositionState"
+
+
+@pytest.mark.parametrize("state", ["unknown", "opening", "closing", "unavailable", None])
+def test_office_cover_does_not_invent_binary_range_for_indeterminate_state(
+    state: str | None,
+) -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="cover.buspro_cover_porta_ufficio",
+        ha_domain="cover",
+        supported_features=15,
+        alexa_cover_mode="discrete",
+        state=state,
+        attributes_json={"current_position": None},
+    )
+
+    assert _property_value(entity, "Alexa.RangeController", "rangeValue") is None
+
+
 def test_unknown_assumed_state_cover_omits_mode_property() -> None:
     entity = Entity(
         installation_id=uuid4(),
