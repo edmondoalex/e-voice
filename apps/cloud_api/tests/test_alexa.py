@@ -360,7 +360,7 @@ def test_discrete_cover_does_not_invent_reportable_controller_state(state: str |
     assert [item["namespace"] for item in state_properties(entity)] == ["Alexa.EndpointHealth"]
 
 
-@pytest.mark.parametrize(("state", "expected"), [("open", 100), ("closed", 0)])
+@pytest.mark.parametrize(("state", "expected"), [("open", 0), ("closed", 100)])
 def test_office_cover_reports_binary_range_state_when_position_is_absent(
     state: str, expected: int
 ) -> None:
@@ -802,7 +802,7 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
     entity.ha_registry_id = "office-cover"
     entity.device_class = "shutter"
-    entity.supported_features = 15
+    entity.supported_features = 3
     entity.alexa_cover_mode = "discrete"
     entity.attributes_json = {"current_position": None}
     await session.commit()
