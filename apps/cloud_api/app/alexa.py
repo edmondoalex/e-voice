@@ -49,6 +49,7 @@ OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
 POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID = "cover.aqara_shade_dx_porta_ufficio_2"
 POSITIONED_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_range_v1"
 DISCRETE_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_mode_v1"
+FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_fresh_skill_v1"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -763,11 +764,19 @@ def positioned_cover_diagnostic_discovery(
     if not configured_endpoint_id:
         return []
     return [
-        discrete_cover_diagnostic_endpoint(entity)
+        fresh_skill_cover_diagnostic_endpoint(entity)
         for entity in entities
         if entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
         and endpoint_id(entity) == configured_endpoint_id
     ]
+
+
+def fresh_skill_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build a fresh-ID clone of the canonical Range endpoint for skill isolation."""
+    endpoint = positioned_cover_diagnostic_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio skill nuova"
+    return endpoint
 
 
 def discrete_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
@@ -1489,11 +1498,16 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
-        positioned_diagnostic = endpoint_value.endswith(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)
+        fresh_skill_diagnostic = endpoint_value.endswith(FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX)
+        positioned_diagnostic = (
+            endpoint_value.endswith(POSITIONED_COVER_DIAGNOSTIC_SUFFIX) or fresh_skill_diagnostic
+        )
         discrete_diagnostic = endpoint_value.endswith(DISCRETE_COVER_DIAGNOSTIC_SUFFIX)
         diagnostic_suffix = (
             DISCRETE_COVER_DIAGNOSTIC_SUFFIX
             if discrete_diagnostic
+            else FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX
+            if fresh_skill_diagnostic
             else POSITIONED_COVER_DIAGNOSTIC_SUFFIX
         )
         canonical_endpoint_value = (

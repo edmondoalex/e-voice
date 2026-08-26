@@ -18,6 +18,7 @@ from apps.cloud_api.app.alexa import (
     discovery_endpoint,
     discrete_cover_diagnostic_endpoint,
     endpoint_id,
+    fresh_skill_cover_diagnostic_endpoint,
     positioned_cover_diagnostic_discovery,
     positioned_cover_diagnostic_endpoint,
     state_properties,
@@ -525,8 +526,12 @@ async def test_report_state_response_omits_null_brightness(
     await client.aclose()
 
 
+@pytest.mark.parametrize(
+    "diagnostic_suffix",
+    ["_diagnostic_clean_range_v1", "_diagnostic_fresh_skill_v1"],
+)
 async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
-    session: AsyncSession, seeded_domain: object
+    session: AsyncSession, seeded_domain: object, diagnostic_suffix: str
 ) -> None:
     entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
     assert entity is not None
@@ -540,7 +545,7 @@ async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
     await session.commit()
     token = await _access(session, seeded_domain, "eaa_positioned_diagnostic")
     client = await _client(session)
-    diagnostic_id = f"{endpoint_id(entity)}_diagnostic_clean_range_v1"
+    diagnostic_id = f"{endpoint_id(entity)}{diagnostic_suffix}"
 
     response = await client.post(
         "/alexa/v1/directive",
@@ -1362,8 +1367,14 @@ def test_positioned_cover_diagnostic_is_clean_canonical_range_endpoint() -> None
 
     assert positioned_cover_diagnostic_discovery([entity], "") == []
     assert positioned_cover_diagnostic_discovery([entity], "ev1_wrong") == []
+    fresh_endpoint = fresh_skill_cover_diagnostic_endpoint(entity)
+    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [fresh_endpoint]
+    assert fresh_endpoint["endpointId"] == f"{endpoint_id(entity)}_diagnostic_fresh_skill_v1"
+    assert fresh_endpoint["friendlyName"] == "tenda ufficio skill nuova"
+    assert fresh_endpoint["displayCategories"] == endpoint["displayCategories"]
+    assert fresh_endpoint["capabilities"] == endpoint["capabilities"]
+
     mode_endpoint = discrete_cover_diagnostic_endpoint(entity)
-    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [mode_endpoint]
 
     assert mode_endpoint["endpointId"] == f"{endpoint_id(entity)}_diagnostic_clean_mode_v1"
     assert mode_endpoint["friendlyName"] == "tenda ufficio modalità"
