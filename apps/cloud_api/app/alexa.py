@@ -45,6 +45,8 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
+OFFICE_COVER_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
+OFFICE_COVER_ENDPOINT_SUFFIX = "_cover_v2"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -449,7 +451,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
 
 
 def endpoint_id(entity: Entity) -> str:
-    return f"ev1_{entity.id.hex}"
+    suffix = OFFICE_COVER_ENDPOINT_SUFFIX if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID else ""
+    return f"ev1_{entity.id.hex}{suffix}"
 
 
 def _cover_display_category(entity: Entity) -> str:
@@ -1083,8 +1086,11 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
+        endpoint_uuid = endpoint_value[4:]
+        if endpoint_uuid.endswith(OFFICE_COVER_ENDPOINT_SUFFIX):
+            endpoint_uuid = endpoint_uuid[: -len(OFFICE_COVER_ENDPOINT_SUFFIX)]
         try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
+            entity_uuid = UUID(hex=endpoint_uuid)
         except ValueError as exc:
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
@@ -1097,7 +1103,12 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
-        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+        if (
+            entity is None
+            or entity.ha_registry_id is None
+            or not alexa_entity_eligible(entity)
+            or endpoint_value != endpoint_id(entity)
+        ):
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,

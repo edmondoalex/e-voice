@@ -755,6 +755,45 @@ async def test_discovery_is_tenant_scoped_supported_and_stable_across_rename(
     await client.aclose()
 
 
+async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
+    entity.ha_registry_id = "office-cover"
+    entity.device_class = "shutter"
+    entity.supported_features = 15
+    entity.alexa_cover_mode = "discrete"
+    entity.attributes_json = {"current_position": None}
+    await session.commit()
+
+    historical_endpoint_id = f"ev1_{entity.id.hex}"
+    fresh_endpoint_id = f"{historical_endpoint_id}_cover_v2"
+    assert endpoint_id(entity) == fresh_endpoint_id
+
+    token = await _access(session, seeded_domain)
+    client = await _client(session)
+    discovery = await client.post(
+        "/alexa/v1/directive", json=_directive(token, "Alexa.Discovery", "Discover")
+    )
+    assert discovery.status_code == 200
+    endpoints = discovery.json()["event"]["payload"]["endpoints"]
+    assert [item["endpointId"] for item in endpoints] == [fresh_endpoint_id]
+
+    report_state = _directive(token, "Alexa", "ReportState", fresh_endpoint_id)
+    report_state["directive"]["header"]["messageId"] = "fresh-office-cover"  # type: ignore[index]
+    assert (await client.post("/alexa/v1/directive", json=report_state)).status_code == 200
+
+    historical_report_state = _directive(token, "Alexa", "ReportState", historical_endpoint_id)
+    historical_report_state["directive"]["header"]["messageId"] = "historical-office-cover"  # type: ignore[index]
+    historical_response = await client.post("/alexa/v1/directive", json=historical_report_state)
+    assert historical_response.status_code == 404
+    assert historical_response.json()["detail"] == "NO_SUCH_ENDPOINT"
+    await client.aclose()
+
+
 async def test_discovery_excludes_every_entity_in_voice_name_collision(
     session: AsyncSession, seeded_domain: object
 ) -> None:
