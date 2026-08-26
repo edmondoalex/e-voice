@@ -802,7 +802,7 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
     entity.ha_registry_id = "office-cover"
     entity.device_class = "shutter"
-    entity.supported_features = 3
+    entity.supported_features = 15
     entity.alexa_cover_mode = "discrete"
     entity.attributes_json = {"current_position": None}
     await session.commit()
@@ -1628,7 +1628,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert entity is not None
     entity.ha_domain = "cover"
     entity.ha_registry_id = "stable-discrete-cover"
-    entity.supported_features = 15
+    entity.supported_features = 3
     entity.alexa_cover_mode = "discrete"
     entity.attributes_json = {"current_position": 45}
     await session.commit()
