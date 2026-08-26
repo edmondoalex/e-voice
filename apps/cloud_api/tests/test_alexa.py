@@ -1203,13 +1203,12 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert "Alexa.PowerController" not in discrete_interfaces
     assert "Alexa.RangeController" in discrete_interfaces
     entity.attributes_json = {"current_position": None}
-    assert _command(
-        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 30}, entity
-    ) == {"operation": "set_position", "position": 30}
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 30}, entity) == {
+        "operation": "set_position",
+        "position": 30,
+    }
     assert (
-        _command(
-            "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, entity
-        )
+        _command("Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, entity)
         is None
     )
     entity.attributes_json = {"current_position": 45}
