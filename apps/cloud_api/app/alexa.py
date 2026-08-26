@@ -46,6 +46,8 @@ SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
+POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID = "cover.aqara_shade_dx_porta_ufficio_2"
+POSITIONED_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_range_v1"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -671,6 +673,86 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
         "cookie": {},
         "capabilities": capabilities(entity),
     }
+
+
+def positioned_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build one isolated, canonical RangeController endpoint for runtime diagnosis."""
+    if entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID:
+        raise ValueError("invalid positioned-cover diagnostic entity")
+    endpoint = discovery_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{POSITIONED_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio diagnostica"
+    endpoint["capabilities"] = [
+        _capability("Alexa"),
+        _capability("Alexa.EndpointHealth", ["connectivity"]),
+        _capability("Alexa.RangeController", ["rangeValue"])
+        | {
+            "instance": "Blind.Lift",
+            "capabilityResources": {
+                "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+            },
+            "configuration": {
+                "supportedRange": {
+                    "minimumValue": 0,
+                    "maximumValue": 100,
+                    "precision": 1,
+                },
+                "unitOfMeasure": "Alexa.Unit.Percent",
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close"],
+                        "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 100},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Lower"],
+                        "directive": {
+                            "name": "AdjustRangeValue",
+                            "payload": {
+                                "rangeValueDelta": -10,
+                                "rangeValueDeltaDefault": False,
+                            },
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Raise"],
+                        "directive": {
+                            "name": "AdjustRangeValue",
+                            "payload": {
+                                "rangeValueDelta": 10,
+                                "rangeValueDeltaDefault": False,
+                            },
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 0,
+                    },
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 1, "maximumValue": 100},
+                    },
+                ],
+            },
+        },
+    ]
+    return endpoint
 
 
 def _property(
@@ -1315,8 +1397,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
+        positioned_diagnostic = endpoint_value.endswith(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)
+        canonical_endpoint_value = (
+            endpoint_value[: -len(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)]
+            if positioned_diagnostic
+            else endpoint_value
+        )
         try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
+            entity_uuid = UUID(hex=canonical_endpoint_value[4:])
         except ValueError as exc:
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
@@ -1329,7 +1417,15 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
-        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+        invalid_positioned_diagnostic = positioned_diagnostic and (
+            entity is None or entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
+        )
+        if (
+            entity is None
+            or entity.ha_registry_id is None
+            or not alexa_entity_eligible(entity)
+            or invalid_positioned_diagnostic
+        ):
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1430,6 +1526,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
                 await database.commit()
             advertised = {cap["interface"] for cap in capabilities(entity)}
+            if positioned_diagnostic:
+                advertised = {"Alexa", "Alexa.EndpointHealth", "Alexa.RangeController"}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
                     {

@@ -17,6 +17,7 @@ from apps.cloud_api.app.alexa import (
     capabilities,
     discovery_endpoint,
     endpoint_id,
+    positioned_cover_diagnostic_endpoint,
     state_properties,
 )
 from apps.cloud_api.app.database import get_database_session
@@ -519,6 +520,38 @@ async def test_report_state_response_omits_null_brightness(
     assert response.status_code == 200
     properties = response.json()["context"]["properties"]
     assert all(item["namespace"] != "Alexa.BrightnessController" for item in properties)
+    await client.aclose()
+
+
+async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_entity_id = "cover.aqara_shade_dx_porta_ufficio_2"
+    entity.ha_registry_id = "aqara-positioned-cover"
+    entity.device_class = "curtain"
+    entity.supported_features = 15
+    entity.state = "open"
+    entity.attributes_json = {"current_position": 78}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_positioned_diagnostic")
+    client = await _client(session)
+    diagnostic_id = f"{endpoint_id(entity)}_diagnostic_clean_range_v1"
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa", "ReportState", diagnostic_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["event"]["endpoint"]["endpointId"] == diagnostic_id
+    properties = response.json()["context"]["properties"]
+    range_property = next(item for item in properties if item["name"] == "rangeValue")
+    assert range_property["instance"] == "Blind.Lift"
+    assert range_property["value"] == 78
+    assert all(item["namespace"] != "Alexa.PowerController" for item in properties)
     await client.aclose()
 
 
@@ -1240,6 +1273,57 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     }
     assert _command("Alexa.PowerController", "TurnOn", {}, binary) == {"operation": "open"}
     assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
+
+
+def test_positioned_cover_diagnostic_is_clean_canonical_range_endpoint() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="cover.aqara_shade_dx_porta_ufficio_2",
+        ha_domain="cover",
+        friendly_name="Aqara Shade DX Porta Ufficio",
+        voice_name="tenda ufficio",
+        device_class="curtain",
+        supported_features=15,
+        state="open",
+        attributes_json={"current_position": 78},
+    )
+
+    endpoint = positioned_cover_diagnostic_endpoint(entity)
+
+    assert endpoint["endpointId"] == f"{endpoint_id(entity)}_diagnostic_clean_range_v1"
+    assert endpoint["friendlyName"] == "tenda ufficio diagnostica"
+    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
+    assert [item["interface"] for item in endpoint["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.RangeController",
+    ]
+    controller = endpoint["capabilities"][2]
+    assert controller["instance"] == "Blind.Lift"
+    assert controller["properties"] == {
+        "supported": [{"name": "rangeValue"}],
+        "proactivelyReported": True,
+        "retrievable": True,
+    }
+    assert controller["capabilityResources"] == {
+        "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+    }
+    assert controller["configuration"] == {
+        "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
+        "unitOfMeasure": "Alexa.Unit.Percent",
+    }
+    mappings = controller["semantics"]["actionMappings"]
+    assert {(tuple(item["actions"]), item["directive"]["name"]) for item in mappings} == {
+        (("Alexa.Actions.Close",), "SetRangeValue"),
+        (("Alexa.Actions.Open",), "SetRangeValue"),
+        (("Alexa.Actions.Lower",), "AdjustRangeValue"),
+        (("Alexa.Actions.Raise",), "AdjustRangeValue"),
+    }
+    reported = state_properties(entity)
+    range_property = next(item for item in reported if item["name"] == "rangeValue")
+    assert range_property["instance"] == "Blind.Lift"
+    assert range_property["value"] == 78
 
 
 def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:

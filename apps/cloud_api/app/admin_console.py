@@ -21,8 +21,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa import POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
 from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
-from .alexa_events import reconcile_discovery_safely
+from .alexa_events import (
+    reconcile_discovery_safely,
+    send_positioned_cover_diagnostic_safely,
+)
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
@@ -466,7 +470,12 @@ async def installation_detail(
         else ""
     )
     resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    diagnostic_form = (
+        f'<form method="post" action="/installations/{item.id}/alexa/diagnostic/positioned-cover" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Test Alexa tenda posizionale pulita</button></form>'
+        if any(entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID for entity in entities)
+        else ""
+    )
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{diagnostic_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -504,6 +513,51 @@ async def resync_alexa_discovery(
     outcome = "success" if succeeded else "error"
     return RedirectResponse(
         f"/installations/{installation.id}?alexa_resync={outcome}&sent={sent or 0}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/installations/{installation_id}/alexa/diagnostic/positioned-cover",
+    response_class=RedirectResponse,
+)
+async def diagnostic_positioned_cover(
+    installation_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Publish one isolated positioned-cover endpoint for an Alexa routing test."""
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    entity = await session.scalar(
+        select(Entity).where(
+            Entity.installation_id == installation.id,
+            Entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID,
+            Entity.deleted_at.is_(None),
+        )
+    )
+    if entity is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità diagnostica non trovata")
+    accepted = await send_positioned_cover_diagnostic_safely(session, installation, entity)
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            user_id=context.user_id,
+            source="admin_console",
+            event_type="alexa.discovery.positioned_cover_diagnostic_requested",
+            payload_redacted_json={"accepted_account_count": accepted or 0},
+            result="success" if accepted is not None and accepted > 0 else "error",
+        )
+    )
+    await session.commit()
+    outcome = "success" if accepted is not None and accepted > 0 else "error"
+    return RedirectResponse(
+        f"/installations/{installation.id}?alexa_resync={outcome}&sent={accepted or 0}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
