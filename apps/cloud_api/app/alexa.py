@@ -24,7 +24,7 @@ from .alexa_device_types import is_gate_override, overridden_display_category
 from .alexa_discovery_audit import record_discovery
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
-from .cover_modes import COVER_STOP, effective_cover_mode
+from .cover_modes import COVER_STOP, effective_cover_mode, supports_percentage
 from .database import get_database_session
 from .domain.models import (
     AlexaAccountLink,
@@ -379,7 +379,10 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 },
             }
         ]
-        if effective_cover_mode(entity) in {"percentage", "hybrid"}:
+        # Keep the command and state controllers structurally identical for every
+        # cover that HA says can accept an absolute position.  Runtime feedback
+        # remains optional and is never inferred when current_position is absent.
+        if supports_percentage(entity):
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "PositionState",
                 "capabilityResources": {
@@ -629,9 +632,8 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
             )
         )
     if entity.ha_domain == "cover":
-        mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
-        if mode in {"percentage", "hybrid"} and current_position is not None:
+        if supports_percentage(entity) and current_position is not None:
             props.append(
                 _property(
                     "Alexa.RangeController",
@@ -727,13 +729,15 @@ def _command(
             "color_temp_kelvin": float(payload["colorTemperatureInKelvin"]),
         }
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
-        if entity is None or effective_cover_mode(entity) not in {"percentage", "hybrid"}:
+        if entity is None or not supports_percentage(entity):
             return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
-        if effective_cover_mode(entity) not in {"percentage", "hybrid"}:
+        if not supports_percentage(entity):
             return None
-        current = float((entity.attributes_json or {}).get("current_position", 0))
+        current = _numeric_attribute(entity.attributes_json or {}, "current_position")
+        if current is None:
+            return None
         return {
             "operation": "set_position",
             "position": round(min(100, max(0, current + float(payload["rangeValueDelta"])))),

@@ -1201,7 +1201,18 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     discrete_interfaces = {item["interface"] for item in discrete["capabilities"]}
     assert "Alexa.ModeController" in discrete_interfaces
     assert "Alexa.PowerController" not in discrete_interfaces
-    assert "Alexa.RangeController" not in discrete_interfaces
+    assert "Alexa.RangeController" in discrete_interfaces
+    entity.attributes_json = {"current_position": None}
+    assert _command(
+        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 30}, entity
+    ) == {"operation": "set_position", "position": 30}
+    assert (
+        _command(
+            "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, entity
+        )
+        is None
+    )
+    entity.attributes_json = {"current_position": 45}
     mode = next(
         item for item in discrete["capabilities"] if item["interface"] == "Alexa.ModeController"
     )
@@ -1275,8 +1286,7 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert range_controller["instance"] == "PositionState"
     assert "actionMappings" not in range_controller["semantics"]
     assert endpoint_id(entity) == stable
-    assert discrete != percentage
-    assert percentage == hybrid
+    assert discrete == percentage == hybrid
 
 
 def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
