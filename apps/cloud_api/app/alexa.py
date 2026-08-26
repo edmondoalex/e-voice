@@ -45,7 +45,6 @@ MAX_DIRECTIVE_BYTES = 65_536
 SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
-OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -276,10 +275,6 @@ def _capability(interface: str, properties: list[str] | None = None) -> dict[str
     return value
 
 
-def _is_office_range_ab(entity: Entity) -> bool:
-    return entity.ha_domain == "cover" and entity.ha_entity_id == OFFICE_RANGE_AB_ENTITY_ID
-
-
 def _gate_toggle_capability() -> dict[str, Any]:
     """Model a switch-backed gate as Amazon's generic binary openable device."""
     return _capability("Alexa.ToggleController", ["toggleState"]) | {
@@ -331,277 +326,99 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.ColorTemperatureController", ["colorTemperatureInKelvin"])
             )
     elif entity.ha_domain == "cover":
-        if _is_office_range_ab(entity):
-            result.append(
-                _capability("Alexa.RangeController", ["rangeValue"])
-                | {
-                    "instance": "Blind.Lift",
-                    "capabilityResources": {
+        mode_resources = [
+            {
+                "value": value,
+                "modeResources": {
+                    "friendlyNames": [{"@type": "asset", "value": {"assetId": asset}}]
+                },
+            }
+            for value, asset in (
+                ("UP", "Alexa.Value.Up"),
+                ("DOWN", "Alexa.Value.Down"),
+            )
+        ]
+        if entity.supported_features & COVER_STOP:
+            mode_resources.append(
+                {
+                    "value": "STOP",
+                    "modeResources": {
                         "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Stop"}}
                         ]
-                    },
-                    "configuration": {
-                        "supportedRange": {
-                            "minimumValue": 0,
-                            "maximumValue": 100,
-                            "precision": 1,
-                        },
-                        "unitOfMeasure": "Alexa.Unit.Percent",
-                    },
-                    "semantics": {
-                        "actionMappings": [
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Open"],
-                                "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 100},
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Close"],
-                                "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 0},
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Raise"],
-                                "directive": {
-                                    "name": "AdjustRangeValue",
-                                    "payload": {
-                                        "rangeValueDelta": 10,
-                                        "rangeValueDeltaDefault": False,
-                                    },
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Lower"],
-                                "directive": {
-                                    "name": "AdjustRangeValue",
-                                    "payload": {
-                                        "rangeValueDelta": -10,
-                                        "rangeValueDeltaDefault": False,
-                                    },
-                                },
-                            },
-                        ],
-                        "stateMappings": [
-                            {
-                                "@type": "StatesToValue",
-                                "states": ["Alexa.States.Closed"],
-                                "value": 0,
-                            },
-                            {
-                                "@type": "StatesToRange",
-                                "states": ["Alexa.States.Open"],
-                                "range": {"minimumValue": 1, "maximumValue": 100},
-                            },
-                        ],
                     },
                 }
             )
-            return result
-        mode = effective_cover_mode(entity)
-        if mode == "discrete":
-            result.append(_capability("Alexa.PowerController", ["powerState"]))
-        if mode in {"percentage", "hybrid"}:
-            range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
-                "instance": "Blind.Lift",
+        cover_capabilities = [
+            _capability("Alexa.ModeController")
+            | {
+                "instance": "PositionCommand",
                 "capabilityResources": {
                     "friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}
+                        {
+                            "@type": "text",
+                            "value": {"text": "Position", "locale": "en-US"},
+                        },
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                     ]
                 },
-                "configuration": {
-                    "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1}
-                },
-            }
-            if mode == "percentage":
-                range_capability["semantics"] = {
+                "configuration": {"ordered": False, "supportedModes": mode_resources},
+                "semantics": {
                     "actionMappings": [
                         {
                             "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Open"],
-                            "directive": {
-                                "name": "SetRangeValue",
-                                "payload": {"rangeValue": 100},
-                            },
+                            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                            "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
                         },
                         {
                             "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Close"],
-                            "directive": {
-                                "name": "SetRangeValue",
-                                "payload": {"rangeValue": 0},
-                            },
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Raise"],
-                            "directive": {
-                                "name": "AdjustRangeValue",
-                                "payload": {
-                                    "rangeValueDelta": 10,
-                                    "rangeValueDeltaDefault": False,
-                                },
-                            },
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Lower"],
-                            "directive": {
-                                "name": "AdjustRangeValue",
-                                "payload": {
-                                    "rangeValueDelta": -10,
-                                    "rangeValueDeltaDefault": False,
-                                },
-                            },
+                            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                            "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
                         },
                     ]
-                }
-            result.append(range_capability)
-        if mode in {"discrete", "hybrid"}:
-            discrete = mode == "discrete"
-            open_mode = "Position.Up" if discrete else "position.open"
-            close_mode = "Position.Down" if discrete else "position.closed"
-            capability_friendly_names = (
-                [
-                    {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                    {
-                        "@type": "text",
-                        "value": {"text": "Posizione", "locale": "it-IT"},
-                    },
-                ]
-                if discrete
-                else [
-                    {
-                        "@type": "text",
-                        "value": {"text": "Position", "locale": "en-US"},
-                    },
-                    {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                ]
-            )
-            supported_modes = [
-                {
-                    "value": open_mode,
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                            {
-                                "@type": "text",
-                                "value": {"text": "Aperto", "locale": "it-IT"},
-                            },
-                            {
-                                "@type": "text",
-                                "value": {"text": "Su", "locale": "it-IT"},
-                            },
-                        ]
-                        if discrete
-                        else [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}},
-                        ]
-                    },
                 },
-                {
-                    "value": close_mode,
-                    "modeResources": {
-                        "friendlyNames": [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                            {
-                                "@type": "text",
-                                "value": {"text": "Chiuso", "locale": "it-IT"},
-                            },
-                            {
-                                "@type": "text",
-                                "value": {"text": "Giù", "locale": "it-IT"},
-                            },
-                        ]
-                        if discrete
-                        else [
-                            {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}},
-                        ]
-                    },
-                },
-            ]
-            if not discrete and entity.supported_features & COVER_STOP:
-                supported_modes.append(
-                    {
-                        "value": "position.custom",
-                        "modeResources": {
-                            "friendlyNames": [
-                                {
-                                    "@type": "text",
-                                    "value": {"text": "Custom", "locale": "en-US"},
-                                },
-                                {
-                                    "@type": "asset",
-                                    "value": {"assetId": "Alexa.Setting.Preset"},
-                                },
-                            ]
+            }
+        ]
+        if effective_cover_mode(entity) in {"percentage", "hybrid"}:
+            range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
+                "instance": "PositionState",
+                "capabilityResources": {
+                    "friendlyNames": [
+                        {
+                            "@type": "text",
+                            "value": {"text": "Position", "locale": "en-US"},
                         },
-                    }
-                )
-            result.append(
-                _capability("Alexa.ModeController", ["mode"])
-                | {
-                    "instance": "Blinds.Position" if discrete else "cover.position",
-                    "capabilityResources": {"friendlyNames": capability_friendly_names},
-                    "configuration": {
-                        "ordered": False,
-                        "supportedModes": supported_modes,
-                    },
-                    "semantics": {
-                        "actionMappings": [
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": (
-                                    ["Alexa.Actions.Close", "Alexa.Actions.Lower"]
-                                    if discrete
-                                    else ["Alexa.Actions.Lower", "Alexa.Actions.Close"]
-                                ),
-                                "directive": {
-                                    "name": "SetMode",
-                                    "payload": {"mode": close_mode},
-                                },
-                            },
-                            {
-                                "@type": "ActionsToDirective",
-                                "actions": (
-                                    ["Alexa.Actions.Open", "Alexa.Actions.Raise"]
-                                    if discrete
-                                    else ["Alexa.Actions.Raise", "Alexa.Actions.Open"]
-                                ),
-                                "directive": {
-                                    "name": "SetMode",
-                                    "payload": {"mode": open_mode},
-                                },
-                            },
-                        ],
-                        "stateMappings": [
-                            {
-                                "@type": "StatesToValue",
-                                "states": ["Alexa.States.Closed"],
-                                "value": close_mode,
-                            },
-                            {
-                                "@type": "StatesToValue",
-                                "states": ["Alexa.States.Open"],
-                                "value": open_mode,
-                            },
-                        ],
-                    },
-                }
-            )
+                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                    ]
+                },
+                "configuration": {
+                    "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
+                    "unitOfMeasure": "Alexa.Unit.Percent",
+                },
+                "semantics": {
+                    "stateMappings": [
+                        {
+                            "@type": "StatesToValue",
+                            "states": ["Alexa.States.Closed"],
+                            "value": 0,
+                        },
+                        {
+                            "@type": "StatesToRange",
+                            "states": ["Alexa.States.Open"],
+                            "range": {"minimumValue": 1, "maximumValue": 100},
+                        },
+                    ]
+                },
+            }
+            range_capability["properties"]["proactivelyReported"] = False
+            cover_capabilities.append(range_capability)
         if entity.supported_features & COVER_STOP:
-            result.append(
-                _capability("Alexa.PlaybackController")
-                | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
+            cover_capabilities.append(
+                _capability("Alexa.PlaybackController") | {"supportedOperations": ["Stop"]}
             )
+        endpoint_health = _capability("Alexa.EndpointHealth", ["connectivity"])
+        endpoint_health["properties"]["proactivelyReported"] = False
+        return [*cover_capabilities, endpoint_health, _capability("Alexa")]
     elif entity.ha_domain == "climate":
         thermostat_modes = _climate_supported_modes(entity)
         if _climate_target_temperature(entity) is not None and thermostat_modes:
@@ -765,14 +582,6 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController", "powerState", "ON" if entity.state == "on" else "OFF"
             )
         )
-    elif entity.ha_domain == "cover" and effective_cover_mode(entity) == "discrete":
-        props.append(
-            _property(
-                "Alexa.PowerController",
-                "powerState",
-                "OFF" if entity.state == "off" else "ON",
-            )
-        )
     brightness = _numeric_attribute(attributes, "brightness")
     if entity.ha_domain == "light" and brightness is not None:
         props.append(
@@ -820,40 +629,15 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
             )
         )
     if entity.ha_domain == "cover":
-        mode = "percentage" if _is_office_range_ab(entity) else effective_cover_mode(entity)
+        mode = effective_cover_mode(entity)
         current_position = _numeric_attribute(attributes, "current_position")
-        discrete_position = (
-            "Position.Up"
-            if entity.state == "open"
-            else "Position.Down"
-            if entity.state == "closed"
-            else None
-        )
         if mode in {"percentage", "hybrid"} and current_position is not None:
             props.append(
                 _property(
                     "Alexa.RangeController",
                     "rangeValue",
                     current_position,
-                    instance="Blind.Lift",
-                )
-            )
-        if mode == "discrete" and discrete_position is not None:
-            props.append(
-                _property(
-                    "Alexa.ModeController",
-                    "mode",
-                    discrete_position,
-                    instance="Blinds.Position",
-                )
-            )
-        elif mode == "hybrid" and discrete_position is not None:
-            props.append(
-                _property(
-                    "Alexa.ModeController",
-                    "mode",
-                    "position.open" if entity.state == "open" else "position.closed",
-                    instance="cover.position",
+                    instance="PositionState",
                 )
             )
     if entity.ha_domain == "fan":
@@ -915,12 +699,6 @@ def _command(
         if entity is not None and is_gate_override(entity) and namespace == "Alexa.PowerController":
             return None
         if entity is not None and entity.ha_domain == "cover":
-            if effective_cover_mode(entity) != "discrete":
-                return None
-            if (namespace, name) == ("Alexa.PowerController", "TurnOn"):
-                return {"operation": "open"}
-            if (namespace, name) == ("Alexa.PowerController", "TurnOff"):
-                return {"operation": "close"}
             return None
         if entity is not None and entity.ha_domain == "climate":
             modes = _climate_hvac_modes(entity)
@@ -949,21 +727,11 @@ def _command(
             "color_temp_kelvin": float(payload["colorTemperatureInKelvin"]),
         }
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
-        if entity is not None and _is_office_range_ab(entity):
-            range_value = float(payload["rangeValue"])
-            if range_value == 100:
-                return {"operation": "open"}
-            if range_value == 0:
-                return {"operation": "close"}
-            return {"operation": "set_position", "position": round(range_value)}
         if entity is None or effective_cover_mode(entity) not in {"percentage", "hybrid"}:
             return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
-        if not _is_office_range_ab(entity) and effective_cover_mode(entity) not in {
-            "percentage",
-            "hybrid",
-        }:
+        if effective_cover_mode(entity) not in {"percentage", "hybrid"}:
             return None
         current = float((entity.attributes_json or {}).get("current_position", 0))
         return {
@@ -976,28 +744,14 @@ def _command(
             requested_mode = payload.get("mode")
             operation = gate_modes.get(requested_mode) if isinstance(requested_mode, str) else None
             return {"operation": operation} if operation is not None else None
-        if (
-            entity is None
-            or _is_office_range_ab(entity)
-            or effective_cover_mode(entity) not in {"discrete", "hybrid"}
-        ):
+        if entity is None or entity.ha_domain != "cover":
             return None
         mode_value = payload.get("mode")
-        mode_mapping = (
-            {
-                "Position.Up": "open",
-                "Position.Down": "close",
-                "position.open": "open",
-                "position.closed": "close",
-                "position.custom": "stop" if entity.supported_features & COVER_STOP else None,
-            }
-            if effective_cover_mode(entity) == "discrete"
-            else {
-                "position.open": "open",
-                "position.closed": "close",
-                "position.custom": "stop" if entity.supported_features & COVER_STOP else None,
-            }
-        )
+        mode_mapping = {
+            "UP": "open",
+            "DOWN": "close",
+            "STOP": "stop" if entity.supported_features & COVER_STOP else None,
+        }
         operation = mode_mapping.get(mode_value) if isinstance(mode_value, str) else None
         return {"operation": operation} if operation is not None else None
     if namespace == "Alexa.ToggleController" and entity is not None and is_gate_override(entity):
@@ -1053,18 +807,28 @@ def _command_response_properties(
     properties = state_properties(entity)
     operation = command.get("operation")
     replacements: dict[tuple[str, str], Any] = {}
-    if _is_office_range_ab(entity) and operation in {"open", "close"}:
+    if entity.ha_domain == "cover" and operation in {"open", "close", "stop"}:
         properties = [
             item
             for item in properties
-            if item["namespace"] not in {"Alexa.PowerController", "Alexa.RangeController"}
+            if item["namespace"] not in {"Alexa.ModeController", "Alexa.RangeController"}
+        ]
+        return properties
+    if entity.ha_domain == "cover" and operation == "set_position":
+        properties = [
+            item
+            for item in properties
+            if not (
+                item["namespace"] == "Alexa.RangeController"
+                and item.get("instance") == "PositionState"
+            )
         ]
         properties.append(
             _property(
                 "Alexa.RangeController",
                 "rangeValue",
-                100 if operation == "open" else 0,
-                instance="Blind.Lift",
+                command["position"],
+                instance="PositionState",
             )
         )
         return properties

@@ -180,7 +180,7 @@ def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> Non
 
     assert gate_endpoint["displayCategories"] == cover_endpoint["displayCategories"] == ["OTHER"]
     assert gate_toggle["instance"] == "Gate.Opening"
-    assert cover_mode["instance"] == "Blinds.Position"
+    assert cover_mode["instance"] == "PositionCommand"
     assert gate_toggle["capabilityResources"] != cover_mode["capabilityResources"]
     assert {
         action
@@ -190,4 +190,6 @@ def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> Non
     assert "Alexa.PowerController" not in [
         item["interface"] for item in gate_endpoint["capabilities"]
     ]
-    assert "Alexa.PowerController" in [item["interface"] for item in cover_endpoint["capabilities"]]
+    assert "Alexa.PowerController" not in [
+        item["interface"] for item in cover_endpoint["capabilities"]
+    ]
