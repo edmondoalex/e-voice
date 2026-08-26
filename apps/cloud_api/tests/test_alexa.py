@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import (
     _command,
-    _command_response_properties,
     _digest,
     capabilities,
     discovery_endpoint,
@@ -809,7 +808,7 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     await session.commit()
 
     historical_endpoint_id = f"ev1_{entity.id.hex}"
-    fresh_endpoint_id = f"{historical_endpoint_id}_cover_v2"
+    fresh_endpoint_id = f"{historical_endpoint_id}_openhab_v1"
     assert endpoint_id(entity) == fresh_endpoint_id
 
     token = await _access(session, seeded_domain)
@@ -820,46 +819,39 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     assert discovery.status_code == 200
     endpoints = discovery.json()["event"]["payload"]["endpoints"]
     assert [item["endpointId"] for item in endpoints] == [fresh_endpoint_id]
-    interfaces = [item["interface"] for item in endpoints[0]["capabilities"]]
-    assert interfaces == [
+    endpoint = endpoints[0]
+    assert [capability["interface"] for capability in endpoint["capabilities"]] == [
+        "Alexa.ModeController",
         "Alexa.RangeController",
         "Alexa.PlaybackController",
         "Alexa.EndpointHealth",
         "Alexa",
     ]
-    range_controller = endpoints[0]["capabilities"][0]
-    assert range_controller["instance"] == "PositionState"
-    assert range_controller["semantics"]["actionMappings"] == [
-        {
-            "@type": "ActionsToDirective",
-            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
-            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},
-        },
+    mode_controller, range_controller = endpoint["capabilities"][:2]
+    assert mode_controller["instance"] == "PositionCommand"
+    assert [mode["value"] for mode in mode_controller["configuration"]["supportedModes"]] == [
+        "UP",
+        "DOWN",
+        "STOP",
+    ]
+    assert mode_controller["semantics"]["actionMappings"] == [
         {
             "@type": "ActionsToDirective",
             "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
-            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
+            "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
         },
     ]
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, entity) == {
-        "operation": "open"
+    assert range_controller["instance"] == "PositionState"
+    assert range_controller["configuration"] == {
+        "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
+        "unitOfMeasure": "Alexa.Unit.Percent",
     }
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, entity) == {
-        "operation": "close"
-    }
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
-    open_context = _command_response_properties(entity, {"operation": "open"})
-    close_context = _command_response_properties(entity, {"operation": "close"})
-    assert (
-        next(item["value"] for item in open_context if item["namespace"] == "Alexa.RangeController")
-        == 100
-    )
-    assert (
-        next(
-            item["value"] for item in close_context if item["namespace"] == "Alexa.RangeController"
-        )
-        == 0
-    )
+    assert endpoint["capabilities"][2]["supportedOperations"] == ["Stop"]
 
     report_state = _directive(token, "Alexa", "ReportState", fresh_endpoint_id)
     report_state["directive"]["header"]["messageId"] = "fresh-office-cover"  # type: ignore[index]
