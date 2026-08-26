@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import (
     _command,
+    _command_response_properties,
     _digest,
     capabilities,
     discovery_endpoint,
@@ -819,6 +820,46 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     assert discovery.status_code == 200
     endpoints = discovery.json()["event"]["payload"]["endpoints"]
     assert [item["endpointId"] for item in endpoints] == [fresh_endpoint_id]
+    interfaces = [item["interface"] for item in endpoints[0]["capabilities"]]
+    assert interfaces == [
+        "Alexa.RangeController",
+        "Alexa.PlaybackController",
+        "Alexa.EndpointHealth",
+        "Alexa",
+    ]
+    range_controller = endpoints[0]["capabilities"][0]
+    assert range_controller["instance"] == "PositionState"
+    assert range_controller["semantics"]["actionMappings"] == [
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+            "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
+        },
+    ]
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, entity) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, entity) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
+    open_context = _command_response_properties(entity, {"operation": "open"})
+    close_context = _command_response_properties(entity, {"operation": "close"})
+    assert (
+        next(item["value"] for item in open_context if item["namespace"] == "Alexa.RangeController")
+        == 100
+    )
+    assert (
+        next(
+            item["value"] for item in close_context if item["namespace"] == "Alexa.RangeController"
+        )
+        == 0
+    )
 
     report_state = _directive(token, "Alexa", "ReportState", fresh_endpoint_id)
     report_state["directive"]["header"]["messageId"] = "fresh-office-cover"  # type: ignore[index]

@@ -351,36 +351,38 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 }
             )
-        cover_capabilities = [
-            _capability("Alexa.ModeController")
-            | {
-                "instance": "PositionCommand",
-                "capabilityResources": {
-                    "friendlyNames": [
-                        {
-                            "@type": "text",
-                            "value": {"text": "Position", "locale": "en-US"},
-                        },
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                    ]
-                },
-                "configuration": {"ordered": False, "supportedModes": mode_resources},
-                "semantics": {
-                    "actionMappings": [
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
-                            "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
-                            "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
-                        },
-                    ]
-                },
-            }
-        ]
+        cover_capabilities = []
+        if entity.ha_entity_id != OFFICE_COVER_ENTITY_ID:
+            cover_capabilities.append(
+                _capability("Alexa.ModeController")
+                | {
+                    "instance": "PositionCommand",
+                    "capabilityResources": {
+                        "friendlyNames": [
+                            {
+                                "@type": "text",
+                                "value": {"text": "Position", "locale": "en-US"},
+                            },
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                        ]
+                    },
+                    "configuration": {"ordered": False, "supportedModes": mode_resources},
+                    "semantics": {
+                        "actionMappings": [
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                                "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                                "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
+                            },
+                        ]
+                    },
+                }
+            )
         # Keep the command and state controllers structurally identical for every
         # cover that HA says can accept an absolute position.  Runtime feedback
         # remains optional and is never inferred when current_position is absent.
@@ -415,6 +417,25 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     ]
                 },
             }
+            if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID:
+                range_capability["semantics"]["actionMappings"] = [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 100},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 0},
+                        },
+                    },
+                ]
             range_capability["properties"]["proactivelyReported"] = False
             cover_capabilities.append(range_capability)
         if entity.supported_features & COVER_STOP:
@@ -747,8 +768,17 @@ def _command(
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
         if entity is None or not supports_percentage(entity):
             return None
-        return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
+        position = round(float(payload["rangeValue"]))
+        if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID:
+            if position == 100:
+                return {"operation": "open"}
+            if position == 0:
+                return {"operation": "close"}
+            return None
+        return {"operation": "set_position", "position": position}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
+        if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID:
+            return None
         if not supports_percentage(entity):
             return None
         current = _numeric_attribute(entity.attributes_json or {}, "current_position")
@@ -827,6 +857,28 @@ def _command_response_properties(
     properties = state_properties(entity)
     operation = command.get("operation")
     replacements: dict[tuple[str, str], Any] = {}
+    if (
+        entity.ha_domain == "cover"
+        and entity.ha_entity_id == OFFICE_COVER_ENTITY_ID
+        and operation in {"open", "close"}
+    ):
+        properties = [
+            item
+            for item in properties
+            if not (
+                item["namespace"] == "Alexa.RangeController"
+                and item.get("instance") == "PositionState"
+            )
+        ]
+        properties.append(
+            _property(
+                "Alexa.RangeController",
+                "rangeValue",
+                100 if operation == "open" else 0,
+                instance="PositionState",
+            )
+        )
+        return properties
     if entity.ha_domain == "cover" and operation in {"open", "close", "stop"}:
         properties = [
             item
