@@ -291,6 +291,68 @@ async def test_alexa_resync_rejects_readonly_role(
     await client.aclose()
 
 
+async def test_alexa_remove_all_is_confirmed_csrf_protected_tenant_scoped_and_audited(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    calls: list[UUID] = []
+
+    async def remove(database: AsyncSession, installation: Installation) -> int:
+        assert database is session
+        calls.append(installation.id)
+        return 3
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "apps.cloud_api.app.admin_console.remove_all_discovery_endpoints_safely", remove
+    )
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Rimuovi dispositivi da Alexa" in page.text
+    csrf = _csrf(page)
+    path = f"/installations/{seeded_domain.installation_a_id}/alexa/remove-devices"
+
+    assert (await client.post(path, data={"csrf_token": "invalid"})).status_code == 403
+    assert calls == []
+    assert (await client.post(path, data={"csrf_token": csrf})).status_code == 400
+    assert calls == []
+    foreign = await client.post(
+        f"/installations/{seeded_domain.installation_b_id}/alexa/remove-devices",
+        data={"csrf_token": csrf, "confirmation": "remove_all_alexa_devices"},
+    )
+    assert foreign.status_code == 404
+    assert calls == []
+
+    response = await client.post(
+        path,
+        data={"csrf_token": csrf, "confirmation": "remove_all_alexa_devices"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?alexa_removal=success&removed=3")
+    assert calls == [seeded_domain.installation_a_id]
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.remove_all_requested")
+    )
+    assert audit is not None
+    assert audit.tenant_id == seeded_domain.tenant_a_id
+    assert audit.user_id == seeded_domain.user_a_id
+    assert audit.payload_redacted_json == {"accepted_endpoint_count": 3}
+    await client.aclose()
+
+
+async def test_alexa_remove_all_rejects_readonly_role(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    client = await _client(session)
+    await _login(client, "readonly@example.test", "readonly-password-123")
+    response = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/remove-devices",
+        data={"csrf_token": "irrelevant", "confirmation": "remove_all_alexa_devices"},
+    )
+    assert response.status_code == 403
+    await client.aclose()
+
+
 async def test_alexa_resync_reports_and_audits_gateway_failure(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:

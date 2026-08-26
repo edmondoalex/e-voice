@@ -22,7 +22,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
-from .alexa_events import reconcile_discovery_safely
+from .alexa_events import (
+    reconcile_discovery_safely,
+    remove_all_discovery_endpoints_safely,
+)
 from .auth import TenantContext
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
@@ -465,8 +468,19 @@ async def installation_detail(
         if resync_status == "error"
         else ""
     )
+    removal_status = request.query_params.get("alexa_removal", "")
+    removal_count = request.query_params.get("removed", "0")
+    removal_notice = (
+        f'<p class="ok">Rimozione Alexa accettata: {_e(removal_count)} endpoint inviati.</p>'
+        if removal_status == "success"
+        else '<p class="bad">Rimozione dei dispositivi Alexa non riuscita.</p>'
+        if removal_status == "error"
+        else ""
+    )
     resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
+    removal_form = f'<form method="post" action="/installations/{item.id}/alexa/remove-devices" class="actions" onsubmit="return window.confirm(\'Rimuovere tutti i dispositivi Ekonex da Alexa? Potrai ripubblicarli con Risincronizza Alexa.\')"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="confirmation" value="remove_all_alexa_devices"><button>Rimuovi dispositivi da Alexa</button></form>'
     body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    body = f"{removal_notice}{removal_form}{body}"
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -504,6 +518,44 @@ async def resync_alexa_discovery(
     outcome = "success" if succeeded else "error"
     return RedirectResponse(
         f"/installations/{installation.id}?alexa_resync={outcome}&sent={sent or 0}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/installations/{installation_id}/alexa/remove-devices", response_class=RedirectResponse
+)
+async def remove_alexa_devices(
+    installation_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Remove Alexa endpoints without deleting Ekonex entities or history."""
+    _admin(context)
+    installation = await _installation(session, context, installation_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    if values.get("confirmation") != "remove_all_alexa_devices":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Conferma richiesta")
+    removed = await remove_all_discovery_endpoints_safely(session, installation)
+    succeeded = removed is not None
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            user_id=context.user_id,
+            source="admin_console",
+            event_type="alexa.discovery.remove_all_requested",
+            payload_redacted_json={"accepted_endpoint_count": removed or 0},
+            result="success" if succeeded else "error",
+        )
+    )
+    await session.commit()
+    outcome = "success" if succeeded else "error"
+    return RedirectResponse(
+        f"/installations/{installation.id}?alexa_removal={outcome}&removed={removed or 0}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

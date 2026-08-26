@@ -119,6 +119,59 @@ async def test_no_event_authorization_means_no_advertised_delivery_target(
     await client.aclose()
 
 
+async def test_remove_all_endpoints_preserves_ledger_until_forced_resync(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    link = AlexaAccountLink(
+        tenant_id=seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
+        user_id=seeded_domain.user_a_id,  # type: ignore[attr-defined]
+        provider_subject="remove-all-subject",
+    )
+    installation = await session.get(
+        Installation,
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+    )
+    assert installation is not None
+    session.add(link)
+    await session.commit()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.amazon.com":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "remove-access",
+                    "refresh_token": "remove-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        requests.append(request)
+        return httpx.Response(202)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = AlexaEventGateway(
+        session,
+        client=client,
+        settings=Settings(alexa_token_encryption_key="remove-all-encryption-key"),
+    )
+    await gateway.accept_grant(link, "remove-all-grant")
+    assert await gateway.reconcile_discovery(installation) == 1
+    delivery = (await session.scalars(select(AlexaDiscoveryDelivery))).one()
+    assert delivery.removed_at is None
+
+    assert await gateway.remove_all_discovery_endpoints(installation) == 1
+    removed = json.loads(requests[-1].content)
+    assert removed["event"]["header"]["name"] == "DeleteReport"
+    assert removed["event"]["payload"]["endpoints"] == [{"endpointId": delivery.alexa_endpoint_id}]
+    await session.refresh(delivery)
+    assert delivery.removed_at is None
+    assert await gateway.reconcile_discovery(installation) == 0
+    assert await gateway.reconcile_discovery(installation, force=True) == 1
+    assert json.loads(requests[-1].content)["event"]["header"]["name"] == "AddOrUpdateReport"
+    await client.aclose()
+
+
 async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     session: AsyncSession, seeded_domain: object
 ) -> None:
