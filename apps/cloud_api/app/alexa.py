@@ -46,6 +46,11 @@ SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
+POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID = "cover.aqara_shade_dx_porta_ufficio_2"
+POSITIONED_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_range_v1"
+DISCRETE_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_mode_v1"
+FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_fresh_skill_v1"
+OPENHAB_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_openhab_rollershutter_v1"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -673,6 +678,295 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     }
 
 
+def positioned_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build one isolated, canonical RangeController endpoint for runtime diagnosis."""
+    if entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID:
+        raise ValueError("invalid positioned-cover diagnostic entity")
+    endpoint = discovery_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{POSITIONED_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio diagnostica"
+    endpoint["capabilities"] = [
+        _capability("Alexa"),
+        _capability("Alexa.EndpointHealth", ["connectivity"]),
+        _capability("Alexa.RangeController", ["rangeValue"])
+        | {
+            "instance": "Blind.Lift",
+            "capabilityResources": {
+                "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+            },
+            "configuration": {
+                "supportedRange": {
+                    "minimumValue": 0,
+                    "maximumValue": 100,
+                    "precision": 1,
+                },
+                "unitOfMeasure": "Alexa.Unit.Percent",
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close"],
+                        "directive": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 100},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Lower"],
+                        "directive": {
+                            "name": "AdjustRangeValue",
+                            "payload": {
+                                "rangeValueDelta": -10,
+                                "rangeValueDeltaDefault": False,
+                            },
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Raise"],
+                        "directive": {
+                            "name": "AdjustRangeValue",
+                            "payload": {
+                                "rangeValueDelta": 10,
+                                "rangeValueDeltaDefault": False,
+                            },
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 0,
+                    },
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 1, "maximumValue": 100},
+                    },
+                ],
+            },
+        },
+    ]
+    return endpoint
+
+
+def positioned_cover_diagnostic_discovery(
+    entities: list[Entity], configured_endpoint_id: str
+) -> list[dict[str, Any]]:
+    """Return the opt-in diagnostic endpoint for a complete Discover.Response."""
+    if not configured_endpoint_id:
+        return []
+    matching_entities = [
+        entity
+        for entity in entities
+        if entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
+        and endpoint_id(entity) == configured_endpoint_id
+    ]
+    return [
+        diagnostic_endpoint
+        for entity in matching_entities
+        for diagnostic_endpoint in (
+            fresh_skill_cover_diagnostic_endpoint(entity),
+            openhab_cover_diagnostic_endpoint(entity),
+        )
+    ]
+
+
+def fresh_skill_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build a fresh-ID clone of the canonical Range endpoint for skill isolation."""
+    endpoint = positioned_cover_diagnostic_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio skill nuova"
+    return endpoint
+
+
+def openhab_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build an isolated endpoint matching openHAB's Rollershutter contract."""
+    if entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID:
+        raise ValueError("invalid openHAB-cover diagnostic entity")
+    endpoint = discovery_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{OPENHAB_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio openhab"
+    endpoint["displayCategories"] = ["INTERIOR_BLIND"]
+    resources = {
+        "friendlyNames": [
+            {"@type": "text", "value": {"text": "Position", "locale": "en-US"}},
+            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+        ]
+    }
+    endpoint["capabilities"] = [
+        _capability("Alexa.ModeController")
+        | {
+            "instance": "PositionCommand",
+            "capabilityResources": resources,
+            "configuration": {
+                "ordered": False,
+                "supportedModes": [
+                    {
+                        "value": "UP",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Up"}}
+                            ]
+                        },
+                    },
+                    {
+                        "value": "DOWN",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Down"}}
+                            ]
+                        },
+                    },
+                    {
+                        "value": "STOP",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Stop"}}
+                            ]
+                        },
+                    },
+                ],
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                        "directive": {"name": "SetMode", "payload": {"mode": "DOWN"}},
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                        "directive": {"name": "SetMode", "payload": {"mode": "UP"}},
+                    },
+                ]
+            },
+        },
+        _capability("Alexa.RangeController", ["rangeValue"])
+        | {
+            "properties": {
+                "supported": [{"name": "rangeValue"}],
+                "proactivelyReported": False,
+                "retrievable": True,
+            },
+            "instance": "PositionState",
+            "capabilityResources": resources,
+            "configuration": {
+                "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
+                "unitOfMeasure": "Alexa.Unit.Percent",
+            },
+            "semantics": {
+                "stateMappings": [
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 1, "maximumValue": 100},
+                    },
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 0,
+                    },
+                ]
+            },
+        },
+        _capability("Alexa.PlaybackController") | {"supportedOperations": ["Stop"]},
+        _capability("Alexa.EndpointHealth", ["connectivity"])
+        | {
+            "properties": {
+                "supported": [{"name": "connectivity"}],
+                "proactivelyReported": False,
+                "retrievable": True,
+            }
+        },
+        _capability("Alexa"),
+    ]
+    return endpoint
+
+
+def discrete_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build an isolated endpoint matching Amazon's canonical discrete-blinds model."""
+    if entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID:
+        raise ValueError("invalid discrete-cover diagnostic entity")
+    endpoint = discovery_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{DISCRETE_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio modalità"
+    endpoint["capabilities"] = [
+        _capability("Alexa"),
+        _capability("Alexa.EndpointHealth", ["connectivity"]),
+        _capability("Alexa.ModeController", ["mode"])
+        | {
+            "instance": "Blinds.Position",
+            "capabilityResources": {
+                "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+            },
+            "configuration": {
+                "ordered": False,
+                "supportedModes": [
+                    {
+                        "value": "Position.Up",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                            ]
+                        },
+                    },
+                    {
+                        "value": "Position.Down",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}
+                            ]
+                        },
+                    },
+                ],
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                        "directive": {
+                            "name": "SetMode",
+                            "payload": {"mode": "Position.Down"},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                        "directive": {
+                            "name": "SetMode",
+                            "payload": {"mode": "Position.Up"},
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": "Position.Down",
+                    },
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Open"],
+                        "value": "Position.Up",
+                    },
+                ],
+            },
+        },
+    ]
+    return endpoint
+
+
 def _property(
     namespace: str, name: str, value: Any, *, instance: str | None = None
 ) -> dict[str, Any]:
@@ -1294,6 +1588,9 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             [entity for entity in entities if alexa_entity_eligible(entity)]
         )
         published = [(entity, discovery_endpoint(entity)) for entity in entities]
+        diagnostic_endpoints = positioned_cover_diagnostic_discovery(
+            entities, get_settings().alexa_discovery_diagnostic_endpoint_id
+        )
         response = _event(
             {
                 "namespace": "Alexa.Discovery",
@@ -1301,7 +1598,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 "payloadVersion": "3",
                 "messageId": str(uuid4()),
             },
-            {"endpoints": [endpoint for _, endpoint in published]},
+            {"endpoints": [endpoint for _, endpoint in published] + diagnostic_endpoints},
         )
         try:
             await record_discovery(database, link.tenant_id, link.id, installations, published)
@@ -1315,8 +1612,30 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
+        fresh_skill_diagnostic = endpoint_value.endswith(FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX)
+        openhab_diagnostic = endpoint_value.endswith(OPENHAB_COVER_DIAGNOSTIC_SUFFIX)
+        positioned_diagnostic = (
+            endpoint_value.endswith(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)
+            or fresh_skill_diagnostic
+            or openhab_diagnostic
+        )
+        discrete_diagnostic = endpoint_value.endswith(DISCRETE_COVER_DIAGNOSTIC_SUFFIX)
+        diagnostic_suffix = (
+            DISCRETE_COVER_DIAGNOSTIC_SUFFIX
+            if discrete_diagnostic
+            else OPENHAB_COVER_DIAGNOSTIC_SUFFIX
+            if openhab_diagnostic
+            else FRESH_SKILL_COVER_DIAGNOSTIC_SUFFIX
+            if fresh_skill_diagnostic
+            else POSITIONED_COVER_DIAGNOSTIC_SUFFIX
+        )
+        canonical_endpoint_value = (
+            endpoint_value[: -len(diagnostic_suffix)]
+            if positioned_diagnostic or discrete_diagnostic
+            else endpoint_value
+        )
         try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
+            entity_uuid = UUID(hex=canonical_endpoint_value[4:])
         except ValueError as exc:
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
@@ -1329,7 +1648,15 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
-        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+        invalid_positioned_diagnostic = (positioned_diagnostic or discrete_diagnostic) and (
+            entity is None or entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
+        )
+        if (
+            entity is None
+            or entity.ha_registry_id is None
+            or not alexa_entity_eligible(entity)
+            or invalid_positioned_diagnostic
+        ):
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1374,6 +1701,47 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 result="success",
             )
         if header["namespace"] == "Alexa" and header["name"] == "ReportState":
+            report_properties = state_properties(entity)
+            if discrete_diagnostic:
+                report_properties = [
+                    item
+                    for item in report_properties
+                    if item["namespace"] == "Alexa.EndpointHealth"
+                ]
+                mode = (
+                    "Position.Up"
+                    if entity.state == "open"
+                    else "Position.Down"
+                    if entity.state == "closed"
+                    else None
+                )
+                if mode is not None:
+                    report_properties.append(
+                        _property(
+                            "Alexa.ModeController",
+                            "mode",
+                            mode,
+                            instance="Blinds.Position",
+                        )
+                    )
+            elif openhab_diagnostic:
+                report_properties = [
+                    item
+                    for item in report_properties
+                    if item["namespace"] == "Alexa.EndpointHealth"
+                ]
+                current_position = _numeric_attribute(
+                    entity.attributes_json or {}, "current_position"
+                )
+                if current_position is not None:
+                    report_properties.append(
+                        _property(
+                            "Alexa.RangeController",
+                            "rangeValue",
+                            current_position,
+                            instance="PositionState",
+                        )
+                    )
             response = _event(
                 {
                     "namespace": "Alexa",
@@ -1384,7 +1752,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 },
                 {},
                 {"endpointId": endpoint_value},
-                state_properties(entity),
+                report_properties,
             )
         else:
             command_payload = directive.get("payload", {})
@@ -1404,6 +1772,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     },
                 )
             spec = _command(header["namespace"], header["name"], command_payload, entity)
+            if discrete_diagnostic and header["namespace"] == "Alexa.ModeController":
+                diagnostic_modes = {"Position.Up": "open", "Position.Down": "close"}
+                operation = diagnostic_modes.get(command_payload.get("mode"))
+                spec = {"operation": operation} if operation is not None else None
+            if openhab_diagnostic and header["namespace"] == "Alexa.ModeController":
+                diagnostic_modes = {"UP": "open", "DOWN": "close", "STOP": "stop"}
+                operation = diagnostic_modes.get(command_payload.get("mode"))
+                spec = {"operation": operation} if operation is not None else None
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1430,6 +1806,20 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
                 await database.commit()
             advertised = {cap["interface"] for cap in capabilities(entity)}
+            if positioned_diagnostic:
+                advertised = (
+                    {
+                        "Alexa",
+                        "Alexa.EndpointHealth",
+                        "Alexa.ModeController",
+                        "Alexa.RangeController",
+                        "Alexa.PlaybackController",
+                    }
+                    if openhab_diagnostic
+                    else {"Alexa", "Alexa.EndpointHealth", "Alexa.RangeController"}
+                )
+            elif discrete_diagnostic:
+                advertised = {"Alexa", "Alexa.EndpointHealth", "Alexa.ModeController"}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
                     {
@@ -1470,6 +1860,36 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         {"endpointId": endpoint_value},
                     )
                 else:
+                    response_properties = _command_response_properties(entity, spec)
+                    if discrete_diagnostic:
+                        response_properties = [
+                            item
+                            for item in response_properties
+                            if item["namespace"] == "Alexa.EndpointHealth"
+                        ]
+                        response_properties.append(
+                            _property(
+                                "Alexa.ModeController",
+                                "mode",
+                                "Position.Up" if spec["operation"] == "open" else "Position.Down",
+                                instance="Blinds.Position",
+                            )
+                        )
+                    elif openhab_diagnostic:
+                        response_properties = [
+                            item
+                            for item in response_properties
+                            if item["namespace"] == "Alexa.EndpointHealth"
+                        ]
+                        if header["namespace"] == "Alexa.RangeController":
+                            response_properties.append(
+                                _property(
+                                    "Alexa.RangeController",
+                                    "rangeValue",
+                                    command_payload["rangeValue"],
+                                    instance="PositionState",
+                                )
+                            )
                     response = _event(
                         {
                             "namespace": "Alexa",
@@ -1480,7 +1900,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         },
                         {},
                         {"endpointId": endpoint_value},
-                        _command_response_properties(entity, spec),
+                        response_properties,
                     )
     if diagnostic_correlation_id is not None:
         response_event = response["event"]

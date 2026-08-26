@@ -378,6 +378,48 @@ class AlexaEventGateway:
             await self._session.commit()
         return sent
 
+    async def send_positioned_cover_diagnostic(
+        self, installation: Installation, entity: Entity
+    ) -> int:
+        """Publish only the isolated clean RangeController diagnostic endpoint."""
+        from .alexa import (
+            POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID,
+            positioned_cover_diagnostic_endpoint,
+        )
+
+        if (
+            entity.installation_id != installation.id
+            or entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
+            or entity.deleted_at is not None
+        ):
+            raise ValueError("invalid positioned-cover diagnostic entity")
+        endpoint = positioned_cover_diagnostic_endpoint(entity)
+        event = self._discovery_event("AddOrUpdateReport", [endpoint])
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        accepted = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            if authorization is not None and await self._send(
+                authorization, event, diagnostic_installation=installation
+            ):
+                accepted += 1
+        await self._session.commit()
+        return accepted
+
     @staticmethod
     def _discovery_event(name: str, endpoints: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -565,6 +607,25 @@ async def reconcile_discovery_safely(
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
         logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        return None
+    finally:
+        await gateway.close()
+
+
+async def send_positioned_cover_diagnostic_safely(
+    session: AsyncSession, installation: Installation, entity: Entity
+) -> int | None:
+    """Run the isolated positioned-cover diagnostic without affecting normal reconciliation."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.send_positioned_cover_diagnostic(installation, entity)
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Alexa positioned-cover diagnostic failed installation_id=%s entity_id=%s",
+            installation.id,
+            entity.id,
+        )
         return None
     finally:
         await gateway.close()
