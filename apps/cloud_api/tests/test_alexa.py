@@ -1396,6 +1396,20 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
         "Alexa.RangeController",
     ]
 
+    experimental.state = "open"
+    experimental.attributes_json = {"current_position": None}
+    range_capability = next(
+        item for item in capabilities(experimental) if item["interface"] == "Alexa.RangeController"
+    )
+    assert range_capability["properties"] == {
+        "supported": [{"name": "rangeValue"}],
+        "proactivelyReported": True,
+        "retrievable": True,
+    }
+    assert not any(
+        item["namespace"] == "Alexa.RangeController" for item in state_properties(experimental)
+    )
+
     normal = Entity(
         id=uuid4(),
         installation_id=installation_id,

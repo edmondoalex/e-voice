@@ -106,6 +106,24 @@ async def test_climate_inventory_includes_current_temperature(hass: HomeAssistan
     await sync.async_stop()
 
 
+async def test_cover_inventory_preserves_current_position(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "cover", "test", "stable-cover-position", suggested_object_id="office"
+    )
+    hass.states.async_set(
+        entry.entity_id,
+        "open",
+        {"current_position": 37, "supported_features": 15},
+    )
+    sync = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+
+    item = sync._serialize(entry)
+
+    assert item is not None
+    assert item["attributes"] == {"current_position": 37}
+
+
 async def test_zero_selected_entities_sends_explicit_empty_snapshot(
     hass: HomeAssistant,
 ) -> None:

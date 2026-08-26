@@ -332,12 +332,8 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         if _is_office_range_ab(entity):
-            current_position = _numeric_attribute(attributes, "current_position")
             result.append(
-                _capability(
-                    "Alexa.RangeController",
-                    ["rangeValue"] if current_position is not None else None,
-                )
+                _capability("Alexa.RangeController", ["rangeValue"])
                 | {
                     "instance": "cover.position",
                     "capabilityResources": {

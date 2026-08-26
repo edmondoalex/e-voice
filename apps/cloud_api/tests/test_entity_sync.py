@@ -88,6 +88,40 @@ async def test_cover_device_class_survives_inventory_database_and_discovery(
     assert discovery_endpoint(entity)["displayCategories"] == ["EXTERIOR_BLIND"]
 
 
+async def test_office_cover_null_position_survives_sync_and_still_declares_range(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    cover_item = {
+        **item(registry_id="registry-office-cover", state="unknown"),
+        "entity_id": "cover.buspro_cover_porta_ufficio",
+        "domain": "cover",
+        "device_class": "shutter",
+        "supported_features": 15,
+        "attributes": {"current_position": None},
+    }
+
+    await EntitySyncService(session, installation).apply_full(1, [cover_item])
+
+    entity = (
+        await session.scalars(
+            select(Entity).where(Entity.ha_registry_id == "registry-office-cover")
+        )
+    ).one()
+    assert entity.attributes_json == {"current_position": None}
+    range_controller = next(
+        capability
+        for capability in discovery_endpoint(entity)["capabilities"]
+        if capability["interface"] == "Alexa.RangeController"
+    )
+    assert range_controller["properties"] == {
+        "supported": [{"name": "rangeValue"}],
+        "proactivelyReported": True,
+        "retrievable": True,
+    }
+
+
 async def test_inventory_commit_triggers_proactive_discovery_reconciliation(
     session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
