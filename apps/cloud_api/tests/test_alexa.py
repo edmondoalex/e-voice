@@ -1628,7 +1628,7 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
     assert entity is not None
     entity.ha_domain = "cover"
     entity.ha_registry_id = "stable-discrete-cover"
-    entity.supported_features = 3
+    entity.supported_features = 11
     entity.alexa_cover_mode = "discrete"
     entity.attributes_json = {"current_position": 45}
     await session.commit()
