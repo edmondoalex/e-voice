@@ -1,0 +1,192 @@
+name: Apply Amazon cover semantics fix
+
+on:
+  push:
+    branches: [fix/amazon-cover-range-semantics]
+    paths:
+      - .github/workflows/amazon-cover-semantics-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/amazon-cover-range-semantics
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Patch Amazon-requested cover semantics
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("apps/cloud_api/app/alexa.py")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''        if _is_office_range_ab(entity):
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
+            result.append(
+                _capability("Alexa.RangeController", ["rangeValue"])
+                | {
+                    "instance": "cover.position",
+                    "capabilityResources": {
+                        "friendlyNames": [
+                            {
+                                "@type": "text",
+                                "value": {"text": "Position", "locale": "en-US"},
+                            },
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                        ]
+                    },
+                    "configuration": {
+                        "supportedRange": {
+                            "minimumValue": 0,
+                            "maximumValue": 100,
+                            "precision": 1,
+                        },
+                        "unitOfMeasure": "Alexa.Unit.Percent",
+                    },
+                    "semantics": {
+                        "actionMappings": [
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 0},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 100},
+                                },
+                            },
+                        ],
+                        "stateMappings": [
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Closed"],
+                                "value": 0,
+                            },
+                            {
+                                "@type": "StatesToRange",
+                                "states": ["Alexa.States.Open"],
+                                "range": {"minimumValue": 1, "maximumValue": 100},
+                            },
+                        ],
+                    },
+                }
+            )
+            if entity.supported_features & COVER_STOP:
+                result.append(
+                    _capability("Alexa.PlaybackController") | {"supportedOperations": ["Stop"]}
+                )
+            return result
+'''
+
+          new = '''        if _is_office_range_ab(entity):
+            result.append(
+                _capability("Alexa.RangeController", ["rangeValue"])
+                | {
+                    "instance": "cover.position",
+                    "capabilityResources": {
+                        "friendlyNames": [
+                            {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+                        ]
+                    },
+                    "configuration": {
+                        "supportedRange": {
+                            "minimumValue": 0,
+                            "maximumValue": 100,
+                            "precision": 1,
+                        },
+                        "unitOfMeasure": "Alexa.Unit.Percent",
+                    },
+                    "semantics": {
+                        "actionMappings": [
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Open"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 100},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Close"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 0},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Raise"],
+                                "directive": {
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": 10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Lower"],
+                                "directive": {
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": -10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
+                                },
+                            },
+                        ],
+                        "stateMappings": [
+                            {
+                                "@type": "StatesToValue",
+                                "states": ["Alexa.States.Closed"],
+                                "value": 0,
+                            },
+                            {
+                                "@type": "StatesToRange",
+                                "states": ["Alexa.States.Open"],
+                                "range": {"minimumValue": 1, "maximumValue": 100},
+                            },
+                        ],
+                    },
+                }
+            )
+            return result
+'''
+
+          if old not in text:
+              raise SystemExit("Expected office RangeController block not found")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+
+          test_path = Path("apps/cloud_api/tests/test_amazon_cover_semantics.py")
+          test_path.write_text('''"""Regression tests for the Amazon-confirmed blind semantics registration shape."""\n\nfrom uuid import uuid4\n\nfrom apps.cloud_api.app.alexa import capabilities, discovery_endpoint\nfrom apps.cloud_api.app.domain.models import Entity\n\n\ndef _office_cover() -> Entity:\n    return Entity(\n        id=uuid4(),\n        installation_id=uuid4(),\n        ha_entity_id="cover.buspro_cover_porta_ufficio",\n        ha_domain="cover",\n        friendly_name="Porta ufficio",\n        device_class="blind",\n        supported_features=15,\n        alexa_cover_mode="percentage",\n        state="open",\n        attributes_json={"current_position": 42},\n        available=True,\n    )\n\n\ndef test_office_cover_uses_minimal_rangecontroller_capability_set() -> None:\n    endpoint = discovery_endpoint(_office_cover())\n    interfaces = [item["interface"] for item in endpoint["capabilities"]]\n    assert interfaces == ["Alexa", "Alexa.EndpointHealth", "Alexa.RangeController"]\n    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]\n\n\ndef test_office_cover_semantics_are_nested_and_use_interface_native_directives() -> None:\n    range_controller = next(\n        item for item in capabilities(_office_cover()) if item["interface"] == "Alexa.RangeController"\n    )\n    assert range_controller["instance"] == "cover.position"\n    assert range_controller["properties"] == {\n        "supported": [{"name": "rangeValue"}],\n        "proactivelyReported": True,\n        "retrievable": True,\n    }\n    mappings = {\n        mapping["actions"][0]: mapping["directive"]\n        for mapping in range_controller["semantics"]["actionMappings"]\n    }\n    assert mappings == {\n        "Alexa.Actions.Open": {"name": "SetRangeValue", "payload": {"rangeValue": 100}},\n        "Alexa.Actions.Close": {"name": "SetRangeValue", "payload": {"rangeValue": 0}},\n        "Alexa.Actions.Raise": {\n            "name": "AdjustRangeValue",\n            "payload": {"rangeValueDelta": 10, "rangeValueDeltaDefault": False},\n        },\n        "Alexa.Actions.Lower": {\n            "name": "AdjustRangeValue",\n            "payload": {"rangeValueDelta": -10, "rangeValueDeltaDefault": False},\n        },\n    }\n    assert set(mappings) == {\n        "Alexa.Actions.Open",\n        "Alexa.Actions.Close",\n        "Alexa.Actions.Raise",\n        "Alexa.Actions.Lower",\n    }\n''', encoding="utf-8")
+
+          Path(".github/workflows/amazon-cover-semantics-fix.yml").unlink()
+      - name: Format and run focused tests
+        run: |
+          python -m pip install -e ".[dev]"
+          ruff format apps/cloud_api/app/alexa.py apps/cloud_api/tests/test_amazon_cover_semantics.py
+          ruff check apps/cloud_api/app/alexa.py apps/cloud_api/tests/test_amazon_cover_semantics.py
+          pytest -q apps/cloud_api/tests/test_amazon_cover_semantics.py
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: align blind range semantics with Amazon registry"
+          git push origin HEAD:fix/amazon-cover-range-semantics
