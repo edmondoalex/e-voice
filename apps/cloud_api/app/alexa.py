@@ -332,9 +332,12 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             )
     elif entity.ha_domain == "cover":
         if _is_office_range_ab(entity):
-            result.append(_capability("Alexa.PowerController", ["powerState"]))
+            current_position = _numeric_attribute(attributes, "current_position")
             result.append(
-                _capability("Alexa.RangeController", ["rangeValue"])
+                _capability(
+                    "Alexa.RangeController",
+                    ["rangeValue"] if current_position is not None else None,
+                )
                 | {
                     "instance": "cover.position",
                     "capabilityResources": {
@@ -358,7 +361,15 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                         "actionMappings": [
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Lower", "Alexa.Actions.Close"],
+                                "actions": ["Alexa.Actions.Open"],
+                                "directive": {
+                                    "name": "SetRangeValue",
+                                    "payload": {"rangeValue": 100},
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Close"],
                                 "directive": {
                                     "name": "SetRangeValue",
                                     "payload": {"rangeValue": 0},
@@ -366,10 +377,24 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             },
                             {
                                 "@type": "ActionsToDirective",
-                                "actions": ["Alexa.Actions.Raise", "Alexa.Actions.Open"],
+                                "actions": ["Alexa.Actions.Raise"],
                                 "directive": {
-                                    "name": "SetRangeValue",
-                                    "payload": {"rangeValue": 100},
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": 10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
+                                },
+                            },
+                            {
+                                "@type": "ActionsToDirective",
+                                "actions": ["Alexa.Actions.Lower"],
+                                "directive": {
+                                    "name": "AdjustRangeValue",
+                                    "payload": {
+                                        "rangeValueDelta": -10,
+                                        "rangeValueDeltaDefault": False,
+                                    },
                                 },
                             },
                         ],
@@ -388,10 +413,6 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 }
             )
-            if entity.supported_features & COVER_STOP:
-                result.append(
-                    _capability("Alexa.PlaybackController") | {"supportedOperations": ["Stop"]}
-                )
             return result
         mode = effective_cover_mode(entity)
         if mode == "discrete":
@@ -947,9 +968,10 @@ def _command(
             return None
         return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
-        if _is_office_range_ab(entity):
-            return None
-        if effective_cover_mode(entity) not in {"percentage", "hybrid"}:
+        if not _is_office_range_ab(entity) and effective_cover_mode(entity) not in {
+            "percentage",
+            "hybrid",
+        }:
             return None
         current = float((entity.attributes_json or {}).get("current_position", 0))
         return {
