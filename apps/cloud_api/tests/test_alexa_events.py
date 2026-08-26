@@ -218,7 +218,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert renamed["event"]["payload"]["endpoints"][0]["friendlyName"] == "luce cucina nuova"
 
     entity.ha_domain = "cover"
-    entity.supported_features = 7
+    entity.supported_features = 3
     entity.attributes_json = {"current_position": 45}
     entity.alexa_cover_mode = "discrete"
     await session.commit()
@@ -239,6 +239,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
     assert discrete_actions.count("Alexa.Actions.Close") == 1
 
     entity.alexa_cover_mode = "hybrid"
+    entity.supported_features = 7
     await session.commit()
     assert await gateway.reconcile_discovery(installation) == 1
     hybrid = json.loads(requests[-1].content)["event"]["payload"]["endpoints"][0]
