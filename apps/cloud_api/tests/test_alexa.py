@@ -1265,8 +1265,8 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         "STOP",
     ]
     assert hybrid_mode["semantics"]["actionMappings"][0]["actions"] == [
-        "Alexa.Actions.Lower",
         "Alexa.Actions.Close",
+        "Alexa.Actions.Lower",
     ]
     assert not any(item["interface"] == "Alexa.PowerController" for item in hybrid["capabilities"])
     range_controller = next(

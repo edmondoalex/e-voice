@@ -88,14 +88,14 @@ async def test_cover_device_class_survives_inventory_database_and_discovery(
     assert discovery_endpoint(entity)["displayCategories"] == ["EXTERIOR_BLIND"]
 
 
-async def test_office_cover_null_position_survives_sync_and_still_declares_range(
+async def test_positioned_cover_null_position_survives_sync_and_still_declares_range(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
     assert installation is not None
     cover_item = {
-        **item(registry_id="registry-office-cover", state="unknown"),
-        "entity_id": "cover.buspro_cover_porta_ufficio",
+        **item(registry_id="registry-positioned-cover", state="unknown"),
+        "entity_id": "cover.positioned_without_feedback",
         "domain": "cover",
         "device_class": "shutter",
         "supported_features": 15,
@@ -106,7 +106,7 @@ async def test_office_cover_null_position_survives_sync_and_still_declares_range
 
     entity = (
         await session.scalars(
-            select(Entity).where(Entity.ha_registry_id == "registry-office-cover")
+            select(Entity).where(Entity.ha_registry_id == "registry-positioned-cover")
         )
     ).one()
     assert entity.attributes_json == {"current_position": None}
@@ -117,7 +117,7 @@ async def test_office_cover_null_position_survives_sync_and_still_declares_range
     )
     assert range_controller["properties"] == {
         "supported": [{"name": "rangeValue"}],
-        "proactivelyReported": True,
+        "proactivelyReported": False,
         "retrievable": True,
     }
 
