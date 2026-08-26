@@ -808,7 +808,7 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     await session.commit()
 
     historical_endpoint_id = f"ev1_{entity.id.hex}"
-    fresh_endpoint_id = f"{historical_endpoint_id}_openhab_v1"
+    fresh_endpoint_id = f"{historical_endpoint_id}_openhab_exact_v2"
     assert endpoint_id(entity) == fresh_endpoint_id
 
     token = await _access(session, seeded_domain)
@@ -820,6 +820,7 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     endpoints = discovery.json()["event"]["payload"]["endpoints"]
     assert [item["endpointId"] for item in endpoints] == [fresh_endpoint_id]
     endpoint = endpoints[0]
+    assert endpoint["displayCategories"] == ["INTERIOR_BLIND"]
     assert [capability["interface"] for capability in endpoint["capabilities"]] == [
         "Alexa.ModeController",
         "Alexa.RangeController",
@@ -829,6 +830,11 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
     ]
     mode_controller, range_controller = endpoint["capabilities"][:2]
     assert mode_controller["instance"] == "PositionCommand"
+    expected_capability_names = [
+        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Position"}},
+        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+    ]
+    assert mode_controller["capabilityResources"]["friendlyNames"] == expected_capability_names
     assert [mode["value"] for mode in mode_controller["configuration"]["supportedModes"]] == [
         "UP",
         "DOWN",
@@ -847,11 +853,49 @@ async def test_office_cover_uses_fresh_endpoint_id_and_rejects_historical_id(
         },
     ]
     assert range_controller["instance"] == "PositionState"
+    assert range_controller["capabilityResources"]["friendlyNames"] == expected_capability_names
     assert range_controller["configuration"] == {
         "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
         "unitOfMeasure": "Alexa.Unit.Percent",
     }
+    assert range_controller["semantics"]["stateMappings"] == [
+        {
+            "@type": "StatesToValue",
+            "states": ["Alexa.States.Closed"],
+            "value": 100,
+        },
+        {
+            "@type": "StatesToRange",
+            "states": ["Alexa.States.Open"],
+            "range": {"minimumValue": 0, "maximumValue": 99},
+        },
+    ]
     assert endpoint["capabilities"][2]["supportedOperations"] == ["Stop"]
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, entity) == {
+        "operation": "open"
+    }
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, entity) == {
+        "operation": "close"
+    }
+    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, entity) is None
+    entity.state = "open"
+    assert (
+        next(
+            prop["value"]
+            for prop in state_properties(entity)
+            if prop["namespace"] == "Alexa.RangeController"
+        )
+        == 0
+    )
+    entity.state = "closed"
+    assert (
+        next(
+            prop["value"]
+            for prop in state_properties(entity)
+            if prop["namespace"] == "Alexa.RangeController"
+        )
+        == 100
+    )
 
     report_state = _directive(token, "Alexa", "ReportState", fresh_endpoint_id)
     report_state["directive"]["header"]["messageId"] = "fresh-office-cover"  # type: ignore[index]

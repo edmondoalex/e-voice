@@ -46,7 +46,7 @@ SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 OFFICE_COVER_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
-OFFICE_COVER_ENDPOINT_SUFFIX = "_openhab_v1"
+OFFICE_COVER_ENDPOINT_SUFFIX = "_openhab_exact_v2"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -328,6 +328,20 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.ColorTemperatureController", ["colorTemperatureInKelvin"])
             )
     elif entity.ha_domain == "cover":
+        position_capability_names = (
+            [
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Position"}},
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+            ]
+            if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID
+            else [
+                {
+                    "@type": "text",
+                    "value": {"text": "Position", "locale": "en-US"},
+                },
+                {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
+            ]
+        )
         mode_resources = [
             {
                 "value": value,
@@ -355,15 +369,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             _capability("Alexa.ModeController")
             | {
                 "instance": "PositionCommand",
-                "capabilityResources": {
-                    "friendlyNames": [
-                        {
-                            "@type": "text",
-                            "value": {"text": "Position", "locale": "en-US"},
-                        },
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                    ]
-                },
+                "capabilityResources": {"friendlyNames": position_capability_names},
                 "configuration": {"ordered": False, "supportedModes": mode_resources},
                 "semantics": {
                     "actionMappings": [
@@ -387,15 +393,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
         if supports_percentage(entity):
             range_capability = _capability("Alexa.RangeController", ["rangeValue"]) | {
                 "instance": "PositionState",
-                "capabilityResources": {
-                    "friendlyNames": [
-                        {
-                            "@type": "text",
-                            "value": {"text": "Position", "locale": "en-US"},
-                        },
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                    ]
-                },
+                "capabilityResources": {"friendlyNames": position_capability_names},
                 "configuration": {
                     "supportedRange": {"minimumValue": 0, "maximumValue": 100, "precision": 1},
                     "unitOfMeasure": "Alexa.Unit.Percent",
@@ -415,6 +413,19 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     ]
                 },
             }
+            if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID:
+                range_capability["semantics"]["stateMappings"] = [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 100,
+                    },
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 0, "maximumValue": 99},
+                    },
+                ]
             range_capability["properties"]["proactivelyReported"] = False
             cover_capabilities.append(range_capability)
         if entity.supported_features & COVER_STOP:
@@ -474,7 +485,9 @@ def _cover_display_category(entity: Entity) -> str:
 
 def discovery_endpoint(entity: Entity) -> dict[str, Any]:
     category = (
-        overridden_display_category(entity)
+        "INTERIOR_BLIND"
+        if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID
+        else overridden_display_category(entity)
         or {
             "light": "LIGHT",
             "switch": "SWITCH",
@@ -654,7 +667,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 _property(
                     "Alexa.RangeController",
                     "rangeValue",
-                    100 if entity.state == "open" else 0,
+                    0 if entity.state == "open" else 100,
                     instance="PositionState",
                 )
             )
@@ -747,7 +760,14 @@ def _command(
     if namespace == "Alexa.RangeController" and name == "SetRangeValue":
         if entity is None or not supports_percentage(entity):
             return None
-        return {"operation": "set_position", "position": round(float(payload["rangeValue"]))}
+        position = round(float(payload["rangeValue"]))
+        if entity.ha_entity_id == OFFICE_COVER_ENTITY_ID:
+            if position == 0:
+                return {"operation": "open"}
+            if position == 100:
+                return {"operation": "close"}
+            return None
+        return {"operation": "set_position", "position": position}
     if namespace == "Alexa.RangeController" and name == "AdjustRangeValue" and entity is not None:
         if not supports_percentage(entity):
             return None
