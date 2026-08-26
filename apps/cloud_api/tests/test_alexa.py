@@ -1242,7 +1242,7 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
 
 
-def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
+def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
     installation_id = uuid4()
     experimental = Entity(
         id=uuid4(),
@@ -1287,13 +1287,9 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
                     "proactivelyReported": True,
                     "retrievable": True,
                 },
-                "instance": "cover.position",
+                "instance": "Blind.Lift",
                 "capabilityResources": {
                     "friendlyNames": [
-                        {
-                            "@type": "text",
-                            "value": {"text": "Position", "locale": "en-US"},
-                        },
                         {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
                     ]
                 },
@@ -1368,7 +1364,7 @@ def test_office_cover_alone_uses_home_assistant_position_profile() -> None:
         if item["namespace"] == "Alexa.RangeController"
     ]
     assert len(range_properties) == 1
-    assert range_properties[0]["instance"] == "cover.position"
+    assert range_properties[0]["instance"] == "Blind.Lift"
     assert range_properties[0]["name"] == "rangeValue"
     assert range_properties[0]["value"] == 40
     assert _command(
