@@ -1275,7 +1275,8 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
     assert range_controller["instance"] == "PositionState"
     assert "actionMappings" not in range_controller["semantics"]
     assert endpoint_id(entity) == stable
-    assert discrete != percentage != hybrid
+    assert discrete != percentage
+    assert percentage == hybrid
 
 
 def test_cover_mode_does_not_advertise_unsupported_stop_or_position() -> None:
