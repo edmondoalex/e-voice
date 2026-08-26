@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 OFFICE_RANGE_AB_ENTITY_ID = "cover.buspro_cover_porta_ufficio"
 POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID = "cover.aqara_shade_dx_porta_ufficio_2"
 POSITIONED_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_range_v1"
+DISCRETE_COVER_DIAGNOSTIC_SUFFIX = "_diagnostic_clean_mode_v1"
 HA_TO_ALEXA_THERMOSTAT_MODE = {
     "off": "OFF",
     "heat": "HEAT",
@@ -762,11 +763,85 @@ def positioned_cover_diagnostic_discovery(
     if not configured_endpoint_id:
         return []
     return [
-        positioned_cover_diagnostic_endpoint(entity)
+        discrete_cover_diagnostic_endpoint(entity)
         for entity in entities
         if entity.ha_entity_id == POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
         and endpoint_id(entity) == configured_endpoint_id
     ]
+
+
+def discrete_cover_diagnostic_endpoint(entity: Entity) -> dict[str, Any]:
+    """Build an isolated endpoint matching Amazon's canonical discrete-blinds model."""
+    if entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID:
+        raise ValueError("invalid discrete-cover diagnostic entity")
+    endpoint = discovery_endpoint(entity)
+    endpoint["endpointId"] = f"{endpoint_id(entity)}{DISCRETE_COVER_DIAGNOSTIC_SUFFIX}"
+    endpoint["friendlyName"] = "tenda ufficio modalità"
+    endpoint["capabilities"] = [
+        _capability("Alexa"),
+        _capability("Alexa.EndpointHealth", ["connectivity"]),
+        _capability("Alexa.ModeController", ["mode"])
+        | {
+            "instance": "Blinds.Position",
+            "capabilityResources": {
+                "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}}]
+            },
+            "configuration": {
+                "ordered": False,
+                "supportedModes": [
+                    {
+                        "value": "Position.Up",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}
+                            ]
+                        },
+                    },
+                    {
+                        "value": "Position.Down",
+                        "modeResources": {
+                            "friendlyNames": [
+                                {"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}
+                            ]
+                        },
+                    },
+                ],
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                        "directive": {
+                            "name": "SetMode",
+                            "payload": {"mode": "Position.Down"},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                        "directive": {
+                            "name": "SetMode",
+                            "payload": {"mode": "Position.Up"},
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": "Position.Down",
+                    },
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Open"],
+                        "value": "Position.Up",
+                    },
+                ],
+            },
+        },
+    ]
+    return endpoint
 
 
 def _property(
@@ -1415,9 +1490,15 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         if not endpoint_value.startswith("ev1_"):
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
         positioned_diagnostic = endpoint_value.endswith(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)
+        discrete_diagnostic = endpoint_value.endswith(DISCRETE_COVER_DIAGNOSTIC_SUFFIX)
+        diagnostic_suffix = (
+            DISCRETE_COVER_DIAGNOSTIC_SUFFIX
+            if discrete_diagnostic
+            else POSITIONED_COVER_DIAGNOSTIC_SUFFIX
+        )
         canonical_endpoint_value = (
-            endpoint_value[: -len(POSITIONED_COVER_DIAGNOSTIC_SUFFIX)]
-            if positioned_diagnostic
+            endpoint_value[: -len(diagnostic_suffix)]
+            if positioned_diagnostic or discrete_diagnostic
             else endpoint_value
         )
         try:
@@ -1434,7 +1515,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
-        invalid_positioned_diagnostic = positioned_diagnostic and (
+        invalid_positioned_diagnostic = (positioned_diagnostic or discrete_diagnostic) and (
             entity is None or entity.ha_entity_id != POSITIONED_COVER_DIAGNOSTIC_ENTITY_ID
         )
         if (
@@ -1487,6 +1568,29 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 result="success",
             )
         if header["namespace"] == "Alexa" and header["name"] == "ReportState":
+            report_properties = state_properties(entity)
+            if discrete_diagnostic:
+                report_properties = [
+                    item
+                    for item in report_properties
+                    if item["namespace"] == "Alexa.EndpointHealth"
+                ]
+                mode = (
+                    "Position.Up"
+                    if entity.state == "open"
+                    else "Position.Down"
+                    if entity.state == "closed"
+                    else None
+                )
+                if mode is not None:
+                    report_properties.append(
+                        _property(
+                            "Alexa.ModeController",
+                            "mode",
+                            mode,
+                            instance="Blinds.Position",
+                        )
+                    )
             response = _event(
                 {
                     "namespace": "Alexa",
@@ -1497,7 +1601,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 },
                 {},
                 {"endpointId": endpoint_value},
-                state_properties(entity),
+                report_properties,
             )
         else:
             command_payload = directive.get("payload", {})
@@ -1517,6 +1621,10 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     },
                 )
             spec = _command(header["namespace"], header["name"], command_payload, entity)
+            if discrete_diagnostic and header["namespace"] == "Alexa.ModeController":
+                diagnostic_modes = {"Position.Up": "open", "Position.Down": "close"}
+                operation = diagnostic_modes.get(command_payload.get("mode"))
+                spec = {"operation": operation} if operation is not None else None
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1545,6 +1653,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             advertised = {cap["interface"] for cap in capabilities(entity)}
             if positioned_diagnostic:
                 advertised = {"Alexa", "Alexa.EndpointHealth", "Alexa.RangeController"}
+            elif discrete_diagnostic:
+                advertised = {"Alexa", "Alexa.EndpointHealth", "Alexa.ModeController"}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
                     {
@@ -1585,6 +1695,21 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         {"endpointId": endpoint_value},
                     )
                 else:
+                    response_properties = _command_response_properties(entity, spec)
+                    if discrete_diagnostic:
+                        response_properties = [
+                            item
+                            for item in response_properties
+                            if item["namespace"] == "Alexa.EndpointHealth"
+                        ]
+                        response_properties.append(
+                            _property(
+                                "Alexa.ModeController",
+                                "mode",
+                                "Position.Up" if spec["operation"] == "open" else "Position.Down",
+                                instance="Blinds.Position",
+                            )
+                        )
                     response = _event(
                         {
                             "namespace": "Alexa",
@@ -1595,7 +1720,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         },
                         {},
                         {"endpointId": endpoint_value},
-                        _command_response_properties(entity, spec),
+                        response_properties,
                     )
     if diagnostic_correlation_id is not None:
         response_event = response["event"]

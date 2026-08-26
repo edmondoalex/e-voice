@@ -16,6 +16,7 @@ from apps.cloud_api.app.alexa import (
     _digest,
     capabilities,
     discovery_endpoint,
+    discrete_cover_diagnostic_endpoint,
     endpoint_id,
     positioned_cover_diagnostic_discovery,
     positioned_cover_diagnostic_endpoint,
@@ -553,6 +554,39 @@ async def test_positioned_cover_diagnostic_endpoint_resolves_for_report_state(
     assert range_property["instance"] == "Blind.Lift"
     assert range_property["value"] == 78
     assert all(item["namespace"] != "Alexa.PowerController" for item in properties)
+    await client.aclose()
+
+
+async def test_discrete_cover_diagnostic_reports_only_canonical_mode(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert entity is not None
+    entity.ha_domain = "cover"
+    entity.ha_entity_id = "cover.aqara_shade_dx_porta_ufficio_2"
+    entity.ha_registry_id = "aqara-discrete-diagnostic"
+    entity.device_class = "curtain"
+    entity.supported_features = 15
+    entity.state = "open"
+    entity.attributes_json = {"current_position": 78}
+    await session.commit()
+    token = await _access(session, seeded_domain, "eaa_discrete_diagnostic")
+    client = await _client(session)
+    diagnostic_id = f"{endpoint_id(entity)}_diagnostic_clean_mode_v1"
+
+    response = await client.post(
+        "/alexa/v1/directive",
+        json=_directive(token, "Alexa", "ReportState", diagnostic_id),
+    )
+
+    assert response.status_code == 200
+    properties = response.json()["context"]["properties"]
+    assert [(item["namespace"], item["name"]) for item in properties] == [
+        ("Alexa.EndpointHealth", "connectivity"),
+        ("Alexa.ModeController", "mode"),
+    ]
+    assert properties[1]["instance"] == "Blinds.Position"
+    assert properties[1]["value"] == "Position.Up"
     await client.aclose()
 
 
@@ -1328,7 +1362,47 @@ def test_positioned_cover_diagnostic_is_clean_canonical_range_endpoint() -> None
 
     assert positioned_cover_diagnostic_discovery([entity], "") == []
     assert positioned_cover_diagnostic_discovery([entity], "ev1_wrong") == []
-    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [endpoint]
+    mode_endpoint = discrete_cover_diagnostic_endpoint(entity)
+    assert positioned_cover_diagnostic_discovery([entity], endpoint_id(entity)) == [mode_endpoint]
+
+    assert mode_endpoint["endpointId"] == f"{endpoint_id(entity)}_diagnostic_clean_mode_v1"
+    assert mode_endpoint["friendlyName"] == "tenda ufficio modalità"
+    assert [item["interface"] for item in mode_endpoint["capabilities"]] == [
+        "Alexa",
+        "Alexa.EndpointHealth",
+        "Alexa.ModeController",
+    ]
+    mode_controller = mode_endpoint["capabilities"][2]
+    assert mode_controller["instance"] == "Blinds.Position"
+    assert mode_controller["configuration"] == {
+        "ordered": False,
+        "supportedModes": [
+            {
+                "value": "Position.Up",
+                "modeResources": {
+                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Open"}}]
+                },
+            },
+            {
+                "value": "Position.Down",
+                "modeResources": {
+                    "friendlyNames": [{"@type": "asset", "value": {"assetId": "Alexa.Value.Close"}}]
+                },
+            },
+        ],
+    }
+    assert mode_controller["semantics"]["actionMappings"] == [
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Down"}},
+        },
+        {
+            "@type": "ActionsToDirective",
+            "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+            "directive": {"name": "SetMode", "payload": {"mode": "Position.Up"}},
+        },
+    ]
 
 
 def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
