@@ -40,7 +40,7 @@ def test_gate_override_discovers_amazon_toggle_open_close_contract() -> None:
     entity = _switch(alexa_device_type="gate")
     endpoint = discovery_endpoint(entity)
 
-    assert endpoint["displayCategories"] == ["OTHER"]
+    assert endpoint["displayCategories"] == ["DOOR"]
     interfaces = [item["interface"] for item in endpoint["capabilities"]]
     assert "Alexa.ToggleController" in interfaces
     assert "Alexa.ModeController" not in interfaces
@@ -58,11 +58,10 @@ def test_gate_override_discovers_amazon_toggle_open_close_contract() -> None:
             "proactivelyReported": True,
             "retrievable": True,
         },
-        "instance": "Gate.Opening",
+        "instance": "door.opening",
         "capabilityResources": {
             "friendlyNames": [
                 {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
             ]
         },
         "semantics": {
@@ -108,7 +107,7 @@ def test_gate_state_reports_open_closed_toggle() -> None:
     entity = _switch(alexa_device_type="gate", state="off")
     props = state_properties(entity)
     toggle = next(item for item in props if item["namespace"] == "Alexa.ToggleController")
-    assert toggle["instance"] == "Gate.Opening"
+    assert toggle["instance"] == "door.opening"
     assert toggle["value"] == "OFF"
 
     entity.state = "on"
@@ -178,8 +177,9 @@ def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> Non
         if item["interface"] == "Alexa.ModeController"
     )
 
-    assert gate_endpoint["displayCategories"] == cover_endpoint["displayCategories"] == ["OTHER"]
-    assert gate_toggle["instance"] == "Gate.Opening"
+    assert gate_endpoint["displayCategories"] == ["DOOR"]
+    assert cover_endpoint["displayCategories"] == ["OTHER"]
+    assert gate_toggle["instance"] == "door.opening"
     assert cover_mode["instance"] == "Blinds.Position"
     assert gate_toggle["capabilityResources"] != cover_mode["capabilityResources"]
     assert {

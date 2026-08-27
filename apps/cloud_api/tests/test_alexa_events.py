@@ -1,6 +1,7 @@
 """Proactive Alexa Event Gateway authorization and delivery tests."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -9,7 +10,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud_api.app.alexa_events import AlexaEventGateway
+from apps.cloud_api.app.alexa import discovery_endpoint
+from apps.cloud_api.app.alexa_events import (
+    PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX,
+    PAPERINO_DIAGNOSTIC_ENTITY_ID,
+    PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX,
+    AlexaEventGateway,
+    _ensure_diagnostic_logger,
+)
 from apps.cloud_api.app.config import Settings
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -19,6 +27,30 @@ from apps.cloud_api.app.domain.models import (
     Entity,
     Installation,
 )
+
+
+def test_alexa_event_diagnostics_reach_api_handler_with_root_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[logging.LogRecord] = []
+
+    class RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    module_logger = logging.getLogger("apps.cloud_api.app.alexa_events")
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    handler = RecordingHandler()
+    monkeypatch.setattr(module_logger, "handlers", [])
+    monkeypatch.setattr(module_logger, "propagate", True)
+    monkeypatch.setattr(uvicorn_logger, "handlers", [handler])
+    monkeypatch.setattr(logging.getLogger(), "level", logging.WARNING)
+
+    _ensure_diagnostic_logger()
+    module_logger.info("alexa_resync_logging_probe")
+
+    assert [record.getMessage() for record in records] == ["alexa_resync_logging_probe"]
+    assert module_logger.propagate is False
 
 
 async def test_change_report_refresh_retry_and_idempotency(
@@ -120,7 +152,7 @@ async def test_no_event_authorization_means_no_advertised_delivery_target(
 
 
 async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
-    session: AsyncSession, seeded_domain: object
+    session: AsyncSession, seeded_domain: object, caplog: pytest.LogCaptureFixture
 ) -> None:
     link = AlexaAccountLink(
         tenant_id=seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
@@ -159,6 +191,7 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
         client=client,
         settings=Settings(alexa_token_encryption_key="proactive-test-encryption-key"),
     )
+    caplog.set_level("INFO", logger="apps.cloud_api.app.alexa_events")
     await gateway.accept_grant(link, "one-use-grant")
 
     assert await gateway.reconcile_discovery(installation) == 1
@@ -198,12 +231,26 @@ async def test_proactive_discovery_add_rename_irrelevant_change_and_delete(
         == (forced["event"]["payload"]["endpoints"])
     )
     assert diagnostic_payload["http_status"] == 202
+    assert diagnostic_payload["accepted_endpoint_count"] == 1
     assert diagnostic_payload["response_body"] == {
         "accepted": True,
         "credentials": {"token": "[REDACTED]"},
     }
     assert diagnostic_payload["error"] is None
     assert "amazon-access-secret" not in json.dumps(diagnostic_payload)
+    assert "alexa_add_or_update_endpoint" in caplog.text
+    assert endpoint_value in caplog.text
+    assert '"friendly_name":"Kitchen"' in caplog.text
+    assert '"interface":"Alexa.PowerController"' in caplog.text
+    assert "alexa_add_or_update_response" in caplog.text
+    assert "alexa_event_gateway_request" in caplog.text
+    assert "event_type=AddOrUpdateReport" in caplog.text
+    assert "endpoint_count=1" in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "accepted_endpoint_count=1" in caplog.text
+    assert "alexa_resync_completed" in caplog.text
+    assert "accepted_add_or_update_count=1" in caplog.text
+    assert "amazon-access-secret" not in caplog.text
 
     entity.state = "on"
     await session.commit()
@@ -343,4 +390,175 @@ async def test_proactive_discovery_gateway_error_is_secret_free_and_retryable(
     )
     assert "never-log-amazon" not in json.dumps(diagnostic.payload_redacted_json)
     assert "never-log-amazon" not in caplog.text
+    await client.aclose()
+
+
+async def test_forced_gate_resync_logs_complete_endpoint_and_amazon_response_safely(
+    session: AsyncSession,
+    seeded_domain: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    link = AlexaAccountLink(
+        tenant_id=seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
+        user_id=seeded_domain.user_a_id,  # type: ignore[attr-defined]
+        provider_subject="gate-resync-diagnostic-subject",
+    )
+    installation = await session.get(
+        Installation,
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+    )
+    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
+    assert installation is not None and entity is not None
+    entity.ha_domain = "switch"
+    entity.ha_entity_id = PAPERINO_DIAGNOSTIC_ENTITY_ID
+    entity.voice_name = "paperino"
+    entity.alexa_device_type = "gate"
+    session.add(link)
+    await session.commit()
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.amazon.com":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "gate-access-secret",
+                    "refresh_token": "gate-refresh-secret",
+                    "expires_in": 3600,
+                },
+            )
+        requests.append(request)
+        return httpx.Response(
+            202,
+            json={"requestId": "amazon-request-42"},
+            headers={"x-amzn-requestid": "amazon-header-request-42"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = AlexaEventGateway(
+        session,
+        client=client,
+        settings=Settings(alexa_token_encryption_key="gate-resync-encryption-key"),
+    )
+    caplog.set_level("INFO", logger="apps.cloud_api.app.alexa_events")
+    await gateway.accept_grant(link, "one-use-grant")
+
+    assert await gateway.reconcile_discovery(installation, force=True) == 1
+    assert "alexa_add_or_update_gate_payload" in caplog.text
+    assert '"friendlyName":"paperino"' in caplog.text
+    assert '"displayCategories":["DOOR"]' in caplog.text
+    assert '"interface":"Alexa.ToggleController"' in caplog.text
+    assert '"instance":"door.opening"' in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert "accepted_endpoint_count=1" in caplog.text
+    assert 'response_body={"requestId":"amazon-request-42"}' in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
+
+    caplog.clear()
+    original_endpoint_id = str(discovery_endpoint(entity)["endpointId"])
+    expected_endpoint = discovery_endpoint(entity)
+    expected_endpoint["endpointId"] += PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX
+    assert await gateway.send_paperino_diagnostic_v2(installation, entity) == 1
+    diagnostic_request = json.loads(requests[-1].content)
+    assert diagnostic_request["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert diagnostic_request["event"]["payload"]["endpoints"] == [expected_endpoint]
+    assert len(diagnostic_request["event"]["payload"]["endpoints"]) == 1
+    assert "alexa_diagnostic_single_endpoint_payload" in caplog.text
+    assert "alexa_diagnostic_single_endpoint_http_payload" in caplog.text
+    assert str(expected_endpoint["endpointId"]) in caplog.text
+    assert f"original_endpoint_id={original_endpoint_id}" in caplog.text
+    assert f"diagnostic_endpoint_id={expected_endpoint['endpointId']}" in caplog.text
+    assert "endpoint_count=1" in caplog.text
+    assert '"friendlyName":"paperino"' in caplog.text
+    assert '"displayCategories":["DOOR"]' in caplog.text
+    assert '"interface":"Alexa.ToggleController"' in caplog.text
+    assert '"instance":"door.opening"' in caplog.text
+    assert '"token":"[REDACTED]"' in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
+
+    caplog.clear()
+    expected_v3 = discovery_endpoint(entity)
+    expected_v3["endpointId"] += PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX
+    expected_v3["displayCategories"] = ["EXTERIOR_BLIND"]
+    expected_v3["capabilities"] = expected_v3["capabilities"][:2] + [
+        {
+            "type": "AlexaInterface",
+            "interface": "Alexa.RangeController",
+            "version": "3",
+            "properties": {
+                "supported": [{"name": "rangeValue"}],
+                "proactivelyReported": True,
+                "retrievable": True,
+            },
+            "instance": "cover.position",
+            "capabilityResources": {
+                "friendlyNames": [
+                    {
+                        "@type": "asset",
+                        "value": {"assetId": "Alexa.Setting.Opening"},
+                    }
+                ]
+            },
+            "configuration": {
+                "supportedRange": {
+                    "minimumValue": 0,
+                    "maximumValue": 100,
+                    "precision": 1,
+                }
+            },
+            "semantics": {
+                "actionMappings": [
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Close"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 0},
+                        },
+                    },
+                    {
+                        "@type": "ActionsToDirective",
+                        "actions": ["Alexa.Actions.Open"],
+                        "directive": {
+                            "name": "SetRangeValue",
+                            "payload": {"rangeValue": 100},
+                        },
+                    },
+                ],
+                "stateMappings": [
+                    {
+                        "@type": "StatesToValue",
+                        "states": ["Alexa.States.Closed"],
+                        "value": 0,
+                    },
+                    {
+                        "@type": "StatesToRange",
+                        "states": ["Alexa.States.Open"],
+                        "range": {"minimumValue": 1, "maximumValue": 100},
+                    },
+                ],
+            },
+        }
+    ]
+    assert await gateway.send_paperino_diagnostic_v3(installation, entity) == 1
+    v3_request = json.loads(requests[-1].content)
+    assert v3_request["event"]["header"]["name"] == "AddOrUpdateReport"
+    assert v3_request["event"]["payload"]["endpoints"] == [expected_v3]
+    assert len(v3_request["event"]["payload"]["endpoints"]) == 1
+    assert "unitOfMeasure" not in json.dumps(expected_v3)
+    assert "Alexa.ToggleController" not in json.dumps(expected_v3)
+    assert "alexa_diagnostic_v3_payload" in caplog.text
+    assert "alexa_diagnostic_v3_http_payload" in caplog.text
+    assert "alexa_diagnostic_v3_completed" in caplog.text
+    assert "endpoint_count=1" in caplog.text
+    assert "http_status=202" in caplog.text
+    assert "amazon_request_id=amazon-header-request-42" in caplog.text
+    assert "gate-access-secret" not in caplog.text
+    assert "gate-refresh-secret" not in caplog.text
     await client.aclose()

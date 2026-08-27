@@ -22,6 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alexa_device_types import is_gate_override, overridden_display_category
 from .alexa_discovery_audit import record_discovery
+from .alexa_events import (
+    PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX,
+    PAPERINO_DIAGNOSTIC_ENTITY_ID,
+    PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX,
+    ensure_info_logger,
+)
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
 from .cover_modes import COVER_STOP, effective_cover_mode
@@ -278,11 +284,10 @@ def _capability(interface: str, properties: list[str] | None = None) -> dict[str
 def _gate_toggle_capability() -> dict[str, Any]:
     """Model a switch-backed gate as Amazon's generic binary openable device."""
     return _capability("Alexa.ToggleController", ["toggleState"]) | {
-        "instance": "Gate.Opening",
+        "instance": "door.opening",
         "capabilityResources": {
             "friendlyNames": [
                 {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                {"@type": "text", "value": {"text": "Cancello", "locale": "it-IT"}},
             ]
         },
         "semantics": {
@@ -676,7 +681,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.ToggleController",
                 "toggleState",
                 "ON" if entity.state == "on" else "OFF",
-                instance="Gate.Opening",
+                instance="door.opening",
             )
         )
     elif entity.ha_domain in {"light", "switch", "fan"}:
@@ -952,6 +957,39 @@ def _command(
     return None
 
 
+def _paperino_diagnostic_v3_command(
+    namespace: str, name: str, payload: dict[str, Any], entity: Entity
+) -> dict[str, object] | None:
+    """Map only the binary values advertised by the isolated v3 endpoint."""
+    if (
+        entity.ha_entity_id != PAPERINO_DIAGNOSTIC_ENTITY_ID
+        or not is_gate_override(entity)
+        or namespace != "Alexa.RangeController"
+        or name != "SetRangeValue"
+    ):
+        return None
+    value = payload.get("rangeValue")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if numeric == 100:
+        return {"operation": "power_on"}
+    if numeric == 0:
+        return {"operation": "power_off"}
+    return None
+
+
+def _paperino_diagnostic_v3_property(operation: object) -> dict[str, Any] | None:
+    if operation not in {"power_on", "power_off"}:
+        return None
+    return _property(
+        "Alexa.RangeController",
+        "rangeValue",
+        100 if operation == "power_on" else 0,
+        instance="cover.position",
+    )
+
+
 def _command_response_properties(
     entity: Entity, command: dict[str, object]
 ) -> list[dict[str, Any]]:
@@ -970,7 +1008,7 @@ def _command_response_properties(
                 "Alexa.ToggleController",
                 "toggleState",
                 "ON" if operation == "power_on" else "OFF",
-                instance="Gate.Opening",
+                instance="door.opening",
             )
         )
         return properties
@@ -1046,6 +1084,25 @@ def _diagnostic_payload(value: object) -> object:
     return str(value)
 
 
+_DIRECTIVE_DIAGNOSTIC_PAYLOAD_KEYS = {
+    "mode",
+    "rangeValue",
+    "rangeValueDelta",
+    "targetSetpoint",
+    "thermostatMode",
+}
+
+
+def _directive_diagnostic_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _diagnostic_payload(item)
+        for key, item in value.items()
+        if str(key) in _DIRECTIVE_DIAGNOSTIC_PAYLOAD_KEYS
+    }
+
+
 def _sensitive_diagnostic_key(key: str) -> bool:
     normalized = key.casefold()
     return normalized in _SENSITIVE_DIAGNOSTIC_KEYS or any(
@@ -1109,6 +1166,44 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(400, "INVALID_DIRECTIVE") from exc
     message_id = header["messageId"]
+    incoming_endpoint_id = str(directive.get("endpoint", {}).get("endpointId", ""))
+    diagnostic_v3 = incoming_endpoint_id.endswith(PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX)
+    diagnostic_v2 = incoming_endpoint_id.endswith(PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX)
+    endpoint_kind = (
+        "diagnostic_v3" if diagnostic_v3 else "diagnostic_v2" if diagnostic_v2 else "production"
+    )
+    ensure_info_logger(logger)
+    logger.info(
+        "alexa_directive_ingress endpoint_kind=%s namespace=%s name=%s instance=%s "
+        "endpoint_id=%s payload=%s message_id=%s correlation_token=%s",
+        endpoint_kind,
+        header["namespace"],
+        header["name"],
+        header.get("instance"),
+        incoming_endpoint_id,
+        json.dumps(
+            _directive_diagnostic_payload(directive.get("payload", {})),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        message_id,
+        header.get("correlationToken"),
+    )
+
+    def log_ingress_result(http_status: int, result: str, reason: str) -> None:
+        logger.info(
+            "alexa_directive_ingress_result endpoint_kind=%s endpoint_id=%s namespace=%s "
+            "name=%s message_id=%s http_status=%s result=%s reason=%s",
+            endpoint_kind,
+            incoming_endpoint_id,
+            header["namespace"],
+            header["name"],
+            message_id,
+            http_status,
+            result,
+            reason,
+        )
+
     if header["namespace"] == "Alexa.Authorization" and header["name"] == "AcceptGrant":
         payload = directive.get("payload", {})
         link = await _authenticate(payload.get("grantee", {}).get("token", ""), database)
@@ -1119,6 +1214,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             await gateway.accept_grant(link, str(payload.get("grant", {}).get("code", "")))
         finally:
             await gateway.close()
+        log_ingress_result(200, "success", "accept_grant_response")
         return JSONResponse(
             _event(
                 {
@@ -1136,6 +1232,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     link = await _authenticate(scope.get("token", ""), database)
     replay_key = f"{link.id}:{message_id}"
     if replay_key in _replay:
+        log_ingress_result(200, "success", "replayed_response")
         return JSONResponse(_replay[replay_key])
     correlation = header.get("correlationToken")
     diagnostic_correlation_id: UUID | None = None
@@ -1205,10 +1302,17 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         endpoint = directive.get("endpoint", {})
         endpoint_value = endpoint.get("endpointId", "")
         if not endpoint_value.startswith("ev1_"):
+            log_ingress_result(400, "failure", "invalid_endpoint_prefix")
             raise HTTPException(400, "NO_SUCH_ENDPOINT")
+        entity_endpoint_value = (
+            endpoint_value[: -len(PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX)]
+            if diagnostic_v3
+            else endpoint_value
+        )
         try:
-            entity_uuid = UUID(hex=endpoint_value[4:])
+            entity_uuid = UUID(hex=entity_endpoint_value[4:])
         except ValueError as exc:
+            log_ingress_result(400, "failure", "invalid_endpoint_id")
             raise HTTPException(400, "NO_SUCH_ENDPOINT") from exc
         entity_query = (
             select(Entity)
@@ -1220,7 +1324,17 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
         entity = await database.scalar(entity_query)
-        if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
+        invalid_diagnostic_entity = diagnostic_v3 and (
+            entity is None
+            or entity.ha_entity_id != PAPERINO_DIAGNOSTIC_ENTITY_ID
+            or not is_gate_override(entity)
+        )
+        if (
+            entity is None
+            or entity.ha_registry_id is None
+            or not alexa_entity_eligible(entity)
+            or invalid_diagnostic_entity
+        ):
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1232,9 +1346,19 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                     result="failure",
                 )
                 await database.commit()
+            log_ingress_result(404, "failure", "endpoint_not_resolved")
             raise HTTPException(404, "NO_SUCH_ENDPOINT")
         if diagnostic_correlation_id is not None:
             published_endpoint = discovery_endpoint(entity)
+            logger.info(
+                "alexa_directive_endpoint_resolved endpoint_kind=%s endpoint_id=%s "
+                "entity_id=%s ha_entity_id=%s installation_id=%s",
+                endpoint_kind,
+                endpoint_value,
+                entity.id,
+                entity.ha_entity_id,
+                entity.installation_id,
+            )
             _alexa_audit(
                 database,
                 tenant_id=link.tenant_id,
@@ -1265,6 +1389,21 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 result="success",
             )
         if header["namespace"] == "Alexa" and header["name"] == "ReportState":
+            report_properties = state_properties(entity)
+            if diagnostic_v3:
+                report_properties = [
+                    item
+                    for item in report_properties
+                    if item["namespace"] != "Alexa.ToggleController"
+                ]
+                report_properties.append(
+                    _property(
+                        "Alexa.RangeController",
+                        "rangeValue",
+                        100 if entity.state == "on" else 0,
+                        instance="cover.position",
+                    )
+                )
             response = _event(
                 {
                     "namespace": "Alexa",
@@ -1275,7 +1414,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 },
                 {},
                 {"endpointId": endpoint_value},
-                state_properties(entity),
+                report_properties,
             )
         else:
             command_payload = directive.get("payload", {})
@@ -1294,7 +1433,21 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         "endpoint_id": endpoint_value,
                     },
                 )
-            spec = _command(header["namespace"], header["name"], command_payload, entity)
+            spec = (
+                _paperino_diagnostic_v3_command(
+                    header["namespace"], header["name"], command_payload, entity
+                )
+                if diagnostic_v3
+                else _command(header["namespace"], header["name"], command_payload, entity)
+            )
+            logger.info(
+                "alexa_directive_operation_mapped endpoint_kind=%s endpoint_id=%s "
+                "entity_id=%s operation=%s",
+                endpoint_kind,
+                endpoint_value,
+                entity.id,
+                spec.get("operation") if spec else None,
+            )
             if diagnostic_correlation_id is not None:
                 _alexa_audit(
                     database,
@@ -1321,6 +1474,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
                 await database.commit()
             advertised = {cap["interface"] for cap in capabilities(entity)}
+            if diagnostic_v3:
+                advertised = {"Alexa", "Alexa.EndpointHealth", "Alexa.RangeController"}
             if spec is None or header["namespace"] not in advertised:
                 response = _event(
                     {
@@ -1361,6 +1516,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         {"endpointId": endpoint_value},
                     )
                 else:
+                    response_properties = _command_response_properties(entity, spec)
+                    if diagnostic_v3:
+                        diagnostic_property = _paperino_diagnostic_v3_property(
+                            spec.get("operation")
+                        )
+                        response_properties = (
+                            [diagnostic_property] if diagnostic_property is not None else []
+                        )
                     response = _event(
                         {
                             "namespace": "Alexa",
@@ -1371,7 +1534,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         },
                         {},
                         {"endpointId": endpoint_value},
-                        _command_response_properties(entity, spec),
+                        response_properties,
                     )
     if diagnostic_correlation_id is not None:
         response_event = response["event"]
@@ -1399,6 +1562,12 @@ async def directive(request: Request, database: AsyncSession = database_dependen
     _replay[replay_key] = response
     if len(_replay) > 2048:
         _replay.pop(next(iter(_replay)))
+    response_name = str(response.get("event", {}).get("header", {}).get("name", "unknown"))
+    log_ingress_result(
+        200,
+        "failure" if response_name == "ErrorResponse" else "success",
+        response_name,
+    )
     return JSONResponse(response)
 
 

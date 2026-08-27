@@ -20,9 +20,9 @@ _DISPLAY_CATEGORIES: dict[AlexaDeviceType, str] = {
     "switch": "SWITCH",
     "light": "LIGHT",
     "outlet": "SMARTPLUG",
-    # A switch-backed gate is a generic openable controller. GARAGE_DOOR
+    # A switch-backed gate uses Amazon's generic door model. GARAGE_DOOR
     # invokes Alexa's protected garage-door voice-code flow before the skill.
-    "gate": "OTHER",
+    "gate": "DOOR",
 }
 
 

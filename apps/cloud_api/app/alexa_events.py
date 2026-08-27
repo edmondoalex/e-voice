@@ -28,7 +28,11 @@ from .domain.models import (
 )
 
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
+PAPERINO_DIAGNOSTIC_ENTITY_ID = "switch.km_tronic_web_realy_scatola_esterna_rele_5"
+PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX = "_diagnostic_v2"
+PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX = "_diagnostic_v3"
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 REDACTED = "[REDACTED]"
 SENSITIVE_DIAGNOSTIC_KEYS = {
     "access_token",
@@ -37,6 +41,51 @@ SENSITIVE_DIAGNOSTIC_KEYS = {
     "refresh_token",
     "token",
 }
+_DIAGNOSTIC_HANDLER_MARKER = "_ekonex_alexa_events_diagnostic"
+
+
+def ensure_info_logger(target: logging.Logger) -> None:
+    """Route one app logger's INFO diagnostics to the API log exactly once."""
+    target.setLevel(logging.INFO)
+    if any(getattr(handler, _DIAGNOSTIC_HANDLER_MARKER, False) for handler in target.handlers):
+        return
+    handlers = logging.getLogger("uvicorn.error").handlers
+    if not handlers:
+        if logging.getLogger().handlers:
+            return
+        fallback = logging.StreamHandler()
+        fallback.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+        handlers = [fallback]
+    for handler in handlers:
+        setattr(handler, _DIAGNOSTIC_HANDLER_MARKER, True)
+        target.addHandler(handler)
+    target.propagate = False
+
+
+def _ensure_diagnostic_logger() -> None:
+    """Route this module's INFO diagnostics to the running API log exactly once."""
+    ensure_info_logger(logger)
+
+
+def _endpoint_log_summary(endpoint: dict[str, Any]) -> dict[str, Any]:
+    """Return the allowlisted Discovery fields needed to diagnose resync."""
+    return {
+        "endpoint_id": endpoint.get("endpointId"),
+        "friendly_name": endpoint.get("friendlyName"),
+        "display_categories": endpoint.get("displayCategories", []),
+        "capabilities": [
+            {
+                "interface": capability.get("interface"),
+                **(
+                    {"instance": capability["instance"]}
+                    if capability.get("instance") is not None
+                    else {}
+                ),
+            }
+            for capability in endpoint.get("capabilities", [])
+            if isinstance(capability, dict)
+        ],
+    }
 
 
 def _utc(value: datetime) -> datetime:
@@ -243,7 +292,10 @@ class AlexaEventGateway:
     async def reconcile_discovery(self, installation: Installation, *, force: bool = False) -> int:
         """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
+        from .alexa_device_types import is_gate_override
         from .entity_names import unambiguous_voice_entities
+
+        _ensure_diagnostic_logger()
 
         entities = list(
             (
@@ -277,6 +329,8 @@ class AlexaEventGateway:
             ).all()
         )
         sent = 0
+        accepted_updates = 0
+        accepted_deletions = 0
         for link in links:
             authorization = await self._session.scalar(
                 select(AlexaEventAuthorization).where(
@@ -325,11 +379,33 @@ class AlexaEventGateway:
                 event = self._discovery_event(
                     "AddOrUpdateReport", [endpoint for _, endpoint, _ in updates]
                 )
+                message_id = event["event"]["header"]["messageId"]
+                for entity, endpoint, _ in updates:
+                    logger.info(
+                        "alexa_add_or_update_endpoint message_id=%s installation_id=%s endpoint=%s",
+                        message_id,
+                        installation.id,
+                        json.dumps(
+                            _endpoint_log_summary(endpoint),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    if is_gate_override(entity):
+                        logger.info(
+                            "alexa_add_or_update_gate_payload message_id=%s "
+                            "installation_id=%s endpoint=%s",
+                            message_id,
+                            installation.id,
+                            json.dumps(endpoint, ensure_ascii=False, separators=(",", ":")),
+                        )
                 success = await self._send(
                     authorization,
                     event,
                     diagnostic_installation=installation,
                 )
+                if success:
+                    accepted_updates += len(updates)
                 now = datetime.now(UTC)
                 for entity, endpoint, fingerprint in updates:
                     endpoint_value = str(endpoint["endpointId"])
@@ -363,6 +439,8 @@ class AlexaEventGateway:
                     [{"endpointId": item.alexa_endpoint_id} for item in deletions],
                 )
                 success = await self._send(authorization, event)
+                if success:
+                    accepted_deletions += len(deletions)
                 now = datetime.now(UTC)
                 for delivery in deletions:
                     if success:
@@ -376,7 +454,226 @@ class AlexaEventGateway:
                         "success" if success else "error",
                     )
             await self._session.commit()
+        logger.info(
+            "alexa_resync_completed installation_id=%s active_link_count=%d "
+            "accepted_add_or_update_count=%d accepted_delete_count=%d sent_count=%d",
+            installation.id,
+            len(links),
+            accepted_updates,
+            accepted_deletions,
+            sent,
+        )
         return sent
+
+    async def send_paperino_diagnostic_v2(self, installation: Installation, entity: Entity) -> int:
+        """Send only Paperino under a never-before-used diagnostic endpoint ID."""
+        from .alexa import discovery_endpoint
+
+        if (
+            entity.installation_id != installation.id
+            or entity.ha_entity_id != PAPERINO_DIAGNOSTIC_ENTITY_ID
+            or entity.deleted_at is not None
+        ):
+            raise ValueError("invalid Paperino diagnostic entity")
+        _ensure_diagnostic_logger()
+        endpoint = discovery_endpoint(entity)
+        original_endpoint_id = str(endpoint["endpointId"])
+        endpoint["endpointId"] = f"{original_endpoint_id}{PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX}"
+        event = self._discovery_event("AddOrUpdateReport", [endpoint])
+        message_id = str(event["event"]["header"]["messageId"])
+        logger.info(
+            "alexa_diagnostic_single_endpoint_payload message_id=%s installation_id=%s "
+            "original_endpoint_id=%s diagnostic_endpoint_id=%s endpoint_count=1 payload=%s",
+            message_id,
+            installation.id,
+            original_endpoint_id,
+            endpoint["endpointId"],
+            json.dumps(
+                _safe_diagnostic_value(event, ()),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        accepted = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            if authorization is None:
+                logger.info(
+                    "alexa_diagnostic_single_endpoint_skipped message_id=%s "
+                    "installation_id=%s endpoint_id=%s reason=authorization_missing",
+                    message_id,
+                    installation.id,
+                    endpoint["endpointId"],
+                )
+                continue
+            if await self._send(
+                authorization,
+                event,
+                diagnostic_installation=installation,
+            ):
+                accepted += 1
+        logger.info(
+            "alexa_diagnostic_single_endpoint_completed message_id=%s installation_id=%s "
+            "endpoint_id=%s accepted_account_count=%d",
+            message_id,
+            installation.id,
+            endpoint["endpointId"],
+            accepted,
+        )
+        return accepted
+
+    async def send_paperino_diagnostic_v3(self, installation: Installation, entity: Entity) -> int:
+        """Send only Paperino with the isolated binary RangeController profile."""
+        from .alexa import discovery_endpoint
+
+        if (
+            entity.installation_id != installation.id
+            or entity.ha_entity_id != PAPERINO_DIAGNOSTIC_ENTITY_ID
+            or entity.deleted_at is not None
+        ):
+            raise ValueError("invalid Paperino diagnostic entity")
+        _ensure_diagnostic_logger()
+        endpoint = discovery_endpoint(entity)
+        original_endpoint_id = str(endpoint["endpointId"])
+        endpoint["endpointId"] = f"{original_endpoint_id}{PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX}"
+        endpoint["displayCategories"] = ["EXTERIOR_BLIND"]
+        endpoint["capabilities"] = [
+            capability
+            for capability in endpoint["capabilities"]
+            if capability["interface"] in {"Alexa", "Alexa.EndpointHealth"}
+        ]
+        endpoint["capabilities"].append(
+            {
+                "type": "AlexaInterface",
+                "interface": "Alexa.RangeController",
+                "version": "3",
+                "properties": {
+                    "supported": [{"name": "rangeValue"}],
+                    "proactivelyReported": True,
+                    "retrievable": True,
+                },
+                "instance": "cover.position",
+                "capabilityResources": {
+                    "friendlyNames": [
+                        {
+                            "@type": "asset",
+                            "value": {"assetId": "Alexa.Setting.Opening"},
+                        }
+                    ]
+                },
+                "configuration": {
+                    "supportedRange": {
+                        "minimumValue": 0,
+                        "maximumValue": 100,
+                        "precision": 1,
+                    }
+                },
+                "semantics": {
+                    "actionMappings": [
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Close"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 0},
+                            },
+                        },
+                        {
+                            "@type": "ActionsToDirective",
+                            "actions": ["Alexa.Actions.Open"],
+                            "directive": {
+                                "name": "SetRangeValue",
+                                "payload": {"rangeValue": 100},
+                            },
+                        },
+                    ],
+                    "stateMappings": [
+                        {
+                            "@type": "StatesToValue",
+                            "states": ["Alexa.States.Closed"],
+                            "value": 0,
+                        },
+                        {
+                            "@type": "StatesToRange",
+                            "states": ["Alexa.States.Open"],
+                            "range": {"minimumValue": 1, "maximumValue": 100},
+                        },
+                    ],
+                },
+            }
+        )
+        event = self._discovery_event("AddOrUpdateReport", [endpoint])
+        message_id = str(event["event"]["header"]["messageId"])
+        logger.info(
+            "alexa_diagnostic_v3_payload message_id=%s installation_id=%s "
+            "original_endpoint_id=%s diagnostic_endpoint_id=%s endpoint_count=1 payload=%s",
+            message_id,
+            installation.id,
+            original_endpoint_id,
+            endpoint["endpointId"],
+            json.dumps(
+                _safe_diagnostic_value(event, ()),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        accepted = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            if authorization is None:
+                logger.info(
+                    "alexa_diagnostic_v3_skipped message_id=%s installation_id=%s "
+                    "endpoint_id=%s reason=authorization_missing",
+                    message_id,
+                    installation.id,
+                    endpoint["endpointId"],
+                )
+                continue
+            if await self._send(
+                authorization,
+                event,
+                diagnostic_installation=installation,
+            ):
+                accepted += 1
+        logger.info(
+            "alexa_diagnostic_v3_completed message_id=%s installation_id=%s "
+            "endpoint_id=%s accepted_account_count=%d",
+            message_id,
+            installation.id,
+            endpoint["endpointId"],
+            accepted,
+        )
+        return accepted
 
     @staticmethod
     def _discovery_event(name: str, endpoints: list[dict[str, Any]]) -> dict[str, Any]:
@@ -446,6 +743,48 @@ class AlexaEventGateway:
             serialized = json.dumps(
                 request_event, ensure_ascii=False, separators=(",", ":")
             ).encode()
+            header = event_body.get("header", {})
+            endpoints = event_body.get("payload", {}).get("endpoints", [])
+            endpoint_count = len(endpoints)
+            if any(
+                str(endpoint.get("endpointId", "")).endswith(PAPERINO_DIAGNOSTIC_ENDPOINT_SUFFIX)
+                for endpoint in endpoints
+                if isinstance(endpoint, dict)
+            ):
+                logger.info(
+                    "alexa_diagnostic_single_endpoint_http_payload message_id=%s url=%s payload=%s",
+                    header.get("messageId"),
+                    self._settings.alexa_event_gateway_url,
+                    json.dumps(
+                        _safe_diagnostic_value(request_event, (access,)),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
+            if any(
+                str(endpoint.get("endpointId", "")).endswith(PAPERINO_DIAGNOSTIC_V3_ENDPOINT_SUFFIX)
+                for endpoint in endpoints
+                if isinstance(endpoint, dict)
+            ):
+                logger.info(
+                    "alexa_diagnostic_v3_http_payload message_id=%s url=%s payload=%s",
+                    header.get("messageId"),
+                    self._settings.alexa_event_gateway_url,
+                    json.dumps(
+                        _safe_diagnostic_value(request_event, (access,)),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
+            logger.info(
+                "alexa_event_gateway_request event_type=%s message_id=%s url=%s "
+                "attempt=%d endpoint_count=%d",
+                header.get("name"),
+                header.get("messageId"),
+                self._settings.alexa_event_gateway_url,
+                attempt + 1,
+                endpoint_count,
+            )
             try:
                 response = await self._client.post(
                     self._settings.alexa_event_gateway_url,
@@ -530,6 +869,11 @@ class AlexaEventGateway:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 response_body = response.text
         secrets = (access_token,)
+        amazon_request_id = (
+            response.headers.get("x-amzn-requestid") or response.headers.get("x-amz-request-id")
+            if response is not None
+            else None
+        )
         payload = {
             "correlation_id": message_id,
             "message_id": message_id,
@@ -538,10 +882,28 @@ class AlexaEventGateway:
             "request_payload": _safe_diagnostic_value(request_event, secrets),
             "http_status": response.status_code if response is not None else None,
             "response_body": _safe_diagnostic_value(response_body, secrets),
+            "amazon_request_id": amazon_request_id,
             "error": _safe_diagnostic_value(str(error), secrets) if error is not None else None,
             "error_type": type(error).__name__ if error is not None else None,
             "attempts": attempts,
+            "accepted_endpoint_count": (
+                len(endpoint_ids) if response is not None and response.is_success else 0
+            ),
         }
+        logger.info(
+            "alexa_add_or_update_response message_id=%s installation_id=%s "
+            "amazon_request_id=%s http_status=%s response_body=%s "
+            "error_type=%s error=%s attempts=%d accepted_endpoint_count=%d",
+            message_id,
+            installation.id,
+            amazon_request_id,
+            payload["http_status"],
+            json.dumps(payload["response_body"], ensure_ascii=False, separators=(",", ":")),
+            payload["error_type"],
+            payload["error"],
+            attempts,
+            payload["accepted_endpoint_count"],
+        )
         self._session.add(
             AuditEvent(
                 tenant_id=installation.tenant_id,
@@ -565,6 +927,44 @@ async def reconcile_discovery_safely(
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
         logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        return None
+    finally:
+        await gateway.close()
+
+
+async def send_paperino_diagnostic_v2_safely(
+    session: AsyncSession, installation: Installation, entity: Entity
+) -> int | None:
+    """Run the isolated Paperino proactive-discovery diagnostic safely."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.send_paperino_diagnostic_v2(installation, entity)
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "alexa_diagnostic_single_endpoint_failed installation_id=%s entity_id=%s",
+            installation.id,
+            entity.id,
+        )
+        return None
+    finally:
+        await gateway.close()
+
+
+async def send_paperino_diagnostic_v3_safely(
+    session: AsyncSession, installation: Installation, entity: Entity
+) -> int | None:
+    """Run the isolated Paperino v3 RangeController diagnostic safely."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.send_paperino_diagnostic_v3(installation, entity)
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "alexa_diagnostic_v3_failed installation_id=%s entity_id=%s",
+            installation.id,
+            entity.id,
+        )
         return None
     finally:
         await gateway.close()

@@ -327,6 +327,85 @@ async def test_alexa_resync_reports_and_audits_gateway_failure(
     await client.aclose()
 
 
+async def test_paperino_v2_diagnostic_is_csrf_protected_and_tenant_scoped(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "switch"
+    entity.ha_entity_id = "switch.km_tronic_web_realy_scatola_esterna_rele_5"
+    entity.voice_name = "paperino"
+    entity.alexa_device_type = "gate"
+    await session.commit()
+    calls: list[tuple[UUID, UUID]] = []
+    v3_calls: list[tuple[UUID, UUID]] = []
+
+    async def send(database: AsyncSession, installation: Installation, selected: Entity) -> int:
+        assert database is session
+        calls.append((installation.id, selected.id))
+        return 1
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "apps.cloud_api.app.admin_console.send_paperino_diagnostic_v2_safely", send
+    )
+
+    async def send_v3(database: AsyncSession, installation: Installation, selected: Entity) -> int:
+        assert database is session
+        v3_calls.append((installation.id, selected.id))
+        return 1
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "apps.cloud_api.app.admin_console.send_paperino_diagnostic_v3_safely", send_v3
+    )
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+    assert "Test Alexa Paperino v2" in page.text
+    assert "Test Alexa Paperino v3 Blind" in page.text
+    csrf = _csrf(page)
+    route = f"/installations/{seeded_domain.installation_a_id}/alexa/diagnostic/paperino-v2"
+
+    invalid = await client.post(route, data={"csrf_token": "invalid"})
+    assert invalid.status_code == 403
+    foreign = await client.post(
+        f"/installations/{seeded_domain.installation_b_id}/alexa/diagnostic/paperino-v2",
+        data={"csrf_token": csrf},
+    )
+    assert foreign.status_code == 404
+    assert calls == []
+
+    response = await client.post(
+        route,
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?alexa_resync=success&sent=1")
+    assert calls == [(seeded_domain.installation_a_id, entity.id)]
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.paperino_v2_requested")
+    )
+    assert audit is not None
+    assert audit.tenant_id == seeded_domain.tenant_a_id
+    assert audit.result == "success"
+    assert audit.payload_redacted_json == {"accepted_account_count": 1}
+
+    v3_response = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/alexa/diagnostic/paperino-v3",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert v3_response.status_code == 303
+    assert v3_response.headers["location"].endswith("?alexa_resync=success&sent=1")
+    assert v3_calls == [(seeded_domain.installation_a_id, entity.id)]
+    v3_audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.event_type == "alexa.discovery.paperino_v3_requested")
+    )
+    assert v3_audit is not None
+    assert v3_audit.result == "success"
+    await client.aclose()
+
+
 async def test_light_direct_controls_icons_levels_and_unavailable_state(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:
