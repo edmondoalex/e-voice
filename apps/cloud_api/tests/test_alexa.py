@@ -1242,245 +1242,47 @@ def test_cover_discovery_and_directives_use_the_same_current_interfaces() -> Non
     assert _command("Alexa.PowerController", "TurnOff", {}, binary) == {"operation": "close"}
 
 
-def test_office_cover_alone_uses_amazon_blind_lift_profile() -> None:
+def test_office_cover_uses_the_standard_cover_generator() -> None:
     installation_id = uuid4()
-    experimental = Entity(
+    shared = {
+        "installation_id": installation_id,
+        "ha_domain": "cover",
+        "device_class": "shutter",
+        "supported_features": 15,
+        "alexa_cover_mode": "discrete",
+        "state": "open",
+        "attributes_json": {"current_position": 40},
+    }
+    office = Entity(
         id=uuid4(),
-        installation_id=installation_id,
         ha_entity_id="cover.buspro_cover_porta_ufficio",
-        ha_domain="cover",
-        friendly_name="Tapparella ufficio",
-        voice_name="tapparella pippo",
-        device_class="shutter",
-        supported_features=15,
-        alexa_cover_mode="discrete",
-        state="open",
-        attributes_json={"current_position": 40},
+        friendly_name="Office cover",
+        voice_name="office cover",
+        **shared,
     )
-    endpoint = discovery_endpoint(experimental)
-    assert endpoint == {
-        "endpointId": endpoint_id(experimental),
-        "manufacturerName": "Ekonex",
-        "friendlyName": "tapparella pippo",
-        "description": "Home Assistant entity via Ekonex Voice",
-        "displayCategories": ["EXTERIOR_BLIND"],
-        "additionalAttributes": {"manufacturer": "Ekonex", "model": "Ekonex Voice"},
-        "cookie": {},
-        "capabilities": [
-            {"type": "AlexaInterface", "interface": "Alexa", "version": "3"},
-            {
-                "type": "AlexaInterface",
-                "interface": "Alexa.EndpointHealth",
-                "version": "3",
-                "properties": {
-                    "supported": [{"name": "connectivity"}],
-                    "proactivelyReported": True,
-                    "retrievable": True,
-                },
-            },
-            {
-                "type": "AlexaInterface",
-                "interface": "Alexa.RangeController",
-                "version": "3",
-                "properties": {
-                    "supported": [{"name": "rangeValue"}],
-                    "proactivelyReported": True,
-                    "retrievable": True,
-                },
-                "instance": "Blind.Lift",
-                "capabilityResources": {
-                    "friendlyNames": [
-                        {"@type": "asset", "value": {"assetId": "Alexa.Setting.Opening"}},
-                    ]
-                },
-                "configuration": {
-                    "supportedRange": {
-                        "minimumValue": 0,
-                        "maximumValue": 100,
-                        "precision": 1,
-                    },
-                    "unitOfMeasure": "Alexa.Unit.Percent",
-                },
-                "semantics": {
-                    "actionMappings": [
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Open"],
-                            "directive": {
-                                "name": "SetRangeValue",
-                                "payload": {"rangeValue": 100},
-                            },
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Close"],
-                            "directive": {
-                                "name": "SetRangeValue",
-                                "payload": {"rangeValue": 0},
-                            },
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Raise"],
-                            "directive": {
-                                "name": "AdjustRangeValue",
-                                "payload": {
-                                    "rangeValueDelta": 10,
-                                    "rangeValueDeltaDefault": False,
-                                },
-                            },
-                        },
-                        {
-                            "@type": "ActionsToDirective",
-                            "actions": ["Alexa.Actions.Lower"],
-                            "directive": {
-                                "name": "AdjustRangeValue",
-                                "payload": {
-                                    "rangeValueDelta": -10,
-                                    "rangeValueDeltaDefault": False,
-                                },
-                            },
-                        },
-                    ],
-                    "stateMappings": [
-                        {
-                            "@type": "StatesToValue",
-                            "states": ["Alexa.States.Closed"],
-                            "value": 0,
-                        },
-                        {
-                            "@type": "StatesToRange",
-                            "states": ["Alexa.States.Open"],
-                            "range": {"minimumValue": 1, "maximumValue": 100},
-                        },
-                    ],
-                },
-            },
-        ],
-    }
-    range_properties = [
-        item
-        for item in state_properties(experimental)
-        if item["namespace"] == "Alexa.RangeController"
-    ]
-    assert len(range_properties) == 1
-    assert range_properties[0]["instance"] == "Blind.Lift"
-    assert range_properties[0]["name"] == "rangeValue"
-    assert range_properties[0]["value"] == 40
-    assert _command(
-        "Alexa.RangeController", "SetRangeValue", {"rangeValue": 100}, experimental
-    ) == {"operation": "open"}
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 0}, experimental) == {
-        "operation": "close"
-    }
-    assert _command("Alexa.RangeController", "SetRangeValue", {"rangeValue": 50}, experimental) == {
-        "operation": "set_position",
-        "position": 50,
-    }
-    assert _command(
-        "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": 10}, experimental
-    ) == {"operation": "set_position", "position": 50}
-    assert _command(
-        "Alexa.RangeController", "AdjustRangeValue", {"rangeValueDelta": -10}, experimental
-    ) == {"operation": "set_position", "position": 30}
-    assert (
-        _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, experimental) is None
-    )
-
-    assert [item["interface"] for item in endpoint["capabilities"]] == [
-        "Alexa",
-        "Alexa.EndpointHealth",
-        "Alexa.RangeController",
-    ]
-
-    experimental.state = "open"
-    experimental.attributes_json = {"current_position": None}
-    range_capability = next(
-        item for item in capabilities(experimental) if item["interface"] == "Alexa.RangeController"
-    )
-    assert range_capability["properties"] == {
-        "supported": [{"name": "rangeValue"}],
-        "proactivelyReported": True,
-        "retrievable": True,
-    }
-    assert not any(
-        item["namespace"] == "Alexa.RangeController" for item in state_properties(experimental)
-    )
-
-    normal = Entity(
+    ordinary = Entity(
         id=uuid4(),
-        installation_id=installation_id,
-        ha_entity_id="cover.another_discrete_cover",
-        ha_domain="cover",
-        supported_features=15,
-        alexa_cover_mode="discrete",
-        state="unknown",
+        ha_entity_id="cover.ordinary_shutter",
+        friendly_name="Ordinary cover",
+        voice_name="ordinary cover",
+        **shared,
     )
-    normal_endpoint = discovery_endpoint(normal)
-    assert [item["interface"] for item in normal_endpoint["capabilities"]] == [
-        "Alexa",
-        "Alexa.EndpointHealth",
-        "Alexa.PowerController",
-        "Alexa.ModeController",
-        "Alexa.PlaybackController",
-    ]
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, normal) == {
+
+    office_endpoint = discovery_endpoint(office)
+    ordinary_endpoint = discovery_endpoint(ordinary)
+    for endpoint in (office_endpoint, ordinary_endpoint):
+        endpoint.pop("endpointId")
+        endpoint.pop("friendlyName")
+
+    assert office_endpoint == ordinary_endpoint
+    assert capabilities(office) == capabilities(ordinary)
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, office) == {
         "operation": "open"
     }
-    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, normal) == {
+    assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Down"}, office) == {
         "operation": "close"
     }
-    assert _command("Alexa.PlaybackController", "Stop", {}, normal) == {"operation": "stop"}
-
-
-async def test_office_cover_range_directive_response_matches_advertised_context(
-    session: AsyncSession, seeded_domain: object, monkeypatch: object
-) -> None:
-    entity = await session.get(Entity, seeded_domain.entity_a_id)  # type: ignore[attr-defined]
-    assert entity is not None
-    entity.ha_entity_id = "cover.buspro_cover_porta_ufficio"
-    entity.ha_registry_id = "office-cover-range-response"
-    entity.ha_domain = "cover"
-    entity.device_class = "shutter"
-    entity.supported_features = 15
-    entity.alexa_cover_mode = "discrete"
-    entity.state = "unknown"
-    entity.attributes_json = {"current_position": None}
-    await session.commit()
-    token = await _access(session, seeded_domain, "eaa_office_range_response")
-    dispatched = AsyncMock(
-        return_value=CommandResultPayload(
-            session_id=entity.id, command_id=entity.id, status="success"
-        )
-    )
-    monkeypatch.setattr(sessions, "dispatch", dispatched)  # type: ignore[attr-defined]
-    client = await _client(session)
-
-    for range_value, expected_operation in ((100, "open"), (0, "close")):
-        body = _directive(
-            token,
-            "Alexa.RangeController",
-            "SetRangeValue",
-            endpoint_id(entity),
-        )
-        body["directive"]["header"]["messageId"] = str(uuid4())  # type: ignore[index]
-        body["directive"]["header"]["instance"] = "Blind.Lift"  # type: ignore[index]
-        body["directive"]["payload"] = {"rangeValue": range_value}  # type: ignore[index]
-
-        response = await client.post("/alexa/v1/directive", json=body)
-
-        assert response.status_code == 200
-        assert response.json()["event"]["header"]["name"] == "Response"
-        properties = response.json()["context"]["properties"]
-        assert [(item["namespace"], item["name"]) for item in properties] == [
-            ("Alexa.EndpointHealth", "connectivity"),
-            ("Alexa.RangeController", "rangeValue"),
-        ]
-        assert properties[1]["instance"] == "Blind.Lift"
-        assert properties[1]["value"] == range_value
-        assert dispatched.await_args_list[-1].args[3] == {"operation": expected_operation}
-
-    await client.aclose()
+    assert _command("Alexa.PlaybackController", "Stop", {}, office) == {"operation": "stop"}
 
 
 def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -> None:
