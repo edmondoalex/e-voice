@@ -16,6 +16,9 @@ system. Open `/dashboard` after logging in at `/login`.
   and Alexa delivery reconciliation, but are omitted from the ordinary device list.
   Administrators can force a tenant-scoped proactive Alexa Discovery refresh for all current
   endpoints. The CSRF-protected action reports its outcome in the page and records an audit event.
+  They can also send a confirmed, tenant-scoped DeleteReport for every endpoint known to the
+  installation. This removes Alexa devices without deleting Ekonex entities or history; the
+  delivery ledger is preserved so devices return only after an explicit forced resync.
 - `/installations/{id}/entities/{entity_id}/edit` edits cloud-only display and voice names
   for an entity belonging to the selected tenant and installation. For `cover` entities it also
   selects the feature-validated Alexa exposure mode (discrete, percentage, hybrid or automatic).

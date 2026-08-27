@@ -240,6 +240,66 @@ class AlexaEventGateway:
                 sent += 1
         return sent
 
+    async def remove_all_discovery_endpoints(self, installation: Installation) -> int:
+        """Remove known endpoints until an explicit forced resync republishes them."""
+        links = list(
+            (
+                await self._session.scalars(
+                    select(AlexaAccountLink).where(
+                        AlexaAccountLink.tenant_id == installation.tenant_id,
+                        AlexaAccountLink.status == "active",
+                    )
+                )
+            ).all()
+        )
+        removed = 0
+        for link in links:
+            authorization = await self._session.scalar(
+                select(AlexaEventAuthorization).where(
+                    AlexaEventAuthorization.link_id == link.id,
+                    AlexaEventAuthorization.revoked_at.is_(None),
+                )
+            )
+            deliveries = list(
+                (
+                    await self._session.scalars(
+                        select(AlexaDiscoveryDelivery).where(
+                            AlexaDiscoveryDelivery.link_id == link.id,
+                            AlexaDiscoveryDelivery.installation_id == installation.id,
+                        )
+                    )
+                ).all()
+            )
+            endpoint_ids = sorted({item.alexa_endpoint_id for item in deliveries})
+            if not endpoint_ids:
+                continue
+            if authorization is None:
+                await self._audit_discovery(
+                    installation,
+                    "alexa.discovery.authorization_missing",
+                    None,
+                    None,
+                    "skipped",
+                )
+                await self._session.commit()
+                continue
+            event = self._discovery_event(
+                "DeleteReport", [{"endpointId": endpoint_id} for endpoint_id in endpoint_ids]
+            )
+            success = await self._send(authorization, event)
+            for endpoint_id in endpoint_ids:
+                await self._audit_discovery(
+                    installation,
+                    "alexa.discovery.remove_all",
+                    None,
+                    endpoint_id,
+                    "success" if success else "error",
+                )
+            if success:
+                removed += len(endpoint_ids)
+            await self._session.commit()
+        return removed
+
     async def reconcile_discovery(self, installation: Installation, *, force: bool = False) -> int:
         """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
@@ -565,6 +625,21 @@ async def reconcile_discovery_safely(
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
         logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        return None
+    finally:
+        await gateway.close()
+
+
+async def remove_all_discovery_endpoints_safely(
+    session: AsyncSession, installation: Installation
+) -> int | None:
+    """Remove installation endpoints without changing inventory or delivery history."""
+    gateway = AlexaEventGateway(session)
+    try:
+        return await gateway.remove_all_discovery_endpoints(installation)
+    except Exception:
+        await session.rollback()
+        logger.exception("Alexa endpoint removal failed installation_id=%s", installation.id)
         return None
     finally:
         await gateway.close()
