@@ -155,7 +155,7 @@ def test_gate_contract_does_not_change_standard_switch_light_outlet_or_cover() -
     cover.alexa_cover_mode = "discrete"
     cover_capabilities = [item["interface"] for item in discovery_endpoint(cover)["capabilities"]]
     assert "Alexa.ModeController" in cover_capabilities
-    assert "Alexa.PlaybackController" in cover_capabilities
+    assert "Alexa.PlaybackController" not in cover_capabilities
 
 
 def test_gate_generic_openable_contract_is_distinct_from_discrete_cover() -> None:
