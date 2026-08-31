@@ -1,414 +1,281 @@
-# Ekonex AI conversation demo
+# Demo conversazionale Ekonex AI
 
-Status: product and interaction design demo, not an implemented feature.
+Stato: documento di progettazione. Le funzioni descritte non sono ancora tutte implementate.
 
-This document illustrates how one central Ekonex conversational service could serve Wear OS first
-and later Alexa Multi-Capability, mobile, web, Google, and Siri channels. Examples are in Italian
-because the initial target locale is `it-IT`.
+Ekonex deve diventare il maggiordomo digitale della casa: comprende il linguaggio naturale, legge sensori autorizzati, esegue soltanto comandi convalidati e spiega sempre che cosa ha osservato davvero. Il primo canale consigliato è Wear OS; in seguito la stessa intelligenza potrà servire Alexa, applicazioni mobili, web, Google e Siri.
 
-## Product outcome
-
-The assistant accepts natural language, resolves only entities authorized for the current Ekonex
-installation, reads synchronized state, and proposes or executes a bounded operation. The language
-model never sends arbitrary Home Assistant service calls. It produces a candidate structured
-request that the deterministic Ekonex policy and command layers validate.
+## Architettura
 
 ```text
-voice
-  -> channel speech recognition
-  -> Ekonex conversational service
-  -> entity and context resolution
-  -> authorization and safety policy
-  -> read-only answer OR validated EVCP command
-  -> Home Assistant Connector
-  -> result, spoken/text reply, and audit event
+voce o evento Home Assistant
+  -> riconoscimento vocale oppure Connector
+  -> servizio Ekonex
+  -> risoluzione di entità e contesto
+  -> autorizzazioni e regole di sicurezza
+  -> lettura oppure comando EVCP convalidato
+  -> Home Assistant
+  -> esito, risposta vocale/testuale e registro
 ```
 
-## Channel behavior
+Il modello linguistico non invia servizi arbitrari a Home Assistant. Produce una richiesta strutturata; codice deterministico controlla cliente, installazione, entità, parametri, conferme e sicurezza.
 
-### Wear OS
+## Wear OS e Alexa
 
-Wear OS is the preferred first channel. The user opens the app or Tile, taps the microphone, and
-speaks naturally. Ekonex receives recognized text, so it can manage the complete conversation.
+Su Wear OS l'utente apre Ekonex, tocca il microfono e parla naturalmente. Ekonex riceve il testo riconosciuto, può fare domande di chiarimento e mostrare le fonti della risposta.
 
-### Alexa Smart Home
+Nella modalità Alexa Smart Home, Amazon interpreta la frase prima di chiamare Ekonex. Se Amazon non genera una direttiva, Ekonex non riceve la richiesta. Una futura esperienza conversazionale potrà gestire frasi come «Alexa, chiedi a Ekonex...», ma non va aggiunta alla skill attualmente sotto certificazione.
 
-Normal Smart Home utterances are interpreted by Amazon before Ekonex is called. Ekonex cannot use
-AI when Amazon emits no directive. A future Alexa Multi-Capability model could provide explicit
-conversations such as `Alexa, chiedi a Ekonex...`. This must be developed as a later version and
-must not alter the skill currently under certification.
+## Domande sui sensori
 
-## Read-only sensor questions
+Sono utilizzabili soltanto entità esposte intenzionalmente al Connector.
 
-Yes, the assistant can be designed to answer questions about selected Home Assistant sensors,
-including photovoltaic production, energy, hot-water temperature, batteries, air quality, weather,
-consumption, and connectivity. Only entities deliberately exposed to the Ekonex Connector are
-eligible.
+### Fotovoltaico ed energia
 
-### Photovoltaic production
+**Utente:** Quanta potenza sta producendo il fotovoltaico?
 
-**User:** Quanta energia sta producendo il fotovoltaico?
+**Ekonex:** Sta producendo 3,8 kW. La casa consuma 2,1 kW e stai immettendo circa 1,7 kW in rete.
 
-**Ekonex:** In questo momento il fotovoltaico sta producendo 3,8 kW.
-
-**User:** E quanto stiamo consumando?
-
-**Ekonex:** La casa sta consumando 2,1 kW. Stai immettendo circa 1,7 kW in rete.
-
-**User:** Quanto ha prodotto oggi?
+**Utente:** Quanto ha prodotto oggi?
 
 **Ekonex:** Oggi l'impianto ha prodotto 18,6 kWh.
 
-**User:** È una giornata migliore di ieri?
+**Utente:** Perché sto prelevando dalla rete?
 
-**Ekonex:** Alle 14:30 oggi hai prodotto 2,4 kWh in più rispetto alla stessa ora di ieri.
+**Ekonex:** La casa consuma 4,2 kW, il fotovoltaico produce 2,5 kW e la batteria non sta scaricando. I carichi maggiori misurati sono la pompa di calore, 1,8 kW, e il forno, 1,4 kW.
 
-The last example requires retained history or statistics; a current-value sensor alone is not
-enough.
+Potenza ed energia non vanno confuse: `kW` indica la potenza istantanea, `kWh` l'energia accumulata. Calcoli e confronti devono usare formule deterministiche.
 
-### Storage battery
+### Batteria e ACS
 
-**User:** A quanto è la batteria di casa?
+**Utente:** A quanto è la batteria di casa?
 
-**Ekonex:** La batteria di accumulo è al 72% e sta caricando a 1,2 kW.
+**Ekonex:** È al 72% e sta caricando a 1,2 kW.
 
-**User:** Quanto può durare?
+**Utente:** Quanto può durare?
 
-**Ekonex:** Con il consumo attuale, la stima è di circa 4 ore. È una stima e può cambiare con i
-carichi della casa.
+**Ekonex:** Con il consumo attuale, la stima è circa quattro ore. Può cambiare con i carichi della casa.
 
-**User:** Avvisami quando scende sotto il 20%.
-
-**Ekonex:** Posso creare un avviso per questa installazione. Confermi la soglia del 20%?
-
-The duration answer requires capacity and power sensors plus a transparent estimation formula. The
-alert requires a separate notification/automation feature; it must not be promised from one sensor
-value alone.
-
-### Domestic hot water (ACS)
-
-**User:** Qual è la temperatura dell'acqua calda?
+**Utente:** Qual è la temperatura dell'acqua calda?
 
 **Ekonex:** La temperatura ACS è 54 °C.
 
-**User:** È sufficiente per fare la doccia?
+**Utente:** Portala a 58 gradi.
 
-**Ekonex:** La temperatura è sopra la soglia informativa di 45 °C che hai configurato. Non posso
-garantire la quantità di acqua disponibile senza un sensore o un modello dell'accumulo.
+**Ekonex:** Il sensore ACS è di sola lettura. Non trovo un controllo autorizzato per modificare il valore impostato.
 
-**User:** Porta l'acqua calda a 58 gradi.
+Un sensore non deve mai essere trattato come attuatore.
 
-**Ekonex:** Il sensore ACS è di sola lettura. Non trovo un controllo autorizzato per modificare il
-setpoint.
+### Casa e dispositivi
 
-If a separate authorized `number`, `water_heater`, or other control entity exists, Ekonex may offer
-that command after validation. A sensor must never be treated as an actuator.
+**Utente:** Ci sono batterie quasi scariche?
 
-### Device batteries
+**Ekonex:** Il sensore della porta garage è al 12% e il termostato della camera al 18%.
 
-**User:** Ci sono batterie quasi scariche?
-
-**Ekonex:** Sì. Il sensore della porta garage è al 12% e il termostato della camera è al 18%.
-
-**User:** E la batteria del cancello?
-
-**Ekonex:** Non trovo un sensore batteria associato al cancello in questa installazione.
-
-**User:** Qual è la batteria più bassa?
-
-**Ekonex:** La più bassa tra i dispositivi esposti è il sensore della porta garage, al 12%.
-
-### Temperatures and environment
-
-**User:** Quanti gradi ci sono in soggiorno?
-
-**Ekonex:** In soggiorno ci sono 22,4 °C.
-
-**User:** E fuori?
-
-**Ekonex:** Il sensore esterno misura 9,8 °C.
-
-**User:** Dove fa più caldo in casa?
-
-**Ekonex:** Tra le stanze con un sensore esposto, la cucina è la più calda: 24,1 °C.
-
-**User:** Com'è l'aria in camera?
-
-**Ekonex:** La camera misura 1.180 ppm di CO2 e 63% di umidità. La CO2 supera la soglia informativa
-di 1.000 ppm impostata per questa casa.
-
-Thresholds must be configured product policy, not improvised medical or safety claims by the model.
-
-### Energy and consumption
-
-**User:** Quanto sta consumando la pompa di calore?
-
-**Ekonex:** Sta assorbendo 1,6 kW.
-
-**User:** Qual è il carico che consuma di più?
-
-**Ekonex:** Tra i misuratori esposti, la pompa di calore è il carico maggiore con 1,6 kW.
-
-**User:** Quanto abbiamo consumato questo mese?
-
-**Ekonex:** Il contatore mensile riporta 286 kWh.
-
-The wording distinguishes instantaneous power (`kW`) from accumulated energy (`kWh`). Units and
-device classes must come from trusted Home Assistant metadata.
-
-### Doors, leaks, smoke, and connectivity
-
-**User:** Ci sono finestre aperte?
+**Utente:** Ci sono finestre aperte?
 
 **Ekonex:** Sono aperte la finestra della cucina e quella dello studio.
 
-**User:** Ci sono perdite d'acqua?
+**Utente:** Qualcosa non funziona?
 
-**Ekonex:** Nessuno dei tre sensori di perdita esposti segnala acqua.
+**Ekonex:** La presa del garage non è disponibile dalle 10:42. Gli altri dispositivi esposti sono raggiungibili.
 
-**User:** Il sensore fumo è a posto?
+**Utente:** Com'è l'aria in camera?
 
-**Ekonex:** Il sensore fumo cucina è disponibile e non segnala fumo. Questa informazione non
-sostituisce un sistema di sicurezza certificato.
+**Ekonex:** La camera misura 1.180 ppm di CO2 e il 63% di umidità. La CO2 supera la soglia informativa configurata di 1.000 ppm.
 
-**User:** Qualcosa è offline?
+Le soglie sono configurate nel prodotto; l'AI non improvvisa dichiarazioni mediche o di sicurezza.
 
-**Ekonex:** La presa del garage non è disponibile dalle 10:42. Gli altri dispositivi esposti sono
-raggiungibili.
+## Comandi e dialoghi
 
-## Direct control examples
+### Contesto e ambiguità
 
-### Lights
-
-**User:** Accendi la luce della cucina.
+**Utente:** Accendi la luce della cucina.
 
 **Ekonex:** Luce cucina accesa.
 
-**User:** Abbassala un po'.
+**Utente:** Abbassala un po'.
 
-**Ekonex:** Ho portato la luminosità della luce cucina dal 70% al 50%.
+**Ekonex:** Ho portato la luminosità dal 70% al 50%.
 
-**User:** Rendila più calda.
+**Utente:** Spegni la luce ingresso.
 
-**Ekonex:** Ho impostato la luce cucina su una tonalità più calda.
+**Ekonex:** Trovo ingresso principale e ingresso garage. Quale vuoi spegnere?
 
-The second and third turns use explicit short-lived conversation context.
-
-### Covers
-
-**User:** Apri la tapparella dell'ufficio.
-
-**Ekonex:** Tapparella ufficio aperta.
-
-**User:** Fermala.
-
-**Ekonex:** Tapparella ufficio fermata.
-
-**User:** Portala al 40%.
-
-**Ekonex:** Tapparella ufficio impostata al 40%.
-
-If the cover does not support positioning, Ekonex replies that only open, close, and stop are
-available instead of inventing support.
-
-### Climate
-
-**User:** Imposta il soggiorno a 21 gradi.
-
-**Ekonex:** Termostato soggiorno impostato a 21 °C.
-
-**User:** Che temperatura avevamo prima?
-
-**Ekonex:** Il setpoint precedente era 19 °C; la temperatura ambiente attuale è 20,2 °C.
-
-### Scenes
-
-**User:** Attiva la scena notte.
-
-**Ekonex:** Scenario notte attivato.
-
-**User:** Cosa fa questa scena?
-
-**Ekonex:** Home Assistant non ha fornito una descrizione verificabile delle azioni della scena. Posso
-attivarla, ma non devo inventarne il contenuto.
-
-## Natural multi-turn examples
-
-### Leaving home
-
-**User:** Sto uscendo, sistema la casa.
-
-**Ekonex:** Vedo quattro luci accese e tre tapparelle aperte. Vuoi spegnere le luci e chiudere le
-tapparelle?
-
-**User:** Sì, ma lascia aperta quella dello studio.
-
-**Ekonex:** Confermi: spengo quattro luci e chiudo due tapparelle, lasciando aperta quella dello
-studio?
-
-**User:** Confermo.
-
-**Ekonex:** Fatto. La tapparella dello studio è rimasta aperta.
-
-### Comfort request
-
-**User:** Fa troppo caldo qui.
-
-**Ekonex:** Sei associato all'area soggiorno. Il sensore misura 25,3 °C e il termostato è impostato a
-23 °C. Vuoi abbassare il setpoint?
-
-**User:** Di due gradi.
-
-**Ekonex:** Porto il setpoint del soggiorno a 21 °C. Confermi?
-
-**User:** Sì.
-
-**Ekonex:** Setpoint impostato a 21 °C.
-
-### Energy optimization
-
-**User:** Stiamo comprando energia dalla rete?
-
-**Ekonex:** Sì, circa 0,9 kW. Il fotovoltaico produce 1,4 kW e la casa consuma 2,3 kW.
-
-**User:** Posso spegnere qualcosa di non essenziale?
-
-**Ekonex:** Tra i carichi controllabili ed esposti, trovo lo scaldasalviette da 600 W e la presa
-lavanderia da 180 W. Non spengo nulla senza conferma.
-
-**User:** Spegni solo lo scaldasalviette.
-
-**Ekonex:** Scaldasalviette spento.
-
-### Morning summary
-
-**User:** Fammi il riepilogo della casa.
-
-**Ekonex:** Tutti gli accessi risultano chiusi. Ci sono due luci accese. La casa consuma 1,1 kW, il
-fotovoltaico produce 0,4 kW e la batteria è al 61%. La temperatura media delle stanze esposte è
-21,3 °C. Un dispositivo è offline: presa garage.
-
-The summary must state the scope (`esposti`) so the user does not infer that Ekonex inspected every
-possible device in Home Assistant.
-
-## Ambiguity and correction
-
-### Similar names
-
-**User:** Spegni la luce ingresso.
-
-**Ekonex:** Trovo due corrispondenze: luce ingresso principale e luce ingresso garage. Quale vuoi
-spegnere?
-
-**User:** Quella principale.
+**Utente:** Quella principale.
 
 **Ekonex:** Luce ingresso principale spenta.
 
-### Missing area
+### Più operazioni
 
-**User:** Quanti gradi ci sono?
+**Utente:** Sto uscendo, sistema la casa.
 
-**Ekonex:** Per quale area: soggiorno, camera o esterno?
+**Ekonex:** Vedo quattro luci accese e tre tapparelle aperte. Vuoi spegnere le luci e chiudere le tapparelle?
 
-### User correction
+**Utente:** Sì, ma lascia aperta quella dello studio.
 
-**User:** Chiudi la tapparella della camera.
+**Ekonex:** Confermi: spengo quattro luci e chiudo due tapparelle, lasciando aperta quella dello studio?
 
-**Ekonex:** Vuoi chiudere la tapparella camera matrimoniale?
+**Utente:** Confermo.
 
-**User:** No, quella degli ospiti.
+**Ekonex:** Fatto. La tapparella dello studio è rimasta aperta.
 
-**Ekonex:** Tapparella camera ospiti chiusa.
+### Operazioni sensibili
 
-### Unsupported request
-
-**User:** Apri la tapparella al 37%.
-
-**Ekonex:** Questa tapparella non supporta una posizione percentuale. Posso aprirla, chiuderla o
-fermarla.
-
-## Safety-sensitive examples
-
-### Gate
-
-**User:** Apri il cancello.
+**Utente:** Apri il cancello.
 
 **Ekonex:** Stai per aprire il cancello carrabile. Confermi?
 
-**User:** Confermo.
+**Utente:** Confermo.
 
-**Ekonex:** Cancello aperto.
+**Ekonex:** Il comando è stato eseguito e il sensore conferma che il cancello è aperto.
 
-### Remote context
+**Utente:** Disattiva l'allarme e apri tutte le porte.
 
-**User:** Apri il cancello.
+**Ekonex:** Non posso eseguire questa combinazione tramite comando vocale. Usa il metodo configurato dall'installatore.
 
-**Ekonex:** Il comando arriva da fuori dalla rete domestica. Confermi l'apertura del cancello
-carrabile?
+Le regole sensibili sono deterministiche e non possono essere aggirate dalle parole dell'utente, dall'AI o dai nomi delle entità.
 
-### Bulk action
+## Risultato osservato e diagnosi
 
-**User:** Spegni tutto.
+Ekonex distingue un comando accettato dal risultato fisicamente osservato.
 
-**Ekonex:** Il comando coinvolge 18 dispositivi controllabili. Non comprende frigorifero, sicurezza
-o dispositivi esclusi. Vuoi procedere?
+**Utente:** Chiudi la tapparella ufficio.
 
-### Dangerous or unauthorized operation
+**Ekonex:** Home Assistant ha accettato il comando, ma dopo 15 secondi la tapparella risulta ancora aperta. Potrebbe essere bloccata.
 
-**User:** Disattiva l'allarme e apri tutte le porte.
+**Utente:** Qual è la temperatura ACS?
 
-**Ekonex:** Non posso eseguire questa combinazione tramite comando vocale. Usa il metodo di sicurezza
-configurato dall'installatore.
+**Ekonex:** L'ultimo valore è 52 °C alle 09:14, ma il Connector è offline da 12 minuti. Il dato potrebbe non essere aggiornato.
 
-Safety rules are deterministic and cannot be overridden by user wording, model output, entity names,
-or content stored in Home Assistant attributes.
+**Utente:** Cosa è successo mentre ero fuori?
 
-## Failure and freshness examples
+**Ekonex:** Dalle 08:12 il cancello è stato aperto due volte, il fotovoltaico ha prodotto 12,4 kWh, la batteria ha raggiunto il 100% alle 13:05 e la presa garage è diventata offline alle 15:42. Non risultano allarmi acqua o fumo.
 
-### Offline Connector
+**Utente:** Perché in ufficio fa freddo?
 
-**User:** Qual è la temperatura ACS?
+**Ekonex:** La temperatura è scesa da 21,2 a 18,7 °C in 50 minuti. La finestra risulta aperta e il termostato è spento. È una correlazione, non la prova della causa.
 
-**Ekonex:** L'ultimo valore ricevuto è 52 °C alle 09:14, ma il Connector è offline da 12 minuti. Il
-dato potrebbe non essere aggiornato.
+## TTS Alexa programmato in Home Assistant
 
-### Unavailable sensor
+### Risultato richiesto
 
-**User:** Quanto produce il fotovoltaico?
+L'installatore crea in Home Assistant un'automazione con trigger e testo. Quando scatta, Ekonex deve tentare di far pronunciare quel testo ad Alexa.
 
-**Ekonex:** Il sensore produzione fotovoltaica non è disponibile. L'ultimo valore valido era 2,7 kW
-alle 13:52.
+```yaml
+trigger_id: cancello_aperto_troppo
+source_entity: binary_sensor.cancello_aperto
+active_state: "on"
+delay_seconds: 600
+severity: avviso
+message_it: "Attenzione, il cancello è aperto da più di dieci minuti"
+channels:
+  - alexa
+  - wear_os
+  - ekonex_mobile
+```
 
-### Command timeout
+Questo è un esempio funzionale, non uno schema già implementato.
 
-**User:** Chiudi la tapparella ufficio.
+### Limite ufficiale Alexa
 
-**Ekonex:** Il comando è stato inviato, ma non ho ricevuto conferma entro il tempo previsto. Non
-posso garantire che la tapparella si sia chiusa.
+Una skill Smart Home non può usare liberamente un Echo come altoparlante remoto per pronunciare in ogni momento testo arbitrario. Un `ChangeReport` aggiorna lo stato e alcuni sensori supportati possono attivare una Routine, ma non esiste una libera API TTS per le skill Smart Home.
 
-### Stale data
+Ekonex deve usare interfacce ufficiali e consenso del cliente. Un prodotto commerciale non deve dipendere da componenti non ufficiali che simulano un client Alexa per iniettare audio negli Echo.
 
-**User:** A quanto è la batteria?
+### Percorso A: Routine con frase fissa
 
-**Ekonex:** Il valore disponibile è 68%, aggiornato 46 minuti fa. Preferisci che attenda un nuovo
-aggiornamento?
+```text
+trigger Home Assistant
+  -> sensore Ekonex esposto ad Alexa
+  -> ChangeReport
+  -> Routine configurata dal cliente
+  -> Alexa pronuncia la frase fissa della Routine
+```
 
-## Multiple installations
+È adatto a messaggi noti come «Cancello aperto» o «Perdita acqua», ma la frase non è generata dinamicamente da Home Assistant.
 
-**User:** Accendi la luce cucina.
+### Percorso B: messaggio dinamico, da prototipare
 
-**Ekonex:** Hai due installazioni con una luce cucina: Casa e Ufficio. Quale vuoi usare?
+```text
+automazione Home Assistant con testo
+  -> Connector invia evento e messaggio a Ekonex
+  -> Ekonex convalida e accoda il messaggio
+  -> un sensore Alexa supportato attiva una Routine
+  -> la Routine richiama un'azione Ekonex tramite Custom Task
+  -> Ekonex recupera l'ultimo messaggio valido
+  -> Alexa pronuncia testo o SSML
+```
 
-**User:** Casa.
+Il cliente configurerebbe una sola Routine e sceglierebbe su quali Echo riprodurre gli avvisi. Le Custom Task supportano `it-IT`, ma la catena completa deve essere verificata con un prototipo e sottoposta ad Amazon. Non va inserita nella skill ora sotto certificazione. I Custom Trigger Alexa hanno ancora disponibilità linguistica limitata e non sono oggi la base adatta al prodotto italiano.
 
-**Ekonex:** Luce cucina di Casa accesa.
+### Sicurezza e affidabilità del TTS
 
-The selected installation remains session context only for an explicit, short duration unless the
-user chooses a default in account settings.
+Il testo non viene inoltrato ciecamente. Servono:
 
-## Example structured AI output
+- coda separata per cliente e installazione;
+- identificativo, scadenza e conferma di lettura;
+- eliminazione dei duplicati e protezione dalla ripetizione dopo la riconnessione;
+- priorità, fasce silenziose, destinatari ed Echo selezionati;
+- limite di lunghezza e pulizia di testo o SSML;
+- elenco autorizzato dei trigger sorgente;
+- registro di origine, orario, consegna ed esito;
+- gestione di più eventi simultanei.
 
-The model proposes data, never executable code:
+Se Alexa non può parlare, Ekonex conserva l'evento e usa i canali di riserva configurati, come Wear OS e applicazione mobile.
+
+### Esempi di frasi create dai trigger
+
+- «Il cancello è aperto da più di dieci minuti.»
+- «La porta garage si è aperta mentre l'allarme è inserito.»
+- «L'allarme non è stato inserito perché la finestra della cucina è aperta.»
+- «Il sensore acqua lavanderia segnala una perdita.»
+- «La pompa di calore ha ricevuto il comando, ma la temperatura non sta aumentando.»
+- «La batteria è sotto il 20% e il fotovoltaico non sta producendo.»
+- «Tre dispositivi non sono più raggiungibili dopo il riavvio del gateway.»
+- «Il cancello è stato aperto correttamente.»
+
+L'AI può riassumere eventi verificati, ma non può originare o inventare un allarme.
+
+## Alexa come maggiordomo della casa
+
+Home Assistant resta il motore locale delle automazioni; Alexa fornisce microfoni e altoparlanti; Ekonex garantisce identità, permessi, affidabilità degli eventi, diagnosi e continuità tra canali.
+
+### Cancello con conferma fisica
+
+Dopo «Alexa, apri il cancello», Ekonex attende il sensore associato dall'installatore. Può rispondere:
+
+- «Cancello aperto», se il sensore conferma;
+- «Il comando è stato accettato, ma il cancello non risulta aperto»;
+- «Il cancello è ancora in movimento»;
+- «Il sensore di posizione non è disponibile».
+
+### Porte, finestre e allarme
+
+I contatti affidabili vanno esposti con l'interfaccia Alexa appropriata. Ekonex elimina rimbalzi, eventi duplicati e falsi annunci dopo una riconnessione.
+
+Il pannello di allarme deve usare l'interfaccia di sicurezza Alexa, non interruttori generici. Inserimento, disinserimento e operazioni sensibili rispettano PIN e requisiti Amazon. Intrusione, incendio, monossido e acqua possono essere segnalati soltanto da entità approvate dall'installatore. Ekonex non va presentato come sistema salvavita certificato se il prodotto completo non possiede tale certificazione.
+
+### Riepilogo della casa
+
+**Utente:** Alexa, chiedi a Ekonex se la casa è a posto.
+
+**Ekonex:** Allarme inserito in modalità notte. Porte e finestre esposte risultano chiuse. Il cancello è chiuso. Nessun allarme acqua, fumo o monossido è attivo. La presa garage è offline da 18 minuti. Fotovoltaico e batteria sono disponibili.
+
+Questo richiede la futura esperienza conversazionale Ekonex; la sola modalità Smart Home non produce liberamente riepiloghi tra domini diversi.
+
+## Ekonex Turbo: elementi distintivi
+
+- Risposte con fonte, unità, orario, ambito controllato ed esito osservato.
+- Copilota energetico con flussi, carichi, eccedenza, accumulo e costi verificabili.
+- Diagnosi comprensibili per cliente e installatore, con permessi separati.
+- Vocabolario personale e alias confermati, senza rinominare Home Assistant.
+- Continuità della conversazione tra orologio, telefono, Alexa e web.
+- Avvisi proattivi con motivo, gravità, intervallo minimo, orario e destinatario.
+- Modello operativo che collega dispositivo, attuatore, sensore di conferma, contatore e regola di sicurezza.
+
+## Esempio di richiesta strutturata
+
+Il modello propone dati, mai codice eseguibile:
 
 ```json
 {
@@ -424,284 +291,38 @@ The model proposes data, never executable code:
 }
 ```
 
-After deterministic resolution, Ekonex constructs the answer from trusted fields:
+Ekonex risolve poi l'entità e costruisce la risposta da valori affidabili, con unità e orario di osservazione.
 
-```json
-{
-  "entity_id": "sensor.pv_current_power",
-  "state": 3.8,
-  "unit": "kW",
-  "device_class": "power",
-  "available": true,
-  "observed_at": "2026-08-31T14:30:02Z"
-}
-```
+## Lavoro necessario
 
-A command proposal is validated separately:
+- Sincronizzare in sicurezza unità di misura e metadati utili.
+- Validare combinazioni tra valore, unità e classe del dispositivo.
+- Esporre una lettura limitata al cliente e alle entità autorizzate.
+- Risolvere deterministicamente nome, alias, area, dominio e classe.
+- Valutare disponibilità, orario del dato e salute del Connector.
+- Calcolare aggregazioni come batteria più bassa o stanza più calda.
+- Conservare cronologia soltanto per casi d'uso espliciti.
+- Mantenere un contesto conversazionale breve e isolato per cliente.
+- Chiedere conferma per comandi sensibili o di massa.
+- Registrare le decisioni senza audio grezzo e con conservazione configurabile del testo.
 
-```json
-{
-  "intent": "execute_command",
-  "entity_id": "cover.office",
-  "operation": "set_position",
-  "parameters": {"position": 40},
-  "requires_confirmation": false
-}
-```
+## Prima versione Wear OS
 
-## Current repository capability versus required work
+1. Associare l'orologio a un account e a un'installazione.
+2. Mostrare pulsante microfono e testo riconosciuto prima dei comandi sensibili.
+3. Leggere temperatura, fotovoltaico, ACS e percentuali batteria.
+4. Comandare luci e tapparelle con il vocabolario autorizzato.
+5. Chiedere chiarimenti in caso di più corrispondenze.
+6. Chiedere conferma per cancelli e operazioni di massa.
+7. Mostrare fonte, valore, unità, orario ed esito.
+8. Registrare decisioni e regole applicate, mai credenziali o audio grezzo.
 
-### Already available as a foundation
+## Funzione distintiva consigliata
 
-- The Home Assistant Connector synchronizes selected registry entities from any domain, including
-  `sensor` and `binary_sensor`.
-- Entity state, availability, device class, names, area, timestamps, and selected attributes reach
-  the cloud entity model.
-- Tenant isolation, account authorization, aliases, state updates, command dispatch, and audit
-  infrastructure already exist.
-- Climate entities already expose a synchronized ambient temperature attribute.
+> Fare qualsiasi domanda sull'installazione e ricevere una risposta con fonte, unità, orario, ambito controllato e un'azione successiva sicura.
 
-### Required before trustworthy sensor conversations
+**Utente:** Perché la batteria non si carica?
 
-- Safely synchronize sensor metadata such as `unit_of_measurement`, `state_class`, and only the
-  minimum additional attributes needed for supported use cases.
-- Parse finite numeric sensor states without losing precision or confusing localized formats.
-- Validate unit and Home Assistant device-class combinations (for example `power` with W/kW,
-  `energy` with Wh/kWh, `temperature` with °C/°F, and `battery` with percent).
-- Add a tenant-scoped read API that exposes only explicitly authorized entities and safe fields.
-- Add deterministic entity ranking by exact name, voice name, alias, area, device class, and domain.
-- Add freshness policy using availability, observation time, and Connector session health.
-- Add aggregation rules for queries such as lowest battery or warmest room.
-- Add statistics/history only for explicitly supported questions; current sensor history is excluded
-  by default to control storage volume.
-- Add conversational session context with a short expiry and no cross-tenant leakage.
-- Add confirmation policy for sensitive or bulk commands.
-- Add complete audit records without storing raw audio and with configurable text retention.
+**Ekonex:** La batteria è all'84%. Il fotovoltaico produce 2,7 kW e la casa consuma 3,1 kW, quindi non c'è eccedenza. Il carico maggiore misurato è la pompa di calore a 1,9 kW. Dati aggiornati alle 14:32. Vuoi che ti avvisi quando torna almeno 1 kW di eccedenza?
 
-## Initial implementation slice
-
-The first Wear OS demo should be intentionally small:
-
-1. Pair the watch with one Ekonex account and installation.
-2. Provide a microphone button and show the recognized Italian text before execution.
-3. Support read-only questions for current temperature, photovoltaic power, ACS temperature, and
-   battery percentage.
-4. Support lights and covers through the existing bounded command vocabulary.
-5. Ask for clarification on multiple matches.
-6. Require confirmation for gates and bulk actions.
-7. Display source entity, value, unit, observation time, and execution result in a diagnostic view.
-8. Log the structured decision and policy result, never authentication tokens or raw audio.
-
-This slice proves both read-only sensors and safe commands without attempting unrestricted home
-automation or an open-ended autonomous agent.
-
-## Ekonex Turbo: product differentiation
-
-Ekonex should not compete by reproducing a smaller version of Alexa, Google Home, or Home
-Assistant. Its distinctive value should be a conversational operational layer that understands the
-installation as a system: devices, measurements, energy flows, rooms, dependencies, freshness,
-failures, and installer-approved actions.
-
-### 1. Answers with evidence, not generic confirmations
-
-Most assistants say `OK` after issuing a command. Ekonex should confirm the observed result:
-
-**User:** Chiudi la tapparella ufficio.
-
-**Ekonex:** Comando eseguito. Il sensore ora indica chiusa, aggiornato due secondi fa.
-
-If command acknowledgement succeeds but observed state does not follow:
-
-**Ekonex:** Home Assistant ha accettato il comando, ma dopo 15 secondi la tapparella risulta ancora
-aperta. Potrebbe essere bloccata.
-
-This requires expected-state tracking, a bounded observation window, and explicit distinction
-between accepted, executed, and physically observed.
-
-### 2. A real home energy copilot
-
-Energy should be a first-class Ekonex experience, not a list of sensor values:
-
-**User:** Perché sto prelevando dalla rete?
-
-**Ekonex:** La casa consuma 4,2 kW, il fotovoltaico produce 2,5 kW e la batteria non sta scaricando.
-I maggiori carichi misurati sono pompa di calore 1,8 kW e forno 1,4 kW.
-
-**User:** Posso avviare la lavatrice senza prelevare?
-
-**Ekonex:** Al momento hai 1,1 kW di eccedenza e la lavatrice assorbe normalmente circa 1,9 kW.
-Conviene attendere oppure accettare circa 0,8 kW di prelievo. Vuoi essere avvisato quando
-l'eccedenza supera 2 kW?
-
-**User:** Quanto mi è costata la casa oggi?
-
-**Ekonex:** Con i dati disponibili e la tariffa configurata, la stima è 3,42 euro. Mancano però i
-dati della fascia tariffaria tra le 02:10 e le 02:26.
-
-The product must expose formulas, source sensors, missing intervals, and configured tariffs. AI may
-explain the result but deterministic code performs energy arithmetic.
-
-### 3. Ask the house what changed
-
-**User:** Cosa è successo mentre ero fuori?
-
-**Ekonex:** Dalle 08:12: il cancello è stato aperto due volte, il fotovoltaico ha prodotto 12,4 kWh,
-la batteria ha raggiunto il 100% alle 13:05 e la presa garage è diventata offline alle 15:42. Non
-risultano allarmi acqua o fumo.
-
-**User:** Perché in ufficio fa freddo?
-
-**Ekonex:** La temperatura è scesa da 21,2 a 18,7 °C in 50 minuti. La finestra risulta aperta e il
-termostato è spento. Questa è una correlazione, non la prova della causa.
-
-This is high-value contextual correlation. Ekonex must label inferred relationships as hypotheses.
-
-### 4. Installer-aware diagnosis
-
-Ekonex can help both the customer and the authorized installer:
-
-**Customer:** La tapparella non si muove.
-
-**Ekonex:** Il Connector è online. Home Assistant riceve il comando, ma la posizione non cambia. Ho
-preparato un riepilogo diagnostico senza credenziali. Vuoi condividerlo con il tuo installatore?
-
-**Installer:** Mostrami i dispositivi instabili dell'impianto Rossi negli ultimi sette giorni.
-
-**Ekonex:** Tre entità hanno avuto indisponibilità ripetute. La presa garage ha totalizzato 14
-interruzioni; il sensore esterno 6; il termostato camera 2. Posso aprire il dettaglio cronologico.
-
-Customer and installer permissions must remain separate. Sharing diagnostics is explicit,
-time-limited, tenant-scoped, and audited.
-
-### 5. Explain what Ekonex can and cannot see
-
-**User:** È tutto spento?
-
-**Ekonex:** Tutti i 24 dispositivi controllabili esposti a Ekonex risultano spenti. Non posso
-verificare dispositivi non esposti, carichi senza misurazione o apparecchi manuali.
-
-This honest scope statement is a differentiator. Ekonex should never turn incomplete visibility
-into false certainty.
-
-### 6. Personal vocabulary without renaming the installation
-
-Different family members can use different expressions for the same entity:
-
-- `luce grande`, `lampadario`, and `luce centrale` can resolve to the same light;
-- `acqua calda` and `bollitore` can resolve to the configured ACS tank;
-- `batteria casa` and `accumulo` can resolve to the photovoltaic storage battery.
-
-The user can teach an alias conversationally:
-
-**User:** Quando dico lampadario intendo luce centrale soggiorno.
-
-**Ekonex:** Vuoi aggiungere `lampadario` come tuo alias personale per luce centrale soggiorno?
-
-Aliases are normalized, collision-checked, reversible, and never learned silently from ambiguous
-commands.
-
-### 7. Cross-channel continuity
-
-A conversation can start on the watch and continue on a larger screen:
-
-**Wear user:** Perché consumiamo così tanto?
-
-**Ekonex:** Ho trovato quattro misuratori rilevanti. Vuoi il riepilogo qui o il grafico sul telefono?
-
-**User:** Mandami il grafico.
-
-The mobile or web app opens an authenticated deep link to the exact evidence view. No sensitive
-state is placed directly in an insecure notification.
-
-### 8. Proactive, quiet, and relevant
-
-Ekonex should not produce constant alerts. It should consolidate actionable anomalies:
-
-**Ekonex notification:** Da 20 minuti stai prelevando oltre 3 kW mentre la batteria è al 78% e non
-sta scaricando. Potrebbe esserci un limite o una modalità di riserva attiva. Controlla dettagli.
-
-**Ekonex notification:** La temperatura ACS non è aumentata dopo l'attivazione programmata. Il
-consumo del riscaldatore è rimasto a zero.
-
-Every proactive rule needs a user-visible reason, cooldown, severity, schedule, and disable switch.
-The first implementation should use deterministic rules; AI summarizes and helps investigate.
-
-### 9. Installation digital twin
-
-Ekonex can build an operational graph from synchronized metadata and installer confirmation:
-
-```text
-installation
-  -> area
-  -> device
-  -> actuator
-  -> state sensor
-  -> energy meter
-  -> relevant automation
-  -> safety policy
-```
-
-This graph enables questions ordinary assistants cannot answer reliably:
-
-- Which sensor verifies that this actuator actually moved?
-- Which loads explain the current grid import?
-- Which rooms are outside their comfort target?
-- Which devices depend on the offline gateway?
-- Which control can change the ACS temperature measured by this sensor?
-
-Relationships suggested by names or AI remain untrusted until confirmed by deterministic metadata
-or an installer.
-
-### 10. Privacy as a product feature
-
-- Do not store raw watch audio by default.
-- Show recognized text before a sensitive command.
-- Let the user inspect and delete conversation history.
-- Store structured intent and execution evidence separately from optional conversational text.
-- Provide a private mode that performs deterministic commands without sending text to a generative
-  model.
-- Make cloud/local processing and retention visible in the app.
-
-## Suggested product tiers
-
-### Demo
-
-- Wear OS microphone and text preview.
-- Current sensor readings with units and timestamps.
-- Lights, covers, and one confirmed gate flow.
-- Entity clarification and aliases.
-- Diagnostic evidence screen.
-
-### Ekonex Assistant
-
-- Multi-turn context.
-- Cross-sensor summaries.
-- Energy balance and deterministic calculations.
-- Proactive rules and configurable alerts.
-- Mobile/web handoff.
-
-### Ekonex Pro for installers
-
-- Fleet health summaries.
-- Repeated-offline and command-without-state-change diagnostics.
-- Time-limited customer-authorized remote evidence.
-- Installation digital-twin relationships.
-- Exportable service reports with sensitive fields removed.
-
-## Recommended signature feature
-
-The first feature that should feel uniquely Ekonex is:
-
-> Ask any question about the current installation, receive an answer with source, unit, timestamp,
-> confidence/scope, and a safe next action.
-
-Example:
-
-**User:** Perché la batteria non si carica?
-
-**Ekonex:** La batteria è al 84%. Il fotovoltaico produce 2,7 kW e la casa consuma 3,1 kW, quindi non
-c'è eccedenza disponibile. Il maggior carico misurato è la pompa di calore a 1,9 kW. Dati aggiornati
-alle 14:32. Vuoi che ti avvisi quando torna disponibile almeno 1 kW di eccedenza?
-
-This combines conversation, live telemetry, transparent reasoning, and action without letting the
-language model invent measurements or bypass control policy.
+Questa è la direzione “maggiordomo”: conversazione naturale, telemetria reale, ragionamento trasparente e azioni controllate, senza permettere al modello di inventare misure o superare le regole di sicurezza.

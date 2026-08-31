@@ -94,3 +94,8 @@ Last updated: 2026-08-31 (Europe/Rome)
   installation diagnostics, explicit visibility scope, personal aliases, and installer-authorized
   support. AI explains and resolves language; deterministic code performs calculations, validates
   commands, and enforces safety.
+- Long-term Alexa direction: map approved Home Assistant triggers and real state changes to official
+  Alexa sensor/security interfaces and proactive `ChangeReport` events. Customer-configured Alexa
+  Routines may announce selected events. Alexa must not be treated as an unrestricted text-to-speech
+  endpoint. Gate/door feedback must distinguish command acceptance from a physically observed
+  sensor result; alarms require deterministic source mappings and multiple delivery channels.
