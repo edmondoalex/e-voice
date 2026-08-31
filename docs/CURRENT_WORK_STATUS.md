@@ -79,3 +79,18 @@ Last updated: 2026-08-31 (Europe/Rome)
 3. After an authorized deploy, rediscover and run the exact requested Italian utterance test.
 4. When the Xiaomi Watch 2 is available, enable wireless debugging and install the first private
    Ekonex Voice Wear OS prototype without using the Play Store.
+
+## Conversational AI design
+
+- Detailed product examples and the proposed differentiated `Ekonex Turbo` direction are recorded
+  in `docs/EKONEX_AI_CONVERSATION_DEMO.md`.
+- The first conversational implementation should target Wear OS, where Ekonex receives recognized
+  text directly. Alexa conversational support should be a later Multi-Capability version and must
+  not modify the skill currently under certification.
+- Selected Home Assistant sensor entities already synchronize their state to the cloud, but sensor
+  units and other safe measurement metadata must be added before trustworthy answers about PV
+  production, ACS temperature, batteries, energy, and environment.
+- Product direction: evidence-backed answers, energy copilot, observed command outcomes,
+  installation diagnostics, explicit visibility scope, personal aliases, and installer-authorized
+  support. AI explains and resolves language; deterministic code performs calculations, validates
+  commands, and enforces safety.
