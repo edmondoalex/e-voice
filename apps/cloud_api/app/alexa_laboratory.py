@@ -25,6 +25,7 @@ _INTENT_PREFIXES = {
     "TemperatureIntent": "temperatura",
     "ExportedEnergyIntent": "energia oggi esportata",
     "ImportedEnergyIntent": "energia oggi importata",
+    "AlarmStatusIntent": "stato allarme",
 }
 
 

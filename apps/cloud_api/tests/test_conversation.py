@@ -62,6 +62,15 @@ def test_power_reply_infers_watts_when_unit_is_missing() -> None:
     assert reply.speech == "In questo momento il fotovoltaico sta producendo 5600 W."
 
 
+def test_answers_textual_alarm_state() -> None:
+    alarm = entity("sensor.alarm", "Allarme", "SOLO ESTERNO", None, "")
+
+    reply = ConversationEngine().ask("Qual è lo stato dell'allarme?", [alarm], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "L'allarme è inserito solo sul perimetro esterno."
+
+
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
     acs = entity(
         "sensor.acs",

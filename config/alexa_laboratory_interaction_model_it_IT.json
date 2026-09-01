@@ -72,6 +72,17 @@
           ]
         },
         {
+          "name": "AlarmStatusIntent",
+          "slots": [],
+          "samples": [
+            "qual è lo stato dell'allarme",
+            "l'allarme è inserito",
+            "come è messo l'allarme",
+            "stato allarme",
+            "controlla l'antifurto"
+          ]
+        },
+        {
           "name": "EkonexQueryIntent",
           "slots": [{"name": "query", "type": "AMAZON.SearchQuery"}],
           "samples": [

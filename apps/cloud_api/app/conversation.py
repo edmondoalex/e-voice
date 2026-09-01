@@ -61,13 +61,18 @@ class ConversationReply:
 @dataclass(frozen=True, slots=True)
 class _Intent:
     name: str
-    device_class: str
+    device_class: str | None
     subject_terms: tuple[str, ...]
     domain: str = "sensor"
     prefer_lowest: bool = False
 
 
 _INTENTS = (
+    _Intent(
+        "alarm_status",
+        None,
+        ("allarme", "antifurto", "sistema di allarme", "stato allarme"),
+    ),
     _Intent(
         "exported_energy_today",
         "energy",
@@ -108,6 +113,17 @@ _INTENTS = (
         "temperature",
         ("temperatura", "gradi", "caldo", "freddo"),
     ),
+)
+
+_COMMAND_TERMS = (
+    "apri",
+    "chiudi",
+    "attiva",
+    "disattiva",
+    "inserisci",
+    "disinserisci",
+    "accendi",
+    "spegni",
 )
 
 
@@ -189,6 +205,11 @@ class ConversationEngine:
         text = _normalize(utterance)
         if not text:
             return ConversationReply(ReplyStatus.UNSUPPORTED, "Non ho ricevuto una domanda.")
+        if any(_contains_phrase(text, term) for term in _COMMAND_TERMS):
+            return ConversationReply(
+                ReplyStatus.UNSUPPORTED,
+                "Il laboratorio è in sola lettura e non esegue comandi.",
+            )
 
         snapshots = tuple(entities)
         intent = self._detect_intent(text)
@@ -231,7 +252,7 @@ class ConversationEngine:
                 intent=intent.name,
                 evidence=(evidence,),
             )
-        if not _has_numeric_state(entity):
+        if intent.name != "alarm_status" and not _has_numeric_state(entity):
             return ConversationReply(
                 ReplyStatus.UNAVAILABLE,
                 f"Il sensore {entity.name} non contiene un valore numerico valido.",
@@ -305,7 +326,9 @@ class ConversationEngine:
     ) -> list[tuple[int, EntitySnapshot]]:
         ranked: list[tuple[int, EntitySnapshot]] = []
         for entity in entities:
-            if entity.domain != intent.domain or entity.device_class != intent.device_class:
+            if entity.domain != intent.domain:
+                continue
+            if intent.device_class is not None and entity.device_class != intent.device_class:
                 continue
             searchable = (entity.name, *entity.aliases)
             score = 1
@@ -339,6 +362,17 @@ class ConversationEngine:
     @staticmethod
     def _build_speech(intent: _Intent, entity: EntitySnapshot) -> str:
         value = _format_value(entity)
+        if intent.name == "alarm_status":
+            normalized = _normalize(entity.state or "")
+            state = {
+                "solo esterno": "inserito solo sul perimetro esterno",
+                "totale": "inserito totalmente",
+                "inserito": "inserito",
+                "disinserito": "disinserito",
+                "off": "disinserito",
+                "on": "inserito",
+            }.get(normalized, (entity.state or "non disponibile").lower())
+            return f"L'allarme è {state}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":
