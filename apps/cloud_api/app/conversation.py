@@ -69,6 +69,16 @@ class _Intent:
 
 _INTENTS = (
     _Intent(
+        "exported_energy_today",
+        "energy",
+        ("energia esportata", "energia oggi esportata", "esportata", "immessa oggi"),
+    ),
+    _Intent(
+        "imported_energy_today",
+        "energy",
+        ("energia importata", "energia oggi importata", "importata", "prelevata oggi"),
+    ),
+    _Intent(
         "consumption_power",
         "power",
         ("consumo", "consumi", "consuma", "assorbimento"),
@@ -238,6 +248,22 @@ class ConversationEngine:
             return next(intent for intent in _INTENTS if intent.name == "temperature")
         if matching_classes == {"battery"}:
             return next(intent for intent in _INTENTS if intent.name == "battery_level")
+        if matching_classes == {"energy"}:
+            matching_text = " ".join(
+                value
+                for entity in entities
+                if any(_contains_phrase(text, value) for value in (entity.name, *entity.aliases))
+                for value in (entity.name, *entity.aliases)
+            )
+            normalized_names = _normalize(matching_text)
+            if "esportata" in normalized_names or "export" in normalized_names:
+                return next(
+                    intent for intent in _INTENTS if intent.name == "exported_energy_today"
+                )
+            if "importata" in normalized_names or "import" in normalized_names:
+                return next(
+                    intent for intent in _INTENTS if intent.name == "imported_energy_today"
+                )
         if matching_classes == {"power"}:
             matching_text = " ".join(
                 value
@@ -300,6 +326,12 @@ class ConversationEngine:
             qualifier = _without_leading_word(entity.name, "potenza rete")
             subject = f"La potenza di rete {qualifier}".strip()
             return f"{subject} in questo momento è {value}."
+        if intent.name == "exported_energy_today":
+            site = "SAS" if "sas" in _normalize(entity.name).split() else "privato"
+            return f"Oggi l'impianto {site} ha esportato {value}."
+        if intent.name == "imported_energy_today":
+            site = "SAS" if "sas" in _normalize(entity.name).split() else "privato"
+            return f"Oggi l'impianto {site} ha importato {value}."
         if intent.name == "acs_temperature":
             return f"La temperatura dell'acqua calda è {value}."
         if intent.name == "battery_level":

@@ -157,6 +157,42 @@ def test_answers_grid_power_for_named_site() -> None:
     assert reply.speech == "La potenza di rete SAS in questo momento è 120 W."
 
 
+def test_exact_exported_energy_name_is_not_mistaken_for_pv_power() -> None:
+    exported = entity(
+        "sensor.export_sas",
+        "energia oggi fotovoltaico SAS esportata",
+        "4.2",
+        "kWh",
+        "energy",
+    )
+
+    reply = ConversationEngine().ask(
+        "Energia oggi fotovoltaico SAS esportata", [exported], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.intent == "exported_energy_today"
+    assert reply.speech == "Oggi l'impianto SAS ha esportato 4.2 kWh."
+
+
+def test_exact_imported_energy_name_selects_private_site() -> None:
+    imported = entity(
+        "sensor.import_private",
+        "energia oggi fotovoltaico privato importata",
+        "1.6",
+        "kWh",
+        "energy",
+    )
+
+    reply = ConversationEngine().ask(
+        "Energia oggi fotovoltaico privato importata", [imported], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.intent == "imported_energy_today"
+    assert reply.speech == "Oggi l'impianto privato ha importato 1.6 kWh."
+
+
 def test_unavailable_value_is_never_presented_as_measurement() -> None:
     battery = entity("sensor.battery", "Batteria casa", "unknown", "%", "battery")
 
