@@ -114,7 +114,20 @@ _INTENTS = (
 def _normalize(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
-    return " ".join(re.findall(r"[a-z0-9]+", without_accents))
+    tokens = re.findall(r"[a-z0-9]+", without_accents)
+    normalized: list[str] = []
+    index = 0
+    while index < len(tokens):
+        end = index
+        while end < len(tokens) and len(tokens[end]) == 1 and tokens[end].isalnum():
+            end += 1
+        if end - index >= 2:
+            normalized.append("".join(tokens[index:end]))
+            index = end
+            continue
+        normalized.append(tokens[index])
+        index += 1
+    return " ".join(normalized)
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:

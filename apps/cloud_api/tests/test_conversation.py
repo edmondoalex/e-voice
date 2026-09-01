@@ -146,6 +146,16 @@ def test_site_name_disambiguates_consumption_immediately() -> None:
     assert reply.evidence[0].entity_id == "sensor.sas"
 
 
+def test_spelled_acronym_disambiguates_sas_site() -> None:
+    sas = entity("sensor.sas", "consumo istantaneo SAS", "900", "W", "power")
+    private = entity("sensor.private", "consumo istantaneo privato", "500", "W", "power")
+
+    reply = ConversationEngine().ask("Quanto consuma s. a. s.?", [private, sas], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.evidence[0].entity_id == "sensor.sas"
+
+
 def test_answers_grid_power_for_named_site() -> None:
     sas = entity("sensor.grid_sas", "potenza rete SAS", "120", "W", "power")
     private = entity("sensor.grid_private", "potenza rete privato", "75", "W", "power")
