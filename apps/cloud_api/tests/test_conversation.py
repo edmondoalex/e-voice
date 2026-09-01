@@ -136,6 +136,27 @@ def test_answers_consumption_by_mapped_name() -> None:
     assert reply.speech == "Il consumo SAS in questo momento è 842 W."
 
 
+def test_site_name_disambiguates_consumption_immediately() -> None:
+    sas = entity("sensor.sas", "consumo istantaneo SAS", "900", "W", "power")
+    private = entity("sensor.private", "consumo istantaneo privato", "500", "W", "power")
+
+    reply = ConversationEngine().ask("Quanto consuma SAS?", [private, sas], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.evidence[0].entity_id == "sensor.sas"
+
+
+def test_answers_grid_power_for_named_site() -> None:
+    sas = entity("sensor.grid_sas", "potenza rete SAS", "120", "W", "power")
+    private = entity("sensor.grid_private", "potenza rete privato", "75", "W", "power")
+
+    reply = ConversationEngine().ask("Potenza rete SAS?", [private, sas], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.intent == "grid_power"
+    assert reply.speech == "La potenza di rete SAS in questo momento è 120 W."
+
+
 def test_unavailable_value_is_never_presented_as_measurement() -> None:
     battery = entity("sensor.battery", "Batteria casa", "unknown", "%", "battery")
 

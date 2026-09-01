@@ -79,6 +79,11 @@ _INTENTS = (
         ("fotovoltaico", "produzione fotovoltaica", "pannelli solari", "pv"),
     ),
     _Intent(
+        "grid_power",
+        "power",
+        ("potenza rete", "rete elettrica", "prelievo", "immissione", "import export"),
+    ),
+    _Intent(
         "acs_temperature",
         "temperature",
         ("acs", "acqua calda", "bollitore", "boiler"),
@@ -158,8 +163,8 @@ class ConversationEngine:
         if intent is None:
             return ConversationReply(
                 ReplyStatus.UNSUPPORTED,
-                "Per ora posso leggere fotovoltaico, consumi, temperatura ACS, "
-                "temperature e batterie.",
+                "Per ora posso leggere fotovoltaico, consumi, potenza di rete, "
+                "temperatura ACS, temperature e batterie.",
             )
 
         candidates = self._rank(text, intent, snapshots)
@@ -263,6 +268,9 @@ class ConversationEngine:
                 for term in intent.subject_terms
             ):
                 score += 4
+            query_words = set(text.split())
+            searchable_words = set(_normalize(" ".join(searchable)).split())
+            score += 2 * len(query_words & searchable_words)
             ranked.append((score, entity))
         return sorted(ranked, key=lambda item: (-item[0], item[1].name.casefold()))
 
@@ -287,6 +295,10 @@ class ConversationEngine:
             qualifier = _without_leading_word(entity.name, "consumo istantaneo")
             qualifier = _without_leading_word(qualifier, "consumo")
             subject = f"Il consumo {qualifier}".strip()
+            return f"{subject} in questo momento è {value}."
+        if intent.name == "grid_power":
+            qualifier = _without_leading_word(entity.name, "potenza rete")
+            subject = f"La potenza di rete {qualifier}".strip()
             return f"{subject} in questo momento è {value}."
         if intent.name == "acs_temperature":
             return f"La temperatura dell'acqua calda è {value}."
