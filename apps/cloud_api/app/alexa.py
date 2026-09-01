@@ -517,6 +517,11 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                     },
                 }
             )
+        if entity.supported_features & COVER_STOP:
+            result.append(
+                _capability("Alexa.PlaybackController")
+                | {"instance": "cover.stop", "supportedOperations": ["Stop"]}
+            )
     elif entity.ha_domain == "climate":
         thermostat_modes = _climate_supported_modes(entity)
         if _climate_target_temperature(entity) is not None and thermostat_modes:

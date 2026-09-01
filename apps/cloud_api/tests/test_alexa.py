@@ -487,6 +487,7 @@ def test_cover_device_class_category_does_not_change_discrete_contract() -> None
         ("Alexa.EndpointHealth", None),
         ("Alexa.PowerController", None),
         ("Alexa.ModeController", "Blinds.Position"),
+        ("Alexa.PlaybackController", "cover.stop"),
     ]
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Up"}, entity) == {
         "operation": "open"
@@ -1103,6 +1104,7 @@ async def test_alexa_command_diagnostics_preserve_end_to_end_correlation(
         {"interface": "Alexa.EndpointHealth", "instance": None},
         {"interface": "Alexa.PowerController", "instance": None},
         {"interface": "Alexa.ModeController", "instance": "Blinds.Position"},
+        {"interface": "Alexa.PlaybackController", "instance": "cover.stop"},
     ]
     service_call = next(
         event for event in events if event.event_type == "homeassistant.service_call"
@@ -1310,7 +1312,16 @@ def test_cover_modes_are_feature_safe_stable_and_support_expected_directives() -
         "Position.Down",
     ]
     assert _command("Alexa.ModeController", "SetMode", {"mode": "Position.Stopped"}, entity) is None
-    assert all(item["interface"] != "Alexa.PlaybackController" for item in discrete["capabilities"])
+    playback = next(
+        item for item in discrete["capabilities"] if item["interface"] == "Alexa.PlaybackController"
+    )
+    assert playback == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.PlaybackController",
+        "version": "3",
+        "instance": "cover.stop",
+        "supportedOperations": ["Stop"],
+    }
     assert _command("Alexa.PlaybackController", "Pause", {}, entity) == {"operation": "stop"}
     assert _command("Alexa.PlaybackController", "Stop", {}, entity) == {"operation": "stop"}
     assert _command("Alexa.ModeController", "SetMode", {"mode": "position.custom"}, entity) == {
@@ -1638,10 +1649,18 @@ async def test_discover_response_uses_canonical_discrete_blinds_json(
             },
         ],
     }
-    assert all(
-        capability["interface"] != "Alexa.PlaybackController"
+    playback = next(
+        capability
         for capability in endpoint["capabilities"]
+        if capability["interface"] == "Alexa.PlaybackController"
     )
+    assert playback == {
+        "type": "AlexaInterface",
+        "interface": "Alexa.PlaybackController",
+        "version": "3",
+        "instance": "cover.stop",
+        "supportedOperations": ["Stop"],
+    }
     assert controller["semantics"]["actionMappings"] == [
         {
             "@type": "ActionsToDirective",

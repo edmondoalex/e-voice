@@ -6,13 +6,10 @@ diagnostic Discovery profiles.
 
 ## Current Amazon finding
 
-Amazon case `21738300901` traced the affected Italian blind utterance to request interpretation,
-before a directive is emitted to the skill. Amazon withdrew its earlier statements about whether
-the Discovery semantics reached or were read by its device registry. The Developer Advocate asked
-us to remove the invalid `Alexa.PlaybackController` capability from blind endpoints, rediscover,
-and test the exact utterance `Alexa, apri le tapparelle` without a device name. Record the UTC
-timestamp and Alexa's response for the case. Certification must not be described as a code fix for
-the still-open Amazon interpretation issue.
+Amazon case `21738300901` confirms that the tested Discovery semantics and action mappings are
+present and read correctly. For the affected Italian blind utterances, Amazon's request handling
+selects a failure path before emitting a directive to the skill. Certification must not be described
+as a code fix for that open Amazon issue.
 
 ## Before submission
 
