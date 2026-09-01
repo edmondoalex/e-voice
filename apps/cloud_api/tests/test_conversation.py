@@ -111,6 +111,15 @@ def test_unavailable_value_is_never_presented_as_measurement() -> None:
     assert "unknown" not in reply.speech
 
 
+def test_battery_reply_does_not_repeat_name_or_space_percent() -> None:
+    battery = entity("sensor.battery", "batteria SAS", "13", "%", "battery")
+
+    reply = ConversationEngine().ask("A quanto è la batteria SAS?", [battery], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "La batteria SAS è al 13%."
+
+
 def test_non_numeric_sensor_state_is_not_spoken_as_measurement() -> None:
     battery = entity("sensor.battery", "Batteria casa", "charging", "%", "battery")
 

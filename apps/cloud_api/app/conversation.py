@@ -104,7 +104,19 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 
 def _format_value(entity: EntitySnapshot) -> str:
     value = entity.state or ""
+    if entity.unit in {"%", "°C", "°F"}:
+        return f"{value}{entity.unit}"
     return f"{value} {entity.unit}".strip()
+
+
+def _without_leading_word(value: str, word: str) -> str:
+    normalized = _normalize(value)
+    normalized_word = _normalize(word)
+    if normalized == normalized_word:
+        return ""
+    if normalized.startswith(f"{normalized_word} "):
+        return value.split(maxsplit=1)[1]
+    return value
 
 
 def _has_numeric_state(entity: EntitySnapshot) -> bool:
@@ -241,7 +253,9 @@ class ConversationEngine:
         if intent.name == "acs_temperature":
             return f"La temperatura dell'acqua calda è {value}."
         if intent.name == "battery_level":
-            return f"La batteria {entity.name} è al {value}."
+            qualifier = _without_leading_word(entity.name, "batteria")
+            subject = f"La batteria {qualifier}".strip()
+            return f"{subject} è al {value}."
         area = f" in {entity.area}" if entity.area else ""
         return f"La temperatura{area} è {value}."
 
