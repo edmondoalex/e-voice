@@ -124,9 +124,14 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 
 def _format_value(entity: EntitySnapshot) -> str:
     value = entity.state or ""
-    if entity.unit in {"%", "°C", "°F"}:
-        return f"{value}{entity.unit}"
-    return f"{value} {entity.unit}".strip()
+    unit = entity.unit
+    if not unit and entity.device_class in {"battery", "battery_level"}:
+        unit = "%"
+    if not unit:
+        return value
+    if unit in {"%", "°C", "°F"}:
+        return f"{value}{unit}"
+    return f"{value} {unit}".strip()
 
 
 def _without_leading_word(value: str, word: str) -> str:
