@@ -16,6 +16,21 @@ def launch(skill_id: str = SKILL_ID) -> dict[str, object]:
     }
 
 
+def intent(name: str, **slots: str) -> dict[str, object]:
+    return {
+        "session": {"application": {"applicationId": SKILL_ID}},
+        "request": {
+            "type": "IntentRequest",
+            "intent": {
+                "name": name,
+                "slots": {
+                    key: {"name": key, "value": value} for key, value in slots.items()
+                },
+            },
+        },
+    }
+
+
 @pytest.fixture
 async def client(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
     async def database_override():  # type: ignore[no-untyped-def]
@@ -54,3 +69,22 @@ async def test_wrong_skill_id_is_rejected(client: httpx.AsyncClient) -> None:
 async def test_missing_lambda_credential_is_rejected(client: httpx.AsyncClient) -> None:
     response = await client.post("/alexa/laboratory", json=launch())
     assert response.status_code == 401
+
+
+def test_structured_temperature_intent_builds_canonical_utterance() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("TemperatureIntent", sensor="acqua calda")["request"]["intent"]
+
+    assert _utterance(alexa_intent) == "temperatura acqua calda"
+
+
+async def test_fallback_gives_a_useful_example(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/alexa/laboratory",
+        json=intent("AMAZON.FallbackIntent"),
+        headers={"Authorization": "Bearer lab-secret"},
+    )
+
+    assert response.status_code == 200
+    assert "quanto produce" in response.json()["response"]["outputSpeech"]["text"]

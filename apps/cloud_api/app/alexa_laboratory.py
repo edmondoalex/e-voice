@@ -17,6 +17,16 @@ from .domain.models import Installation, Tenant
 router = APIRouter(tags=["alexa-laboratory"])
 session_dependency = Depends(get_database_session)
 
+_INTENT_PREFIXES = {
+    "PhotovoltaicIntent": "quanto produce il fotovoltaico",
+    "ConsumptionIntent": "quanto consuma",
+    "BatteryIntent": "batteria",
+    "GridPowerIntent": "potenza rete",
+    "TemperatureIntent": "temperatura",
+    "ExportedEnergyIntent": "energia oggi esportata",
+    "ImportedEnergyIntent": "energia oggi importata",
+}
+
 
 def _speech(text: str, *, end: bool) -> dict[str, Any]:
     return {
@@ -35,6 +45,24 @@ def _application_id(payload: dict[str, Any]) -> str | None:
         if isinstance(application, dict) and isinstance(application.get("applicationId"), str):
             return str(application["applicationId"])
     return None
+
+
+def _slot_value(intent: dict[str, Any], name: str) -> str | None:
+    slots = intent.get("slots")
+    slot = slots.get(name) if isinstance(slots, dict) else None
+    value = slot.get("value") if isinstance(slot, dict) else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _utterance(intent: dict[str, Any]) -> str | None:
+    intent_name = intent.get("name")
+    if intent_name == "EkonexQueryIntent":
+        return _slot_value(intent, "query")
+    prefix = _INTENT_PREFIXES.get(str(intent_name))
+    if prefix is None:
+        return None
+    subject = _slot_value(intent, "site") or _slot_value(intent, "sensor")
+    return f"{prefix} {subject}" if subject else prefix
 
 
 @router.post("/alexa/laboratory")
@@ -61,9 +89,21 @@ async def laboratory(
     if request_type != "IntentRequest" or not isinstance(request, dict):
         return _speech("Questa richiesta non è supportata dal laboratorio.", end=True)
     intent = request.get("intent")
-    slots = intent.get("slots") if isinstance(intent, dict) else None
-    query = slots.get("query") if isinstance(slots, dict) else None
-    utterance = query.get("value") if isinstance(query, dict) else None
+    intent_name = intent.get("name") if isinstance(intent, dict) else None
+    if intent_name in {"AMAZON.StopIntent", "AMAZON.CancelIntent"}:
+        return _speech("Va bene, a presto.", end=True)
+    if intent_name == "AMAZON.HelpIntent":
+        return _speech(
+            "Puoi chiedermi produzione fotovoltaica, consumi, batterie, potenza di rete "
+            "e temperature.",
+            end=False,
+        )
+    if intent_name == "AMAZON.FallbackIntent":
+        return _speech(
+            "Non ho capito la domanda. Prova, quanto produce il fotovoltaico SAS?",
+            end=False,
+        )
+    utterance = _utterance(intent) if isinstance(intent, dict) else None
     if not isinstance(utterance, str) or not utterance.strip():
         return _speech("Non ho capito cosa vuoi sapere.", end=False)
 

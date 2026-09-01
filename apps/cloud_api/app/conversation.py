@@ -138,8 +138,14 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 def _format_value(entity: EntitySnapshot) -> str:
     value = entity.state or ""
     unit = entity.unit
-    if not unit and entity.device_class in {"battery", "battery_level"}:
-        unit = "%"
+    if not unit:
+        unit = {
+            "battery": "%",
+            "battery_level": "%",
+            "energy": "kWh",
+            "power": "W",
+            "temperature": "°C",
+        }.get(entity.device_class or "")
     if not unit:
         return value
     if unit in {"%", "°C", "°F"}:

@@ -51,6 +51,17 @@ def test_answers_photovoltaic_power_with_evidence() -> None:
     assert reply.evidence[0].entity_id == "sensor.pv_power"
 
 
+def test_power_reply_infers_watts_when_unit_is_missing() -> None:
+    pv = entity("sensor.pv_power", "Fotovoltaico SAS", "5600", None, "power")
+
+    reply = ConversationEngine().ask(
+        "Quanto produce il fotovoltaico s. a. s.?", [pv], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "In questo momento il fotovoltaico sta producendo 5600 W."
+
+
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
     acs = entity(
         "sensor.acs",

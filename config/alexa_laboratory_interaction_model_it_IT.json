@@ -1,0 +1,108 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "casa ekonex",
+      "intents": [
+        {
+          "name": "PhotovoltaicIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "quanto produce il fotovoltaico {site}",
+            "produzione fotovoltaico {site}",
+            "quanto stanno producendo i pannelli {site}",
+            "fotovoltaico {site}"
+          ]
+        },
+        {
+          "name": "ConsumptionIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "quanto consuma {site}",
+            "qual è il consumo {site}",
+            "consumo istantaneo {site}",
+            "consumi {site}"
+          ]
+        },
+        {
+          "name": "BatteryIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "quanto è carica la batteria {site}",
+            "qual è la batteria {site}",
+            "percentuale batteria {site}",
+            "batteria {site}"
+          ]
+        },
+        {
+          "name": "GridPowerIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "qual è la potenza di rete {site}",
+            "quanto preleva dalla rete {site}",
+            "potenza rete {site}",
+            "rete elettrica {site}"
+          ]
+        },
+        {
+          "name": "TemperatureIntent",
+          "slots": [{"name": "sensor", "type": "EKONEX_TEMPERATURE_SENSOR"}],
+          "samples": [
+            "qual è la temperatura {sensor}",
+            "dimmi la temperatura {sensor}",
+            "quanti gradi ha {sensor}",
+            "temperatura {sensor}"
+          ]
+        },
+        {
+          "name": "ExportedEnergyIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "quanta energia ha esportato oggi {site}",
+            "energia esportata oggi {site}",
+            "quanto ha immesso oggi {site}"
+          ]
+        },
+        {
+          "name": "ImportedEnergyIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "quanta energia ha importato oggi {site}",
+            "energia importata oggi {site}",
+            "quanto ha prelevato oggi {site}"
+          ]
+        },
+        {
+          "name": "EkonexQueryIntent",
+          "slots": [{"name": "query", "type": "AMAZON.SearchQuery"}],
+          "samples": [
+            "fammi sapere {query}",
+            "vorrei sapere {query}",
+            "dammi informazioni su {query}",
+            "controlla {query}"
+          ]
+        },
+        {"name": "AMAZON.HelpIntent", "samples": []},
+        {"name": "AMAZON.StopIntent", "samples": []},
+        {"name": "AMAZON.CancelIntent", "samples": []},
+        {"name": "AMAZON.FallbackIntent", "samples": []}
+      ],
+      "types": [
+        {
+          "name": "EKONEX_SITE",
+          "values": [
+            {"id": "sas", "name": {"value": "SAS", "synonyms": ["s a s", "azienda", "uffici"]}},
+            {"id": "privato", "name": {"value": "privato", "synonyms": ["casa", "abitazione"]}}
+          ]
+        },
+        {
+          "name": "EKONEX_TEMPERATURE_SENSOR",
+          "values": [
+            {"id": "acs", "name": {"value": "acqua calda", "synonyms": ["ACS", "a c s", "bollitore", "sanitario"]}},
+            {"id": "puffer_alto", "name": {"value": "puffer alto", "synonyms": ["accumulo termico alto", "parte alta del puffer", "puffer"]}},
+            {"id": "volano", "name": {"value": "volano", "synonyms": ["volano termico", "temperatura volano"]}}
+          ]
+        }
+      ]
+    }
+  }
+}
