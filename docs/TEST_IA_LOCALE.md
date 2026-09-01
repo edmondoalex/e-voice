@@ -64,3 +64,9 @@ Il passo successivo collegherà il motore alle entità già sincronizzate nel cl
 
 Solo dopo questa verifica si aggiungeranno il modello linguistico e, separatamente, comandi con
 regole deterministiche e conferma esplicita.
+
+Il servizio applicativo per questo passaggio è ora presente, ma non è distribuito. Converte le
+entità persistite in istantanee minime, esclude quelle eliminate e verifica l'appartenenza
+dell'installazione al cliente. Il Connector sincronizza inoltre `unit_of_measurement` e
+`state_class` per i sensori; l'installazione reale richiederà quindi una nuova sincronizzazione dopo
+la futura distribuzione controllata del Connector.

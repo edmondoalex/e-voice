@@ -24,6 +24,8 @@ from homeassistant.helpers import label_registry as lr
 from .evcp import MAX_MESSAGE_BYTES, envelope
 
 ATTRIBUTE_ALLOWLIST = {
+    "sensor": frozenset({"unit_of_measurement", "state_class"}),
+    "binary_sensor": frozenset(),
     "light": frozenset(
         {
             "brightness",

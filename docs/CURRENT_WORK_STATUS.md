@@ -11,6 +11,10 @@ Last updated: 2026-08-31 (Europe/Rome)
 - The core returns evidence, detects ambiguity/unavailable/stale data, and cannot execute commands.
 - `scripts/demo_conversation.py` provides an offline interactive test; the focused suite contains
   eight passing tests. Alexa production and the skill under certification are untouched.
+- The read-only application service can now build conversational snapshots from persisted,
+  installation-scoped entities. It rejects cross-tenant installation IDs and omits deleted
+  entities. Sensor synchronization is prepared to include bounded `unit_of_measurement` and
+  `state_class` metadata. This work remains local and undeployed.
 
 ## Alexa certification and support case
 
