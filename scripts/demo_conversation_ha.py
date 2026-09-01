@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from apps.cloud_api.app.conversation import ConversationSession, EntitySnapshot
+from apps.cloud_api.app.conversation import ConversationReply, ConversationSession, EntitySnapshot
 
 ALLOWLIST_PATH = Path(__file__).resolve().parents[1] / "config" / "assistant_entities.local.json"
 
@@ -120,15 +120,25 @@ def main() -> None:
         "Nessun altro sensore verrà usato e nessun comando verrà inviato."
     )
     session = ConversationSession()
+    last_reply: ConversationReply | None = None
+    print("Scrivi 'dettagli' per vedere la fonte dell'ultima risposta o 'esci' per terminare.")
     while True:
         utterance = input("Tu: ").strip()
         if utterance.casefold() in {"esci", "quit", "exit"}:
             return
+        if utterance.casefold() == "dettagli":
+            if last_reply is None or not last_reply.evidence:
+                print("Ekonex: Non ci sono dettagli disponibili per l'ultima risposta.")
+            else:
+                source = last_reply.evidence[0]
+                print(
+                    f"Ekonex: Fonte {source.entity_id}, dato {source.value} "
+                    f"{source.unit or ''}.".replace(" %.", "%.")
+                )
+            continue
         reply = session.ask(utterance, entities)
+        last_reply = reply
         print(f"Ekonex: {reply.speech}")
-        if reply.evidence:
-            source = reply.evidence[0]
-            print(f"  fonte: {source.entity_id}, dato: {source.value} {source.unit or ''}".rstrip())
 
 
 if __name__ == "__main__":

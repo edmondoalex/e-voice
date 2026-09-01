@@ -24,8 +24,9 @@ soggiorno
 Disattiva l'allarme e apri il cancello
 ```
 
-La demo mostra anche l'entità usata come fonte. L'ultima frase deve essere rifiutata perché questa
-versione è esclusivamente informativa.
+La risposta normale non mostra dettagli tecnici. Scrivendo `dettagli` dopo una risposta si può
+controllare l'entità usata come fonte. L'ultima frase deve essere rifiutata perché questa versione è
+esclusivamente informativa.
 
 Per terminare, scrivere `esci`.
 

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from apps.cloud_api.app.conversation import ConversationSession, EntitySnapshot
+from apps.cloud_api.app.conversation import ConversationReply, ConversationSession, EntitySnapshot
 
 DEMO_ENTITIES = (
     EntitySnapshot(
@@ -50,18 +50,27 @@ DEMO_ENTITIES = (
 
 def main() -> None:
     session = ConversationSession()
-    print("Demo Ekonex IA locale. Scrivi 'esci' per terminare.")
+    last_reply: ConversationReply | None = None
+    print("Demo Ekonex IA locale. Scrivi 'dettagli' per la fonte o 'esci' per terminare.")
     while True:
         utterance = input("Tu: ").strip()
         if utterance.casefold() in {"esci", "quit", "exit"}:
             return
+        if utterance.casefold() == "dettagli":
+            if last_reply is None or not last_reply.evidence:
+                print("Ekonex: Non ci sono dettagli disponibili per l'ultima risposta.")
+            else:
+                source = last_reply.evidence[0]
+                print(
+                    f"Ekonex: Fonte {source.entity_id}, dato {source.value} "
+                    f"{source.unit or ''}.".replace(" %.", "%.")
+                )
+            continue
         reply = session.ask(
             utterance, DEMO_ENTITIES, now=datetime(2026, 9, 1, 8, 5, tzinfo=UTC)
         )
+        last_reply = reply
         print(f"Ekonex: {reply.speech}")
-        if reply.evidence:
-            source = reply.evidence[0]
-            print(f"  fonte: {source.entity_id}, dato: {source.value} {source.unit or ''}".rstrip())
 
 
 if __name__ == "__main__":
