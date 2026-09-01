@@ -79,6 +79,22 @@ def test_structured_temperature_intent_builds_canonical_utterance() -> None:
     assert _utterance(alexa_intent) == "temperatura acqua calda"
 
 
+def test_structured_intent_prefers_alexa_canonical_slot_resolution() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("ConsumptionIntent", site="s. a. s.")["request"]["intent"]
+    alexa_intent["slots"]["site"]["resolutions"] = {
+        "resolutionsPerAuthority": [
+            {
+                "status": {"code": "ER_SUCCESS_MATCH"},
+                "values": [{"value": {"name": "SAS", "id": "sas"}}],
+            }
+        ]
+    }
+
+    assert _utterance(alexa_intent) == "quanto consuma SAS"
+
+
 async def test_fallback_gives_a_useful_example(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/alexa/laboratory",

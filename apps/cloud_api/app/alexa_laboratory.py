@@ -51,6 +51,27 @@ def _application_id(payload: dict[str, Any]) -> str | None:
 def _slot_value(intent: dict[str, Any], name: str) -> str | None:
     slots = intent.get("slots")
     slot = slots.get(name) if isinstance(slots, dict) else None
+    resolutions = slot.get("resolutions") if isinstance(slot, dict) else None
+    authorities = (
+        resolutions.get("resolutionsPerAuthority")
+        if isinstance(resolutions, dict)
+        else None
+    )
+    if isinstance(authorities, list):
+        for authority in authorities:
+            if not isinstance(authority, dict):
+                continue
+            match_status = authority.get("status")
+            if not isinstance(match_status, dict) or match_status.get("code") != "ER_SUCCESS_MATCH":
+                continue
+            values = authority.get("values")
+            if not isinstance(values, list):
+                continue
+            for candidate in values:
+                resolved = candidate.get("value") if isinstance(candidate, dict) else None
+                canonical_name = resolved.get("name") if isinstance(resolved, dict) else None
+                if isinstance(canonical_name, str) and canonical_name.strip():
+                    return canonical_name.strip()
     value = slot.get("value") if isinstance(slot, dict) else None
     return value.strip() if isinstance(value, str) and value.strip() else None
 
