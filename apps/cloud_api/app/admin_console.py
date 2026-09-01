@@ -133,6 +133,7 @@ aside{{position:fixed;inset:0 auto 0 0;width:230px;background:#101828;color:whit
 aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;border-radius:7px}}aside a:hover,aside a:focus-visible{{background:#1d2939;color:white}}aside a.active{{background:#344054;color:white;font-weight:700}}main{{margin-left:230px;padding:28px;max-width:1400px}}
 .brand-logo{{display:block;width:min(100%,160px);height:auto;aspect-ratio:1/1;object-fit:contain;margin:0 auto 20px;border-radius:10px;background:#050505}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}
 .card,table{{background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818}}.card{{padding:18px}}table{{width:100%;border-collapse:collapse;margin-top:16px}}
+.entity-group{{margin-top:12px;background:var(--card);border-radius:10px;box-shadow:0 1px 3px #10182818;overflow:hidden}}.entity-group summary{{display:flex;align-items:center;gap:12px;padding:16px 18px;cursor:pointer;font-weight:800;list-style:none}}.entity-group summary::-webkit-details-marker{{display:none}}.entity-group summary::before{{content:"▶";font-size:12px;color:var(--blue);transition:transform .15s ease}}.entity-group[open] summary::before{{transform:rotate(90deg)}}.entity-group-count{{margin-left:auto;padding:3px 9px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px}}.entity-group table{{margin:0;border-radius:0;box-shadow:none;border-top:1px solid #eaecf0}}
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
 .ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.warn{{color:var(--removed)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}.compat-badge{{display:inline-block;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800}}.compat-ok{{background:#dcfae6;color:var(--ok)}}.compat-update{{background:#fef0c7;color:#93370d}}.compat-bad{{background:#fee4e2;color:var(--bad)}}.compat-offline{{background:#eaecf0;color:var(--off)}}.compat-alert{{border:2px solid var(--bad);background:#fff5f4}}.global-warning{{border-left:6px solid var(--bad);background:#fff5f4;margin-bottom:16px}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
@@ -455,7 +456,7 @@ async def installation_detail(
             },
         )
     csrf = _csrf(context)
-    rows = "".join(_entity_row(item, entity, csrf) for entity in entities)
+    entity_groups = _entity_groups(item, entities, csrf)
     resync_status = request.query_params.get("alexa_resync", "")
     resync_count = request.query_params.get("sent", "0")
     resync_notice = (
@@ -466,7 +467,8 @@ async def installation_detail(
         else ""
     )
     resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th><th>Comandi diretti</th></tr></thead><tbody>{rows or "<tr><td colspan=4>Nessuna entità</td></tr>"}</tbody></table>'
+    entity_content = entity_groups or '<div class="card"><p>Nessuna entità</p></div>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -608,6 +610,44 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
         state_class = "neutral"
     icon = entity_icon_svg(entity.icon, entity.ha_domain)
     return f'<tr class="state-{state_class}" data-entity-row="{entity.id}"><td><div class="entity-summary">{icon}<div class="entity-meta"><span class="voice-label">Nome vocale: {_e(voice_name)}</span><br><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot state-{state_class}"></span><span class="entity-state">{_e(lifecycle)}</span><br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}<span class="command-feedback" role="status" aria-live="polite"></span></div></td></tr>'
+
+
+ENTITY_DOMAIN_LABELS = {
+    "sensor": "Sensori",
+    "binary_sensor": "Sensori binari",
+    "light": "Luci",
+    "switch": "Interruttori",
+    "cover": "Tapparelle e tende",
+    "climate": "Clima",
+    "fan": "Ventilazione",
+    "scene": "Scenari",
+    "script": "Script",
+    "button": "Pulsanti",
+    "alarm_control_panel": "Allarmi",
+    "lock": "Serrature",
+}
+
+
+def _entity_groups(installation: Installation, entities: list[Entity], csrf: str) -> str:
+    grouped: dict[str, list[Entity]] = {}
+    for entity in entities:
+        grouped.setdefault(entity.ha_domain, []).append(entity)
+    sections: list[str] = []
+    for domain in sorted(
+        grouped,
+        key=lambda value: (ENTITY_DOMAIN_LABELS.get(value, value).casefold(), value),
+    ):
+        domain_entities = grouped[domain]
+        rows = "".join(_entity_row(installation, entity, csrf) for entity in domain_entities)
+        label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
+        sections.append(
+            f'<details class="entity-group" data-domain="{_e(domain)}">'
+            f'<summary><span>{_e(label)}</span>'
+            f'<span class="entity-group-count">{len(domain_entities)}</span></summary>'
+            '<table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th>'
+            f'<th>Comandi diretti</th></tr></thead><tbody>{rows}</tbody></table></details>'
+        )
+    return "".join(sections)
 
 
 def _light_level(entity: Entity) -> int:

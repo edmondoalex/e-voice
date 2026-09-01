@@ -15,6 +15,10 @@ Last updated: 2026-08-31 (Europe/Rome)
   installation-scoped entities. It rejects cross-tenant installation IDs and omits deleted
   entities. Sensor synchronization is prepared to include bounded `unit_of_measurement` and
   `state_class` metadata. This work remains local and undeployed.
+- The installation portal now groups entities into collapsed domain panels (sensors, lights,
+  covers, climate, and other types) with per-group counts. Opening a panel reveals its existing
+  entity table and controls; all groups start compact. The complete 34-test admin-console suite
+  passes. This user-interface change is local and does not alter Alexa Discovery.
 
 ## Alexa certification and support case
 

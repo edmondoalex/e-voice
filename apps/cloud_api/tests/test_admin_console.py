@@ -415,6 +415,45 @@ async def test_installation_hides_soft_deleted_entities(
     await client.aclose()
 
 
+async def test_installation_groups_entities_by_collapsed_type(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    session.add_all(
+        [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="sensor.pv_power",
+                ha_domain="sensor",
+                friendly_name="Produzione fotovoltaica",
+                device_class="power",
+                state="2000",
+            ),
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="cover.office",
+                ha_domain="cover",
+                friendly_name="Tapparella ufficio",
+                state="closed",
+            ),
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    assert page.status_code == 200
+    assert '<details class="entity-group" data-domain="sensor">' in page.text
+    assert '<details class="entity-group" data-domain="light">' in page.text
+    assert '<details class="entity-group" data-domain="cover">' in page.text
+    assert "<summary><span>Sensori</span>" in page.text
+    assert "<summary><span>Luci</span>" in page.text
+    assert "<summary><span>Tapparelle e tende</span>" in page.text
+    assert '<details class="entity-group" data-domain="sensor" open>' not in page.text
+    await client.aclose()
+
+
 async def test_climate_controls_render_and_dispatch_closed_commands(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:
