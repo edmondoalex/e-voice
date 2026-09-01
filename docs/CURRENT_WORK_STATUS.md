@@ -2,6 +2,16 @@
 
 Last updated: 2026-08-31 (Europe/Rome)
 
+## Conversational AI local test (2026-09-01)
+
+- Development continues on `agent/conversation-core-demo`; the withdrawn PlaybackController
+  removal is reverted on this branch and must not be deployed.
+- A channel-independent, read-only conversation core now answers a bounded Italian demo for
+  photovoltaic power, ACS temperature, batteries, and room temperature.
+- The core returns evidence, detects ambiguity/unavailable/stale data, and cannot execute commands.
+- `scripts/demo_conversation.py` provides an offline interactive test; the focused suite contains
+  eight passing tests. Alexa production and the skill under certification are untouched.
+
 ## Alexa certification and support case
 
 - The Ekonex Voice Smart Home skill is under Amazon certification.
