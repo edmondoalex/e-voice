@@ -53,13 +53,18 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     request = Request(
         f"{base_url}{BACKEND_PATH}",
         data=json.dumps(event, separators=(",", ":")).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "ekonex-laboratory-lambda/1",
+        },
         method="POST",
     )
     try:
         with urlopen(request, timeout=8) as response:  # noqa: S310 - HTTPS validated above
             value = json.loads(response.read(262_145).decode())
-    except Exception:  # Lambda boundary must always return valid Alexa speech.
+    except Exception as exc:  # Lambda boundary must always return valid Alexa speech.
+        print(f"laboratory backend request failed: {type(exc).__name__}: {exc}")
         return _response("Il laboratorio Ekonex non è momentaneamente disponibile.")
     return cast(dict[str, Any], value) if isinstance(value, dict) else _response(
         "Il laboratorio Ekonex ha restituito una risposta non valida."
