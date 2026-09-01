@@ -227,3 +227,26 @@ class ConversationEngine:
             return f"La batteria {entity.name} è al {value}."
         area = f" in {entity.area}" if entity.area else ""
         return f"La temperatura{area} è {value}."
+
+
+class ConversationSession:
+    """Mantiene soltanto il contesto necessario a risolvere un chiarimento."""
+
+    def __init__(self, engine: ConversationEngine | None = None) -> None:
+        self._engine = engine or ConversationEngine()
+        self._pending_utterance: str | None = None
+
+    def ask(
+        self, utterance: str, entities: Iterable[EntitySnapshot], *, now: datetime | None = None
+    ) -> ConversationReply:
+        snapshots = tuple(entities)
+        effective_utterance = utterance
+        if self._pending_utterance is not None:
+            effective_utterance = f"{self._pending_utterance} {utterance}"
+
+        reply = self._engine.ask(effective_utterance, snapshots, now=now)
+        if reply.status is ReplyStatus.AMBIGUOUS:
+            self._pending_utterance = effective_utterance
+        else:
+            self._pending_utterance = None
+        return reply

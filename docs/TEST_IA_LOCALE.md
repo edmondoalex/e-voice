@@ -19,6 +19,8 @@ Quanto produce il fotovoltaico?
 Qual è la temperatura dell'acqua calda?
 A quanto è la batteria di casa?
 Quanti gradi ci sono in soggiorno?
+Qual è la temperatura?
+soggiorno
 Disattiva l'allarme e apri il cancello
 ```
 
@@ -43,6 +45,7 @@ I test verificano:
 - risposta fotovoltaica accompagnata dalla fonte;
 - riconoscimento degli alias ACS;
 - chiarimento quando due sensori sono equivalenti;
+- risposta breve al chiarimento usando un contesto temporaneo;
 - scelta della temperatura tramite area;
 - rifiuto di valori `unknown`;
 - segnalazione di un dato vecchio;

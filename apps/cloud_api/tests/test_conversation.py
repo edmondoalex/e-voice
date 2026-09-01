@@ -3,6 +3,7 @@ from typing import Any
 
 from apps.cloud_api.app.conversation import (
     ConversationEngine,
+    ConversationSession,
     EntitySnapshot,
     ReplyStatus,
 )
@@ -142,3 +143,51 @@ def test_unsupported_request_cannot_become_a_command() -> None:
 
     assert reply.status is ReplyStatus.UNSUPPORTED
     assert not reply.evidence
+
+
+def test_session_resolves_short_follow_up_after_ambiguity() -> None:
+    acs = entity(
+        "sensor.acs",
+        "Temperatura ACS",
+        "54",
+        "°C",
+        "temperature",
+        aliases=("acqua calda", "acs"),
+    )
+    living = entity(
+        "sensor.living",
+        "Temperatura soggiorno",
+        "22.4",
+        "°C",
+        "temperature",
+        area="soggiorno",
+    )
+    session = ConversationSession()
+
+    first = session.ask("Qual è la temperatura?", [acs, living], now=NOW)
+    second = session.ask("soggiorno", [acs, living], now=NOW)
+
+    assert first.status is ReplyStatus.AMBIGUOUS
+    assert second.status is ReplyStatus.ANSWERED
+    assert second.evidence[0].entity_id == "sensor.living"
+
+
+def test_session_discards_context_after_answer() -> None:
+    kitchen = entity(
+        "sensor.kitchen", "Temperatura cucina", "23", "°C", "temperature", area="cucina"
+    )
+    living = entity(
+        "sensor.living",
+        "Temperatura soggiorno",
+        "22.4",
+        "°C",
+        "temperature",
+        area="soggiorno",
+    )
+    session = ConversationSession()
+
+    session.ask("Qual è la temperatura?", [kitchen, living], now=NOW)
+    session.ask("soggiorno", [kitchen, living], now=NOW)
+    unrelated = session.ask("soggiorno", [kitchen, living], now=NOW)
+
+    assert unrelated.status is ReplyStatus.UNSUPPORTED

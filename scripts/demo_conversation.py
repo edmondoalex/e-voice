@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from apps.cloud_api.app.conversation import ConversationEngine, EntitySnapshot
+from apps.cloud_api.app.conversation import ConversationSession, EntitySnapshot
 
 DEMO_ENTITIES = (
     EntitySnapshot(
@@ -49,13 +49,13 @@ DEMO_ENTITIES = (
 
 
 def main() -> None:
-    engine = ConversationEngine()
+    session = ConversationSession()
     print("Demo Ekonex IA locale. Scrivi 'esci' per terminare.")
     while True:
         utterance = input("Tu: ").strip()
         if utterance.casefold() in {"esci", "quit", "exit"}:
             return
-        reply = engine.ask(
+        reply = session.ask(
             utterance, DEMO_ENTITIES, now=datetime(2026, 9, 1, 8, 5, tzinfo=UTC)
         )
         print(f"Ekonex: {reply.speech}")
