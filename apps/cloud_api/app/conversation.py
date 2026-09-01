@@ -69,6 +69,11 @@ class _Intent:
 
 _INTENTS = (
     _Intent(
+        "consumption_power",
+        "power",
+        ("consumo", "consumi", "consuma", "assorbimento"),
+    ),
+    _Intent(
         "photovoltaic_power",
         "power",
         ("fotovoltaico", "produzione fotovoltaica", "pannelli solari", "pv"),
@@ -115,7 +120,7 @@ def _without_leading_word(value: str, word: str) -> str:
     if normalized == normalized_word:
         return ""
     if normalized.startswith(f"{normalized_word} "):
-        return value.split(maxsplit=1)[1]
+        return value[len(word) :].strip()
     return value
 
 
@@ -146,14 +151,18 @@ class ConversationEngine:
         if not text:
             return ConversationReply(ReplyStatus.UNSUPPORTED, "Non ho ricevuto una domanda.")
 
+        snapshots = tuple(entities)
         intent = self._detect_intent(text)
+        if intent is None:
+            intent = self._detect_named_entity_intent(text, snapshots)
         if intent is None:
             return ConversationReply(
                 ReplyStatus.UNSUPPORTED,
-                "Per ora posso leggere fotovoltaico, temperatura ACS, temperature e batterie.",
+                "Per ora posso leggere fotovoltaico, consumi, temperatura ACS, "
+                "temperature e batterie.",
             )
 
-        candidates = self._rank(text, intent, tuple(entities))
+        candidates = self._rank(text, intent, snapshots)
         if not candidates:
             return ConversationReply(
                 ReplyStatus.NOT_FOUND,
@@ -212,6 +221,30 @@ class ConversationEngine:
         return None
 
     @staticmethod
+    def _detect_named_entity_intent(
+        text: str, entities: tuple[EntitySnapshot, ...]
+    ) -> _Intent | None:
+        matching_classes = {
+            entity.device_class
+            for entity in entities
+            if any(_contains_phrase(text, value) for value in (entity.name, *entity.aliases))
+        }
+        if matching_classes == {"temperature"}:
+            return next(intent for intent in _INTENTS if intent.name == "temperature")
+        if matching_classes == {"battery"}:
+            return next(intent for intent in _INTENTS if intent.name == "battery_level")
+        if matching_classes == {"power"}:
+            matching_text = " ".join(
+                value
+                for entity in entities
+                if any(_contains_phrase(text, value) for value in (entity.name, *entity.aliases))
+                for value in (entity.name, *entity.aliases)
+            )
+            if any(term in _normalize(matching_text) for term in ("consumo", "consumi")):
+                return next(intent for intent in _INTENTS if intent.name == "consumption_power")
+        return None
+
+    @staticmethod
     def _rank(
         text: str, intent: _Intent, entities: tuple[EntitySnapshot, ...]
     ) -> list[tuple[int, EntitySnapshot]]:
@@ -250,6 +283,11 @@ class ConversationEngine:
         value = _format_value(entity)
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
+        if intent.name == "consumption_power":
+            qualifier = _without_leading_word(entity.name, "consumo istantaneo")
+            qualifier = _without_leading_word(qualifier, "consumo")
+            subject = f"Il consumo {qualifier}".strip()
+            return f"{subject} in questo momento è {value}."
         if intent.name == "acs_temperature":
             return f"La temperatura dell'acqua calda è {value}."
         if intent.name == "battery_level":

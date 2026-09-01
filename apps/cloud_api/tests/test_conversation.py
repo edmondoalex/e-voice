@@ -102,6 +102,40 @@ def test_area_disambiguates_temperature() -> None:
     assert reply.evidence[0].entity_id == "sensor.kitchen"
 
 
+def test_authorized_temperature_alias_can_be_asked_without_saying_temperature() -> None:
+    puffer = entity(
+        "sensor.puffer",
+        "puffer alto",
+        "70.75",
+        "°C",
+        "temperature",
+        aliases=("puffer",),
+    )
+
+    reply = ConversationEngine().ask("Puffer?", [puffer], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "La temperatura è 70.75°C."
+    assert reply.evidence[0].entity_id == "sensor.puffer"
+
+
+def test_answers_consumption_by_mapped_name() -> None:
+    consumption = entity(
+        "sensor.consumption_sas",
+        "consumo istantaneo SAS",
+        "842",
+        "W",
+        "power",
+        aliases=("consumo SAS",),
+    )
+
+    reply = ConversationEngine().ask("Consumo SAS?", [consumption], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.intent == "consumption_power"
+    assert reply.speech == "Il consumo SAS in questo momento è 842 W."
+
+
 def test_unavailable_value_is_never_presented_as_measurement() -> None:
     battery = entity("sensor.battery", "Batteria casa", "unknown", "%", "battery")
 
