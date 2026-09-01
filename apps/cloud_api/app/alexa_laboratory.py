@@ -26,6 +26,7 @@ _INTENT_PREFIXES = {
     "ExportedEnergyIntent": "energia oggi esportata",
     "ImportedEnergyIntent": "energia oggi importata",
     "AlarmStatusIntent": "stato allarme",
+    "LockStatusIntent": "stato serratura",
 }
 
 
@@ -83,7 +84,11 @@ def _utterance(intent: dict[str, Any]) -> str | None:
     prefix = _INTENT_PREFIXES.get(str(intent_name))
     if prefix is None:
         return None
-    subject = _slot_value(intent, "site") or _slot_value(intent, "sensor")
+    subject = (
+        _slot_value(intent, "site")
+        or _slot_value(intent, "sensor")
+        or _slot_value(intent, "lock")
+    )
     return f"{prefix} {subject}" if subject else prefix
 
 

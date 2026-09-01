@@ -71,6 +71,21 @@ def test_answers_textual_alarm_state() -> None:
     assert reply.speech == "Lo stato dell'allarme è SOLO ESTERNO."
 
 
+def test_answers_exact_lock_state_for_named_door() -> None:
+    lock = EntitySnapshot(
+        entity_id="lock.porta_ufficio",
+        name="Porta Ufficio",
+        domain="lock",
+        state="locked",
+        observed_at=NOW,
+    )
+
+    reply = ConversationEngine().ask("stato serratura porta ufficio", [lock], now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "Lo stato di Porta Ufficio è locked."
+
+
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
     acs = entity(
         "sensor.acs",

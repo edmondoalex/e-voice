@@ -95,6 +95,14 @@ def test_structured_intent_prefers_alexa_canonical_slot_resolution() -> None:
     assert _utterance(alexa_intent) == "quanto consuma SAS"
 
 
+def test_lock_status_intent_preserves_requested_lock_name() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("LockStatusIntent", lock="porta ufficio")["request"]["intent"]
+
+    assert _utterance(alexa_intent) == "stato serratura porta ufficio"
+
+
 async def test_fallback_gives_a_useful_example(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/alexa/laboratory",

@@ -83,6 +83,16 @@
           ]
         },
         {
+          "name": "LockStatusIntent",
+          "slots": [{"name": "lock", "type": "AMAZON.SearchQuery"}],
+          "samples": [
+            "qual è lo stato di {lock}",
+            "controlla la serratura {lock}",
+            "la serratura {lock} è chiusa",
+            "stato della porta {lock}"
+          ]
+        },
+        {
           "name": "EkonexQueryIntent",
           "slots": [{"name": "query", "type": "AMAZON.SearchQuery"}],
           "samples": [

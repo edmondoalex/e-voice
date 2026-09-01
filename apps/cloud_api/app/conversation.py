@@ -74,6 +74,12 @@ _INTENTS = (
         ("allarme", "antifurto", "sistema di allarme", "stato allarme"),
     ),
     _Intent(
+        "lock_status",
+        None,
+        ("stato serratura", "serratura", "porta", "portoncino"),
+        domain="lock",
+    ),
+    _Intent(
         "exported_energy_today",
         "energy",
         ("energia esportata", "energia oggi esportata", "esportata", "immessa oggi"),
@@ -252,7 +258,7 @@ class ConversationEngine:
                 intent=intent.name,
                 evidence=(evidence,),
             )
-        if intent.name != "alarm_status" and not _has_numeric_state(entity):
+        if intent.name not in {"alarm_status", "lock_status"} and not _has_numeric_state(entity):
             return ConversationReply(
                 ReplyStatus.UNAVAILABLE,
                 f"Il sensore {entity.name} non contiene un valore numerico valido.",
@@ -364,6 +370,8 @@ class ConversationEngine:
         value = _format_value(entity)
         if intent.name == "alarm_status":
             return f"Lo stato dell'allarme è {entity.state}."
+        if intent.name == "lock_status":
+            return f"Lo stato di {entity.name} è {entity.state}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":
