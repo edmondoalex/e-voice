@@ -363,16 +363,7 @@ class ConversationEngine:
     def _build_speech(intent: _Intent, entity: EntitySnapshot) -> str:
         value = _format_value(entity)
         if intent.name == "alarm_status":
-            normalized = _normalize(entity.state or "")
-            state = {
-                "solo esterno": "inserito solo sul perimetro esterno",
-                "totale": "inserito totalmente",
-                "inserito": "inserito",
-                "disinserito": "disinserito",
-                "off": "disinserito",
-                "on": "inserito",
-            }.get(normalized, (entity.state or "non disponibile").lower())
-            return f"L'allarme è {state}."
+            return f"Lo stato dell'allarme è {entity.state}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":

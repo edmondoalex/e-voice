@@ -68,7 +68,7 @@ def test_answers_textual_alarm_state() -> None:
     reply = ConversationEngine().ask("Qual è lo stato dell'allarme?", [alarm], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
-    assert reply.speech == "L'allarme è inserito solo sul perimetro esterno."
+    assert reply.speech == "Lo stato dell'allarme è SOLO ESTERNO."
 
 
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
