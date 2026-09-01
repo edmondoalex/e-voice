@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .admin_console import router as admin_console_router
 from .alexa import router as alexa_router
+from .alexa_laboratory import router as alexa_laboratory_router
 from .alexa_portal_oauth import router as alexa_portal_oauth_router
 from .evcp import router as evcp_router
 from .legal import router as legal_router
@@ -33,6 +34,7 @@ app.include_router(evcp_router)
 # token/revoke/directive endpoints remain on the Alexa adapter router.
 app.include_router(alexa_portal_oauth_router)
 app.include_router(alexa_router)
+app.include_router(alexa_laboratory_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

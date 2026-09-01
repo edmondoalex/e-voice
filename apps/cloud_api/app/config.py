@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     alexa_lwa_client_secret: str = "replace-with-lwa-secret"
     alexa_token_encryption_key: str = "development-only-change-me"
     alexa_event_gateway_url: str = "https://api.eu.amazonalexa.com/v3/events"
+    alexa_laboratory_enabled: bool = False
+    alexa_laboratory_skill_id: str = ""
+    alexa_laboratory_backend_token: str = ""
+    alexa_laboratory_tenant_slug: str = ""
+    alexa_laboratory_installation_public_id: str = ""
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

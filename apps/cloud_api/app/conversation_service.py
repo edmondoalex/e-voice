@@ -36,11 +36,24 @@ class ConversationEntityService:
         if installation is None:
             raise ResourceNotFoundError
 
+        return await self.ask_for_scope(context.tenant_id, installation_id, utterance, now=now)
+
+    async def ask_for_scope(
+        self,
+        tenant_id: UUID,
+        installation_id: UUID,
+        utterance: str,
+        *,
+        now: datetime | None = None,
+        named_only: bool = False,
+    ) -> ConversationReply:
         entities = await self._entities.list_for_installation(
-            tenant_id=context.tenant_id, installation_id=installation_id
+            tenant_id=tenant_id, installation_id=installation_id
         )
         snapshots = tuple(
-            self._snapshot(entity) for entity in entities if entity.deleted_at is None
+            self._snapshot(entity)
+            for entity in entities
+            if entity.deleted_at is None and (not named_only or bool(entity.voice_name))
         )
         return self._engine.ask(utterance, snapshots, now=now)
 

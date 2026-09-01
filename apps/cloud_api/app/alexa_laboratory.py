@@ -1,0 +1,85 @@
+"""Isolated, read-only Alexa Custom adapter for the Ekonex laboratory."""
+
+from __future__ import annotations
+
+import hmac
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .config import get_settings
+from .conversation_service import ConversationEntityService
+from .database import get_database_session
+from .domain.models import Installation, Tenant
+
+router = APIRouter(tags=["alexa-laboratory"])
+session_dependency = Depends(get_database_session)
+
+
+def _speech(text: str, *, end: bool) -> dict[str, Any]:
+    return {
+        "version": "1.0",
+        "response": {
+            "outputSpeech": {"type": "PlainText", "text": text},
+            "shouldEndSession": end,
+        },
+    }
+
+
+def _application_id(payload: dict[str, Any]) -> str | None:
+    session = payload.get("session")
+    if isinstance(session, dict):
+        application = session.get("application")
+        if isinstance(application, dict) and isinstance(application.get("applicationId"), str):
+            return str(application["applicationId"])
+    return None
+
+
+@router.post("/alexa/laboratory")
+async def laboratory(
+    payload: dict[str, Any],
+    database: Annotated[AsyncSession, session_dependency],
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.alexa_laboratory_enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    expected_auth = f"Bearer {settings.alexa_laboratory_backend_token}"
+    if not settings.alexa_laboratory_backend_token or not hmac.compare_digest(
+        authorization or "", expected_auth
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    if _application_id(payload) != settings.alexa_laboratory_skill_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN)
+
+    request = payload.get("request")
+    request_type = request.get("type") if isinstance(request, dict) else None
+    if request_type == "LaunchRequest":
+        return _speech("Ciao, sono Ekonex laboratorio. Cosa vuoi sapere?", end=False)
+    if request_type != "IntentRequest" or not isinstance(request, dict):
+        return _speech("Questa richiesta non è supportata dal laboratorio.", end=True)
+    intent = request.get("intent")
+    slots = intent.get("slots") if isinstance(intent, dict) else None
+    query = slots.get("query") if isinstance(slots, dict) else None
+    utterance = query.get("value") if isinstance(query, dict) else None
+    if not isinstance(utterance, str) or not utterance.strip():
+        return _speech("Non ho capito cosa vuoi sapere.", end=False)
+
+    statement = (
+        select(Installation, Tenant)
+        .join(Tenant, Tenant.id == Installation.tenant_id)
+        .where(
+            Tenant.slug == settings.alexa_laboratory_tenant_slug,
+            Installation.public_id == settings.alexa_laboratory_installation_public_id,
+        )
+    )
+    row = (await database.execute(statement)).one_or_none()
+    if row is None:
+        return _speech("L'installazione di laboratorio non è configurata.", end=True)
+    installation, tenant = row
+    reply = await ConversationEntityService(database).ask_for_scope(
+        tenant.id, installation.id, utterance, named_only=True
+    )
+    return _speech(reply.speech, end=False)
