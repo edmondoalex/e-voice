@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import getpass
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from apps.cloud_api.app.conversation import ConversationSession, EntitySnapshot
+
+ALLOWLIST_PATH = Path(__file__).resolve().parents[1] / "config" / "assistant_entities.local.json"
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -20,7 +24,10 @@ def _timestamp(value: object) -> datetime | None:
         return None
 
 
-def snapshots_from_states(states: list[dict[str, Any]]) -> tuple[EntitySnapshot, ...]:
+def snapshots_from_states(
+    states: list[dict[str, Any]],
+    mappings: dict[str, dict[str, Any]] | None = None,
+) -> tuple[EntitySnapshot, ...]:
     """Converte la risposta REST di HA senza conservare attributi non necessari."""
     snapshots: list[EntitySnapshot] = []
     for item in states:
@@ -30,14 +37,28 @@ def snapshots_from_states(states: list[dict[str, Any]]) -> tuple[EntitySnapshot,
         domain = entity_id.split(".", 1)[0]
         if domain != "sensor":
             continue
+        if mappings is not None and entity_id not in mappings:
+            continue
         attributes = item.get("attributes")
         if not isinstance(attributes, dict):
             attributes = {}
         state = item.get("state")
+        mapping = mappings.get(entity_id, {}) if mappings is not None else {}
+        mapped_name = mapping.get("name")
+        raw_aliases = mapping.get("aliases", [])
+        aliases = (
+            tuple(alias for alias in raw_aliases if isinstance(alias, str))
+            if isinstance(raw_aliases, list)
+            else ()
+        )
         snapshots.append(
             EntitySnapshot(
                 entity_id=entity_id,
-                name=str(attributes.get("friendly_name") or entity_id),
+                name=(
+                    mapped_name
+                    if isinstance(mapped_name, str) and mapped_name.strip()
+                    else str(attributes.get("friendly_name") or entity_id)
+                ),
                 domain=domain,
                 state=state if isinstance(state, str) else None,
                 unit=(
@@ -52,6 +73,7 @@ def snapshots_from_states(states: list[dict[str, Any]]) -> tuple[EntitySnapshot,
                 ),
                 available=state not in {"unknown", "unavailable", None},
                 observed_at=_timestamp(item.get("last_updated")),
+                aliases=aliases,
             )
         )
     return tuple(snapshots)
@@ -64,6 +86,15 @@ def main() -> None:
     token = getpass.getpass("Token HA (non verrà mostrato né salvato): ").strip()
     if not token:
         print("Token mancante. Prova terminata.")
+        return
+
+    try:
+        mappings = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(f"Lista autorizzata mancante o non valida: {ALLOWLIST_PATH}")
+        return
+    if not isinstance(mappings, dict) or not mappings:
+        print("La lista autorizzata è vuota. Prova terminata.")
         return
 
     try:
@@ -83,8 +114,11 @@ def main() -> None:
     if not isinstance(payload, list):
         print("Home Assistant ha restituito un formato inatteso.")
         return
-    entities = snapshots_from_states(payload)
-    print(f"Caricati {len(entities)} sensori reali. Nessun comando verrà inviato.")
+    entities = snapshots_from_states(payload, mappings)
+    print(
+        f"Caricati {len(entities)} sensori autorizzati su {len(mappings)} configurati. "
+        "Nessun altro sensore verrà usato e nessun comando verrà inviato."
+    )
     session = ConversationSession()
     while True:
         utterance = input("Tu: ").strip()

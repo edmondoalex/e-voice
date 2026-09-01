@@ -1,0 +1,6 @@
+{
+  "sensor.example_pv_power": {
+    "name": "fotovoltaico",
+    "aliases": ["produzione fotovoltaica", "pannelli solari"]
+  }
+}

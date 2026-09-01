@@ -86,3 +86,7 @@ log. La demo conserva soltanto nome, stato, unità, classe del dispositivo e ora
 memoria del processo. Scrivere `esci` per eliminarli terminando il programma.
 
 Per prudenza, usare un account Home Assistant dedicato alla prova e revocarne il token al termine.
+
+La prova reale richiede inoltre `config/assistant_entities.local.json`. Soltanto gli `entity_id`
+presenti in questo file vengono caricati; ogni voce può definire un nome semplice e alcuni alias.
+Il file locale è escluso da Git. `config/assistant_entities.example.json` documenta il formato.
