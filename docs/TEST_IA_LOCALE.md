@@ -70,3 +70,19 @@ entità persistite in istantanee minime, esclude quelle eliminate e verifica l'a
 dell'installazione al cliente. Il Connector sincronizza inoltre `unit_of_measurement` e
 `state_class` per i sensori; l'installazione reale richiederà quindi una nuova sincronizzazione dopo
 la futura distribuzione controllata del Connector.
+
+## Prova locale con Home Assistant reale
+
+Questa modalità interroga soltanto `GET /api/states`, non distribuisce il Connector e non coinvolge
+Alexa:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\demo_conversation_ha.py
+```
+
+Richiede l'indirizzo locale di Home Assistant e un token di accesso a lunga durata. Il token viene
+letto in modo nascosto, tenuto solo in memoria per la singola richiesta e non scritto nei file o nei
+log. La demo conserva soltanto nome, stato, unità, classe del dispositivo e orario dei sensori nella
+memoria del processo. Scrivere `esci` per eliminarli terminando il programma.
+
+Per prudenza, usare un account Home Assistant dedicato alla prova e revocarne il token al termine.

@@ -107,6 +107,16 @@ def _format_value(entity: EntitySnapshot) -> str:
     return f"{value} {entity.unit}".strip()
 
 
+def _has_numeric_state(entity: EntitySnapshot) -> bool:
+    if entity.state is None:
+        return False
+    try:
+        float(entity.state)
+    except ValueError:
+        return False
+    return True
+
+
 def _format_time(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -158,6 +168,13 @@ class ConversationEngine:
             return ConversationReply(
                 ReplyStatus.UNAVAILABLE,
                 f"Il sensore {entity.name} non è disponibile.",
+                intent=intent.name,
+                evidence=(evidence,),
+            )
+        if not _has_numeric_state(entity):
+            return ConversationReply(
+                ReplyStatus.UNAVAILABLE,
+                f"Il sensore {entity.name} non contiene un valore numerico valido.",
                 intent=intent.name,
                 evidence=(evidence,),
             )
