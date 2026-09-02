@@ -97,10 +97,20 @@ def test_collective_intents_build_generic_engine_queries() -> None:
         "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
         "ExportedEnergySummaryIntent": "energia oggi esportata da tutti gli impianti",
         "ImportedEnergySummaryIntent": "energia oggi importata da tutti gli impianti",
+        "ProducedEnergySummaryIntent": "energia oggi prodotta da tutti gli impianti",
+        "ConsumedEnergySummaryIntent": "energia oggi consumata da tutti gli impianti",
     }
     for intent_name, utterance in expected.items():
         alexa_intent = intent(intent_name)["request"]["intent"]
         assert _utterance(alexa_intent) == utterance
+
+
+def test_site_less_energy_intent_falls_back_to_all_installations() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("ConsumedEnergyIntent")["request"]["intent"]
+
+    assert _utterance(alexa_intent) == "energia oggi consumata da tutti gli impianti"
 
 
 def test_structured_intent_prefers_alexa_canonical_slot_resolution() -> None:

@@ -106,6 +106,13 @@ def _utterance(intent: dict[str, Any]) -> str | None:
         or _slot_value(intent, "lock")
         or _slot_value(intent, "opening")
     )
+    if subject is None and intent_name in {
+        "ExportedEnergyIntent",
+        "ImportedEnergyIntent",
+        "ProducedEnergyIntent",
+        "ConsumedEnergyIntent",
+    }:
+        return f"{prefix} da tutti gli impianti"
     return f"{prefix} {subject}" if subject else prefix
 
 
