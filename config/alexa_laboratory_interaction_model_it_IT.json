@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "casa ekonex",
+      "invocationName": "casa econex",
       "intents": [
         {
           "name": "PhotovoltaicIntent",
