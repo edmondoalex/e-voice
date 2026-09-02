@@ -162,6 +162,22 @@ def test_summarizes_all_authorized_locks() -> None:
     assert reply.speech == "Portoncino Scala: aperto. Serratura Sala: chiusa a chiave."
 
 
+def test_plural_lock_status_never_treats_textual_states_as_unavailable() -> None:
+    locks = (
+        EntitySnapshot(
+            "lock.sala", "Porta Sala", "lock", "unlocked", category="lock_status"
+        ),
+        EntitySnapshot(
+            "lock.ufficio", "Serratura Ufficio", "lock", "locked", category="lock_status"
+        ),
+    )
+
+    reply = ConversationEngine().ask("stato serratura di tutte", locks, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "Porta Sala: aperta. Serratura Ufficio: chiusa a chiave."
+
+
 def test_reports_only_open_authorized_openings() -> None:
     openings = (
         EntitySnapshot("binary_sensor.garage", "Porta Garage", "binary_sensor", "on"),

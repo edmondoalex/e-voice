@@ -312,6 +312,12 @@ class ConversationEngine:
         if intent.name == "opening_summary":
             return self._summarize_openings(snapshots)
 
+        # Alcune formulazioni libere vengono instradate come stato singolo anche
+        # quando chiedono tutte le serrature. Non devono passare dal riepilogo
+        # numerico generico: locked/unlocked sono stati testuali validi.
+        if intent.name == "lock_status" and self._requests_all(text):
+            return self._summarize_locks(snapshots)
+
         multiple_photovoltaics = (
             all(_contains_phrase(text, site) for site in ("sas", "privato"))
             or _contains_phrase(text, "tutti i fotovoltaici")
@@ -479,14 +485,28 @@ class ConversationEngine:
             Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
             for entity in matching
         )
-        parts = [
-            f"{entity.name}: {_format_value(entity)}"
-            if entity.available
-            and entity.state not in {None, "unknown", "unavailable"}
-            and _has_numeric_state(entity)
-            else f"{entity.name}: non disponibile"
-            for entity in sorted(matching, key=lambda item: item.name.casefold())
-        ]
+        def summarized_value(entity: EntitySnapshot) -> str | None:
+            if not entity.available or entity.state in {None, "unknown", "unavailable"}:
+                return None
+            if intent.name == "lock_status":
+                return cls._lock_state(entity)
+            if intent.name == "opening_status":
+                return {
+                    "on": "aperta",
+                    "open": "aperta",
+                    "off": "chiusa",
+                    "closed": "chiusa",
+                }.get(str(entity.state).casefold(), str(entity.state))
+            if intent.name == "alarm_status":
+                return str(entity.state)
+            return _format_value(entity) if _has_numeric_state(entity) else None
+
+        parts = []
+        for entity in sorted(matching, key=lambda item: item.name.casefold()):
+            value = summarized_value(entity)
+            parts.append(
+                f"{entity.name}: {value}" if value is not None else f"{entity.name}: non disponibile"
+            )
         return ConversationReply(
             ReplyStatus.ANSWERED,
             "; ".join(parts) + ".",
