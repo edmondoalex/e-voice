@@ -122,3 +122,14 @@ class ConversationLearningStore:
         record.approved = True
         await self._redis.set(key, json.dumps(asdict(record)), ex=self._ttl_seconds)
         return True
+
+    async def delete(self, tenant_id: UUID, key: str) -> bool:
+        if not key.startswith(f"ekonex:conversation-learning:{tenant_id}:"):
+            return False
+        if not await self._redis.exists(key):
+            return False
+        async with self._redis.pipeline(transaction=True) as pipeline:
+            pipeline.delete(key)
+            pipeline.zrem(self._index_key(tenant_id), key)
+            await pipeline.execute()
+        return True

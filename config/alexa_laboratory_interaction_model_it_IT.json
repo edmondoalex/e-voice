@@ -18,6 +18,67 @@
           ]
         },
         {
+          "name": "BatterySummaryIntent",
+          "slots": [],
+          "samples": [
+            "la percentuale di tutte le batterie",
+            "percentuale di tutte le batterie",
+            "come sono messe tutte le batterie",
+            "quanto sono cariche tutte le batterie",
+            "stato di tutte le batterie",
+            "controlla tutte le batterie"
+          ]
+        },
+        {
+          "name": "ConsumptionSummaryIntent",
+          "slots": [],
+          "samples": [
+            "dimmi tutti i consumi",
+            "quanto consumano tutti gli impianti",
+            "consumo di tutti gli impianti",
+            "riepilogo di tutti i consumi",
+            "controlla tutti i consumi"
+          ]
+        },
+        {
+          "name": "TemperatureSummaryIntent",
+          "slots": [],
+          "samples": [
+            "dimmi tutte le temperature",
+            "quali sono tutte le temperature",
+            "riepilogo di tutte le temperature",
+            "controlla tutte le temperature"
+          ]
+        },
+        {
+          "name": "GridPowerSummaryIntent",
+          "slots": [],
+          "samples": [
+            "potenza di rete di tutti gli impianti",
+            "dimmi tutte le potenze di rete",
+            "quanto prelevano tutti gli impianti dalla rete",
+            "riepilogo della rete di tutti gli impianti"
+          ]
+        },
+        {
+          "name": "ExportedEnergySummaryIntent",
+          "slots": [],
+          "samples": [
+            "energia esportata oggi da tutti gli impianti",
+            "quanta energia hanno esportato tutti gli impianti",
+            "riepilogo di tutta l'energia esportata oggi"
+          ]
+        },
+        {
+          "name": "ImportedEnergySummaryIntent",
+          "slots": [],
+          "samples": [
+            "energia importata oggi da tutti gli impianti",
+            "quanta energia hanno importato tutti gli impianti",
+            "riepilogo di tutta l'energia importata oggi"
+          ]
+        },
+        {
           "name": "PhotovoltaicIntent",
           "slots": [{"name": "site", "type": "EKONEX_SITE"}],
           "samples": [

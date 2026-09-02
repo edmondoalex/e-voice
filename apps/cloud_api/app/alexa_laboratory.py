@@ -19,6 +19,12 @@ session_dependency = Depends(get_database_session)
 
 _INTENT_PREFIXES = {
     "CombinedPhotovoltaicIntent": "quanto produce il fotovoltaico SAS e privato",
+    "BatterySummaryIntent": "percentuale di tutte le batterie",
+    "ConsumptionSummaryIntent": "tutti i consumi",
+    "TemperatureSummaryIntent": "tutte le temperature",
+    "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
+    "ExportedEnergySummaryIntent": "energia oggi esportata da tutti gli impianti",
+    "ImportedEnergySummaryIntent": "energia oggi importata da tutti gli impianti",
     "PhotovoltaicIntent": "quanto produce il fotovoltaico",
     "ConsumptionIntent": "quanto consuma",
     "BatteryIntent": "batteria",

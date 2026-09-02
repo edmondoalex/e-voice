@@ -87,6 +87,22 @@ def test_combined_photovoltaic_intent_preserves_both_sites() -> None:
     assert _utterance(alexa_intent) == "quanto produce il fotovoltaico SAS e privato"
 
 
+def test_collective_intents_build_generic_engine_queries() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    expected = {
+        "BatterySummaryIntent": "percentuale di tutte le batterie",
+        "ConsumptionSummaryIntent": "tutti i consumi",
+        "TemperatureSummaryIntent": "tutte le temperature",
+        "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
+        "ExportedEnergySummaryIntent": "energia oggi esportata da tutti gli impianti",
+        "ImportedEnergySummaryIntent": "energia oggi importata da tutti gli impianti",
+    }
+    for intent_name, utterance in expected.items():
+        alexa_intent = intent(intent_name)["request"]["intent"]
+        assert _utterance(alexa_intent) == utterance
+
+
 def test_structured_intent_prefers_alexa_canonical_slot_resolution() -> None:
     from apps.cloud_api.app.alexa_laboratory import _utterance
 

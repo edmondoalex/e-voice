@@ -47,8 +47,19 @@ _INTENT_MAP = {
 
 def _alexa_intent(intent: str, canonical: str) -> str:
     normalized = canonical.casefold()
+    collective = any(word in normalized.split() for word in ("tutti", "tutte", "entrambi", "entrambe"))
+    collective_intents = {
+        "battery_level": "BatterySummaryIntent",
+        "consumption_power": "ConsumptionSummaryIntent",
+        "temperature": "TemperatureSummaryIntent",
+        "grid_power": "GridPowerSummaryIntent",
+        "exported_energy_today": "ExportedEnergySummaryIntent",
+        "imported_energy_today": "ImportedEnergySummaryIntent",
+    }
     if intent == "photovoltaic_power" and "sas" in normalized and "privato" in normalized:
         return "CombinedPhotovoltaicIntent"
+    if collective and intent in collective_intents:
+        return collective_intents[intent]
     return _INTENT_MAP.get(intent, intent)
 
 
@@ -86,6 +97,17 @@ def _store() -> ConversationLearningStore:
     )
 
 
+def _record_actions(key: str, approved: bool) -> str:
+    safe_key = html.escape(key, quote=True)
+    approve = (
+        "<span>Approvata</span>"
+        if approved
+        else f'<form method="post" action="/laboratory/learning/approve"><input type="hidden" name="key" value="{safe_key}"><button>Approva</button></form>'
+    )
+    delete = f'<form method="post" action="/laboratory/learning/delete" onsubmit="return confirm(\'Eliminare questa frase?\')"><input type="hidden" name="key" value="{safe_key}"><button class="danger">Elimina</button></form>'
+    return f'<div class="actions">{approve}{delete}</div>'
+
+
 @router.get("", response_class=HTMLResponse)
 async def learning_page(
     _: Annotated[None, auth_dependency],
@@ -108,13 +130,13 @@ async def learning_page(
         f"<td>{html.escape(_alexa_intent(record.intent, record.canonical))}</td>"
         f"<td>{html.escape(installations.get(record.installation_id, record.installation_id))}</td>"
         f"<td>{record.hits}</td>"
-        f"<td>{'Approvata' if record.approved else '<form method=post action=/laboratory/learning/approve><input type=hidden name=key value=\"' + html.escape(record.key, quote=True) + '\"><button>Approva</button></form>'}</td>"
+        f"<td>{_record_actions(record.key, record.approved)}</td>"
         "</tr>"
         for record in records
     )
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Apprendimento IA · Ekonex</title>
-<style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}</style></head><body><main>
+<style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;cursor:pointer}}button.danger{{background:#c62828}}.actions{{display:flex;align-items:center;gap:8px}}.actions form{{margin:0}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}</style></head><body><main>
 <h1>Apprendimento IA</h1><p>Le frasi vengono apprese solo dopo una risposta valida. L'approvazione le inserisce nella bozza JSON Alexa.</p>
 <div class="cards"><div class="card"><b>{len(records)}</b><br>Frasi apprese</div><div class="card"><b>{sum(item.approved for item in records)}</b><br>Approvate</div></div>
 <p><a class="button" href="/laboratory/learning/model.json">Scarica JSON Alexa aggiornato</a></p>
@@ -133,6 +155,20 @@ async def approve_phrase(
     key = fields.get("key", [""])[0][:500]
     tenant = await _tenant(session)
     if not await _store().approve(tenant.id, key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Frase non trovata")
+    return RedirectResponse("/laboratory/learning", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/delete", response_class=RedirectResponse)
+async def delete_phrase(
+    _: Annotated[None, auth_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    request: Request,
+) -> RedirectResponse:
+    fields = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    key = fields.get("key", [""])[0][:500]
+    tenant = await _tenant(session)
+    if not await _store().delete(tenant.id, key):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Frase non trovata")
     return RedirectResponse("/laboratory/learning", status_code=status.HTTP_303_SEE_OTHER)
 
