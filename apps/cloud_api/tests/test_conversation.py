@@ -63,6 +63,24 @@ def test_power_reply_infers_watts_when_unit_is_missing() -> None:
     assert reply.speech == "In questo momento il fotovoltaico sta producendo 5600 W."
 
 
+def test_answers_photovoltaic_power_for_both_sites() -> None:
+    sas = entity("sensor.pv_sas", "Fotovoltaico SAS", "5600", "W", "power")
+    private = entity("sensor.pv_private", "Fotovoltaico Privato", "3200", "W", "power")
+
+    reply = ConversationEngine().ask(
+        "Dimmi la produzione del fotovoltaico SAS e privato", [sas, private], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == (
+        "Il fotovoltaico SAS sta producendo 5600 W, mentre quello privato sta producendo 3200 W."
+    )
+    assert {item.entity_id for item in reply.evidence} == {
+        "sensor.pv_sas",
+        "sensor.pv_private",
+    }
+
+
 def test_answers_textual_alarm_state() -> None:
     alarm = entity("sensor.alarm", "Allarme", "SOLO ESTERNO", None, "")
 

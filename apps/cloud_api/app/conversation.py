@@ -274,6 +274,13 @@ class ConversationEngine:
         if intent.name == "opening_summary":
             return self._summarize_openings(snapshots)
 
+        if intent.name == "photovoltaic_power" and all(
+            _contains_phrase(text, site) for site in ("sas", "privato")
+        ):
+            combined = self._summarize_site_values(text, intent, snapshots)
+            if combined is not None:
+                return combined
+
         candidates = self._rank(text, intent, snapshots)
         if not candidates:
             return ConversationReply(
@@ -327,6 +334,62 @@ class ConversationEngine:
             intent=intent.name,
             evidence=(evidence,),
             diagnostics={"freshness": "stale" if stale else "current"},
+        )
+
+    @classmethod
+    def _summarize_site_values(
+        cls,
+        text: str,
+        intent: _Intent,
+        entities: tuple[EntitySnapshot, ...],
+    ) -> ConversationReply | None:
+        """Risponde a una richiesta esplicita che nomina entrambi gli impianti."""
+        ranked = cls._rank(text, intent, entities)
+        selected: list[tuple[str, EntitySnapshot]] = []
+        for site in ("SAS", "privato"):
+            site_key = _normalize(site)
+            match = next(
+                (
+                    entity
+                    for _score, entity in ranked
+                    if any(
+                        _contains_phrase(_normalize(value), site_key)
+                        for value in (entity.name, *entity.aliases)
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                return None
+            selected.append((site, match))
+
+        evidence = tuple(
+            Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
+            for _site, entity in selected
+        )
+        unavailable = [
+            site
+            for site, entity in selected
+            if not entity.available
+            or entity.state in {None, "unknown", "unavailable"}
+            or not _has_numeric_state(entity)
+        ]
+        if unavailable:
+            return ConversationReply(
+                ReplyStatus.UNAVAILABLE,
+                f"Il fotovoltaico {unavailable[0]} non è disponibile.",
+                intent=intent.name,
+                evidence=evidence,
+            )
+
+        sas = _format_value(selected[0][1])
+        private = _format_value(selected[1][1])
+        return ConversationReply(
+            ReplyStatus.ANSWERED,
+            f"Il fotovoltaico SAS sta producendo {sas}, mentre quello privato sta producendo {private}.",
+            intent=intent.name,
+            evidence=evidence,
+            diagnostics={"freshness": "current", "scope": "multiple_sites"},
         )
 
     @staticmethod
