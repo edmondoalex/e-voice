@@ -94,6 +94,20 @@ def test_all_photovoltaics_means_both_sites() -> None:
     assert "3200 W" in reply.speech
 
 
+def test_summarizes_all_battery_percentages() -> None:
+    sas = entity("sensor.battery_sas", "Batteria SAS", "81", "%", "battery")
+    private = entity("sensor.battery_private", "Batteria Privato", "64", "%", "battery")
+
+    reply = ConversationEngine().ask(
+        "Dimmi la percentuale di tutte le batterie", [sas, private], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "Batteria SAS: 81%" in reply.speech
+    assert "Batteria Privato: 64%" in reply.speech
+    assert len(reply.evidence) == 2
+
+
 def test_answers_textual_alarm_state() -> None:
     alarm = entity("sensor.alarm", "Allarme", "SOLO ESTERNO", None, "")
 
@@ -138,6 +152,18 @@ def test_reports_only_open_authorized_openings() -> None:
     )
 
     reply = ConversationEngine().ask("ci sono porte o portoni aperti", openings, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "Risultano aperti: Porta Garage."
+
+
+def test_all_doors_uses_authorized_opening_summary() -> None:
+    openings = (
+        EntitySnapshot("binary_sensor.garage", "Porta Garage", "binary_sensor", "on"),
+        EntitySnapshot("binary_sensor.gate", "Portone Destro", "binary_sensor", "off"),
+    )
+
+    reply = ConversationEngine().ask("controlla tutte le porte", openings, now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.speech == "Risultano aperti: Porta Garage."

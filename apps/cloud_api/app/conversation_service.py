@@ -74,7 +74,7 @@ class ConversationEntityService:
         if (
             settings.conversation_learning_enabled
             and reply.status is ReplyStatus.ANSWERED
-            and reply.diagnostics.get("scope") == "multiple_sites"
+            and reply.diagnostics.get("scope") in {"multiple_sites", "multiple_entities"}
         ):
             await self._learning_store.remember(
                 tenant_id,

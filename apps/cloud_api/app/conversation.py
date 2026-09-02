@@ -89,7 +89,15 @@ _INTENTS = (
     _Intent(
         "opening_summary",
         None,
-        ("porte o portoni aperti", "aperture aperte", "porte aperte", "portoni aperti"),
+        (
+            "porte o portoni aperti",
+            "aperture aperte",
+            "porte aperte",
+            "portoni aperti",
+            "tutte le porte",
+            "tutti i portoni",
+            "tutte le aperture",
+        ),
         domain="binary_sensor",
     ),
     _Intent(
@@ -136,7 +144,7 @@ _INTENTS = (
     _Intent(
         "temperature",
         "temperature",
-        ("temperatura", "gradi", "caldo", "freddo"),
+        ("temperatura", "temperature", "gradi", "caldo", "freddo"),
     ),
 )
 
@@ -285,6 +293,11 @@ class ConversationEngine:
             if combined is not None:
                 return combined
 
+        if self._requests_all(text):
+            combined = self._summarize_all_values(text, intent, snapshots)
+            if combined is not None:
+                return combined
+
         candidates = self._rank(text, intent, snapshots)
         if not candidates:
             return ConversationReply(
@@ -394,6 +407,44 @@ class ConversationEngine:
             intent=intent.name,
             evidence=evidence,
             diagnostics={"freshness": "current", "scope": "multiple_sites"},
+        )
+
+    @staticmethod
+    def _requests_all(text: str) -> bool:
+        return any(
+            _contains_phrase(text, term)
+            for term in ("tutti", "tutte", "entrambi", "entrambe")
+        )
+
+    @classmethod
+    def _summarize_all_values(
+        cls,
+        text: str,
+        intent: _Intent,
+        entities: tuple[EntitySnapshot, ...],
+    ) -> ConversationReply | None:
+        ranked = cls._rank(text, intent, entities)
+        matching = tuple(entity for score, entity in ranked if score > 1)
+        if not matching:
+            return None
+        evidence = tuple(
+            Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
+            for entity in matching
+        )
+        parts = [
+            f"{entity.name}: {_format_value(entity)}"
+            if entity.available
+            and entity.state not in {None, "unknown", "unavailable"}
+            and _has_numeric_state(entity)
+            else f"{entity.name}: non disponibile"
+            for entity in sorted(matching, key=lambda item: item.name.casefold())
+        ]
+        return ConversationReply(
+            ReplyStatus.ANSWERED,
+            "; ".join(parts) + ".",
+            intent=intent.name,
+            evidence=evidence,
+            diagnostics={"freshness": "current", "scope": "multiple_entities"},
         )
 
     @staticmethod
