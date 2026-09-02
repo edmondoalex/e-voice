@@ -83,7 +83,7 @@ def test_answers_exact_lock_state_for_named_door() -> None:
     reply = ConversationEngine().ask("stato serratura porta ufficio", [lock], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
-    assert reply.speech == "Lo stato di Porta Ufficio è locked."
+    assert reply.speech == "Porta Ufficio è chiusa a chiave."
 
 
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:

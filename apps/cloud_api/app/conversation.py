@@ -371,7 +371,15 @@ class ConversationEngine:
         if intent.name == "alarm_status":
             return f"Lo stato dell'allarme è {entity.state}."
         if intent.name == "lock_status":
-            return f"Lo stato di {entity.name} è {entity.state}."
+            lock_states = {
+                "locked": "chiusa a chiave",
+                "unlocked": "aperta",
+                "locking": "in chiusura",
+                "unlocking": "in apertura",
+                "jammed": "bloccata per un problema",
+            }
+            state = lock_states.get(str(entity.state).casefold(), str(entity.state))
+            return f"{entity.name} è {state}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":
