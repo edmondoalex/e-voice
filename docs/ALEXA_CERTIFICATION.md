@@ -37,3 +37,16 @@ Provide Amazon with:
 
 Do not submit until CI, type checking, formatting, Hassfest, account linking, and production health
 checks are green. Do not merge diagnostic Alexa branches into the certification baseline.
+
+## TODO after certification
+
+- **[TODO-POST-CERTIFICATION][PORTAL-AI-LEARNING]** Add an `Apprendimento IA` link to the
+  authenticated administrator navigation, preferably below `Attività`.
+- Serve the learning page through the normal Ekonex portal session so an authenticated
+  administrator does not need the separate laboratory HTTP Basic password.
+- Keep tenant scoping and administrator-role checks; do not expose learned phrases across
+  installations or tenants.
+- Remove the temporary separate laboratory entry point only after the integrated page and JSON
+  download have been verified in production.
+- This TODO is deliberately blocked until Amazon certification is complete because satisfying it
+  requires a production portal/backend deployment.
