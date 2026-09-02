@@ -86,6 +86,18 @@ _INTENTS = (
         domain="lock",
     ),
     _Intent(
+        "opening_summary",
+        None,
+        ("porte o portoni aperti", "aperture aperte", "porte aperte", "portoni aperti"),
+        domain="binary_sensor",
+    ),
+    _Intent(
+        "opening_status",
+        None,
+        ("stato apertura", "porta", "portone", "garage"),
+        domain="binary_sensor",
+    ),
+    _Intent(
         "exported_energy_today",
         "energy",
         ("energia esportata", "energia oggi esportata", "esportata", "immessa oggi"),
@@ -236,6 +248,8 @@ class ConversationEngine:
 
         if intent.name == "lock_summary":
             return self._summarize_locks(snapshots)
+        if intent.name == "opening_summary":
+            return self._summarize_openings(snapshots)
 
         candidates = self._rank(text, intent, snapshots)
         if not candidates:
@@ -267,7 +281,7 @@ class ConversationEngine:
                 intent=intent.name,
                 evidence=(evidence,),
             )
-        if intent.name not in {"alarm_status", "lock_status"} and not _has_numeric_state(entity):
+        if intent.name not in {"alarm_status", "lock_status", "opening_status"} and not _has_numeric_state(entity):
             return ConversationReply(
                 ReplyStatus.UNAVAILABLE,
                 f"Il sensore {entity.name} non contiene un valore numerico valido.",
@@ -327,7 +341,43 @@ class ConversationEngine:
         )
 
     @staticmethod
+    def _summarize_openings(entities: tuple[EntitySnapshot, ...]) -> ConversationReply:
+        openings = tuple(entity for entity in entities if entity.domain == "binary_sensor")
+        if not openings:
+            return ConversationReply(
+                ReplyStatus.NOT_FOUND,
+                "Non trovo sensori di apertura autorizzati.",
+                intent="opening_summary",
+            )
+        active = tuple(
+            entity
+            for entity in openings
+            if entity.available and str(entity.state).casefold() in {"on", "open"}
+        )
+        if not active:
+            speech = "Tutte le porte e i portoni controllati risultano chiusi."
+        else:
+            speech = "Risultano aperti: " + ", ".join(
+                entity.name for entity in sorted(active, key=lambda item: item.name.casefold())
+            ) + "."
+        evidence = tuple(
+            Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
+            for entity in openings
+        )
+        return ConversationReply(
+            ReplyStatus.ANSWERED,
+            speech,
+            intent="opening_summary",
+            evidence=evidence,
+        )
+
+    @staticmethod
     def _detect_intent(text: str) -> _Intent | None:
+        opening_summary = next(intent for intent in _INTENTS if intent.name == "opening_summary")
+        if any(_contains_phrase(text, term) for term in opening_summary.subject_terms):
+            return opening_summary
+        if _contains_phrase(text, "stato apertura"):
+            return next(intent for intent in _INTENTS if intent.name == "opening_status")
         for intent in _INTENTS:
             if any(_contains_phrase(text, term) for term in intent.subject_terms):
                 return intent
@@ -419,6 +469,10 @@ class ConversationEngine:
             return f"Lo stato dell'allarme è {entity.state}."
         if intent.name == "lock_status":
             return f"{entity.name} è {ConversationEngine._lock_state(entity)}."
+        if intent.name == "opening_status":
+            states = {"on": "aperta", "open": "aperta", "off": "chiusa", "closed": "chiusa"}
+            state = states.get(str(entity.state).casefold(), str(entity.state))
+            return f"{entity.name} è {state}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":

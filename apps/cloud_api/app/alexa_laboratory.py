@@ -28,6 +28,8 @@ _INTENT_PREFIXES = {
     "AlarmStatusIntent": "stato allarme",
     "LockSummaryIntent": "stato di tutte le serrature",
     "LockStatusIntent": "stato serratura",
+    "OpeningSummaryIntent": "porte o portoni aperti",
+    "OpeningStatusIntent": "stato apertura",
 }
 
 
@@ -89,6 +91,7 @@ def _utterance(intent: dict[str, Any]) -> str | None:
         _slot_value(intent, "site")
         or _slot_value(intent, "sensor")
         or _slot_value(intent, "lock")
+        or _slot_value(intent, "opening")
     )
     return f"{prefix} {subject}" if subject else prefix
 

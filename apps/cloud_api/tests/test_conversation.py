@@ -98,6 +98,19 @@ def test_summarizes_all_authorized_locks() -> None:
     assert reply.speech == "Portoncino Scala: aperto. Serratura Sala: chiusa a chiave."
 
 
+def test_reports_only_open_authorized_openings() -> None:
+    openings = (
+        EntitySnapshot("binary_sensor.garage", "Porta Garage", "binary_sensor", "on"),
+        EntitySnapshot("binary_sensor.dest", "Portone Destro", "binary_sensor", "off"),
+        EntitySnapshot("binary_sensor.sin", "Portone Sinistro", "binary_sensor", "off"),
+    )
+
+    reply = ConversationEngine().ask("ci sono porte o portoni aperti", openings, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "Risultano aperti: Porta Garage."
+
+
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
     acs = entity(
         "sensor.acs",

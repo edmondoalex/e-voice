@@ -87,7 +87,12 @@
           "slots": [],
           "samples": [
             "qual è lo stato di tutte le serrature",
+            "qual è lo stato delle serrature",
+            "lo stato delle serrature",
+            "stato delle serrature",
+            "come sono messe le serrature",
             "controlla tutte le serrature",
+            "controlla le serrature",
             "riepilogo serrature"
           ]
         },
@@ -99,6 +104,27 @@
             "controlla {lock}",
             "{lock} è chiusa",
             "stato di {lock}"
+          ]
+        },
+        {
+          "name": "OpeningSummaryIntent",
+          "slots": [],
+          "samples": [
+            "ci sono porte o portoni aperti",
+            "quali porte sono aperte",
+            "quali portoni sono aperti",
+            "controlla tutte le aperture",
+            "stato delle aperture"
+          ]
+        },
+        {
+          "name": "OpeningStatusIntent",
+          "slots": [{"name": "opening", "type": "EKONEX_OPENING"}],
+          "samples": [
+            "qual è lo stato di {opening}",
+            "controlla {opening}",
+            "{opening} è aperta",
+            "stato di {opening}"
           ]
         },
         {
@@ -138,6 +164,14 @@
             {"id": "serratura_sala", "name": {"value": "serratura sala", "synonyms": ["serratura della sala", "porta della sala"]}},
             {"id": "serratura_ufficio", "name": {"value": "serratura ufficio", "synonyms": ["serratura dell'ufficio", "porta dell'ufficio"]}},
             {"id": "portoncino_scala", "name": {"value": "portoncino scala", "synonyms": ["portoncino delle scale", "serratura scala", "serratura delle scale"]}}
+          ]
+        },
+        {
+          "name": "EKONEX_OPENING",
+          "values": [
+            {"id": "porta_garage", "name": {"value": "porta garage", "synonyms": ["porta del garage", "garage"]}},
+            {"id": "portone_destro", "name": {"value": "portone destro", "synonyms": ["portone di destra"]}},
+            {"id": "portone_sinistro", "name": {"value": "portone sinistro", "synonyms": ["portone di sinistra"]}}
           ]
         }
       ]
