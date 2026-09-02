@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .alexa_device_types import allowed_alexa_device_types, validate_alexa_device_type
 from .alexa_events import reconcile_discovery_safely
@@ -257,20 +258,21 @@ async def _voice_categories(session: AsyncSession, context: TenantContext) -> li
             )
         ).all()
     )
-    if items:
+    existing_slugs = {item.slug for item in items}
+    missing = [
+        VoiceCategory(
+            tenant_id=context.tenant_id,
+            slug=slug,
+            name=name,
+            description=description,
+            builtin=True,
+        )
+        for slug, name, description in STANDARD_VOICE_CATEGORIES
+        if slug not in existing_slugs
+    ]
+    if not missing:
         return items
-    session.add_all(
-        [
-            VoiceCategory(
-                tenant_id=context.tenant_id,
-                slug=slug,
-                name=name,
-                description=description,
-                builtin=True,
-            )
-            for slug, name, description in STANDARD_VOICE_CATEGORIES
-        ]
-    )
+    session.add_all(missing)
     await session.commit()
     return list(
         (
@@ -499,9 +501,13 @@ async def installation_detail(
     item = await _installation(session, context, installation_id)
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     page = max(1, int(request.query_params.get("page", "1")))
-    query = select(Entity).where(
-        Entity.installation_id == item.id,
-        Entity.deleted_at.is_(None),
+    query = (
+        select(Entity)
+        .options(selectinload(Entity.voice_category))
+        .where(
+            Entity.installation_id == item.id,
+            Entity.deleted_at.is_(None),
+        )
     )
     if q:
         query = query.where(

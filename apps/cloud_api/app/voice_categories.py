@@ -13,6 +13,11 @@ STANDARD_VOICE_CATEGORIES: tuple[tuple[str, str, str], ...] = (
     ("battery_level", "Livello batteria", "Percentuale di carica della batteria"),
     ("temperature", "Temperatura", "Temperatura ambiente o generica"),
     ("acs_temperature", "Temperatura acqua calda", "Temperatura ACS, boiler o bollitore"),
+    (
+        "thermal_temperature",
+        "Temperatura centrale termica",
+        "Temperatura di puffer, volano o accumulo termico",
+    ),
     ("alarm_status", "Stato allarme", "Valore corrente del sistema di allarme"),
     ("lock_status", "Stato serratura", "Stato di una serratura"),
     ("opening_status", "Stato apertura", "Stato di porta, portone o altra apertura"),

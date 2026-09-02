@@ -616,7 +616,10 @@ class ConversationEngine:
     ) -> list[tuple[int, EntitySnapshot]]:
         ranked: list[tuple[int, EntitySnapshot]] = []
         for entity in entities:
-            if entity.category is not None and entity.category != intent.name:
+            compatible_categories = {
+                "temperature": {"temperature", "thermal_temperature"},
+            }.get(intent.name, {intent.name})
+            if entity.category is not None and entity.category not in compatible_categories:
                 continue
             thermostat_temperature = (
                 intent.device_class == "temperature" and entity.domain == "climate"
