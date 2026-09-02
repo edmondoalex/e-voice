@@ -172,4 +172,5 @@ class ConversationEntityService:
             aliases=aliases,
             available=entity.available,
             observed_at=observed_at,
+            category=entity.voice_category.slug if entity.voice_category is not None else None,
         )

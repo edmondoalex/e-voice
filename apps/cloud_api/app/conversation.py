@@ -38,6 +38,7 @@ class EntitySnapshot:
     aliases: tuple[str, ...] = ()
     available: bool = True
     observed_at: datetime | None = None
+    category: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +426,10 @@ class ConversationEngine:
         private = _format_value(selected[1][1])
         return ConversationReply(
             ReplyStatus.ANSWERED,
-            f"Il fotovoltaico SAS sta producendo {sas}, mentre quello privato sta producendo {private}.",
+            (
+                f"Il fotovoltaico SAS sta producendo {sas}, "
+                f"mentre quello privato sta producendo {private}."
+            ),
             intent=intent.name,
             evidence=evidence,
             diagnostics={"freshness": "current", "scope": "multiple_sites"},
@@ -536,9 +540,13 @@ class ConversationEngine:
         if not active:
             speech = "Tutte le porte e i portoni controllati risultano chiusi."
         else:
-            speech = "Risultano aperti: " + ", ".join(
-                entity.name for entity in sorted(active, key=lambda item: item.name.casefold())
-            ) + "."
+            speech = (
+                "Risultano aperti: "
+                + ", ".join(
+                    entity.name for entity in sorted(active, key=lambda item: item.name.casefold())
+                )
+                + "."
+            )
         evidence = tuple(
             Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
             for entity in openings
@@ -584,21 +592,13 @@ class ConversationEngine:
             )
             normalized_names = _normalize(matching_text)
             if "esportata" in normalized_names or "export" in normalized_names:
-                return next(
-                    intent for intent in _INTENTS if intent.name == "exported_energy_today"
-                )
+                return next(intent for intent in _INTENTS if intent.name == "exported_energy_today")
             if "importata" in normalized_names or "import" in normalized_names:
-                return next(
-                    intent for intent in _INTENTS if intent.name == "imported_energy_today"
-                )
+                return next(intent for intent in _INTENTS if intent.name == "imported_energy_today")
             if "prodotta" in normalized_names or "production" in normalized_names:
-                return next(
-                    intent for intent in _INTENTS if intent.name == "produced_energy_today"
-                )
+                return next(intent for intent in _INTENTS if intent.name == "produced_energy_today")
             if "consumata" in normalized_names or "consumption" in normalized_names:
-                return next(
-                    intent for intent in _INTENTS if intent.name == "consumed_energy_today"
-                )
+                return next(intent for intent in _INTENTS if intent.name == "consumed_energy_today")
         if matching_classes == {"power"}:
             matching_text = " ".join(
                 value
@@ -616,6 +616,8 @@ class ConversationEngine:
     ) -> list[tuple[int, EntitySnapshot]]:
         ranked: list[tuple[int, EntitySnapshot]] = []
         for entity in entities:
+            if entity.category is not None and entity.category != intent.name:
+                continue
             thermostat_temperature = (
                 intent.device_class == "temperature" and entity.domain == "climate"
             )

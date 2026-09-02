@@ -97,6 +97,25 @@ class Tenant(TimestampMixin, Base):
     dealer: Mapped[Dealer] = relationship(back_populates="tenants")
     memberships: Mapped[list["TenantMembership"]] = relationship(back_populates="tenant")
     installations: Mapped[list["Installation"]] = relationship(back_populates="tenant")
+    voice_categories: Mapped[list["VoiceCategory"]] = relationship(back_populates="tenant")
+
+
+class VoiceCategory(TimestampMixin, Base):
+    __tablename__ = "voice_categories"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_voice_categories_tenant_slug"),
+        Index("ix_voice_categories_tenant_id", "tenant_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    slug: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(String(300))
+    builtin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    tenant: Mapped[Tenant] = relationship(back_populates="voice_categories")
+    entities: Mapped[list["Entity"]] = relationship(back_populates="voice_category")
 
 
 class TenantMembership(Base):
@@ -208,6 +227,9 @@ class Entity(TimestampMixin, Base):
     voice_aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     alexa_cover_mode: Mapped[str | None] = mapped_column(String(20))
     alexa_device_type: Mapped[str | None] = mapped_column(String(32))
+    voice_category_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("voice_categories.id", ondelete="SET NULL")
+    )
     area_id: Mapped[str | None] = mapped_column(String(255))
     area_name: Mapped[str | None] = mapped_column(String(255))
     device_id: Mapped[str | None] = mapped_column(String(64))
@@ -222,6 +244,7 @@ class Entity(TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     installation: Mapped[Installation] = relationship(back_populates="entities")
+    voice_category: Mapped[VoiceCategory | None] = relationship(back_populates="entities")
     alexa_publication: Mapped["AlexaPublication | None"] = relationship(
         back_populates="entity", uselist=False
     )

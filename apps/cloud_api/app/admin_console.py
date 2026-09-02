@@ -45,6 +45,7 @@ from .domain.models import (
     Installation,
     MaintenanceRun,
     OperationalEvent,
+    VoiceCategory,
 )
 from .entity_icons import entity_icon_svg
 from .entity_names import (
@@ -59,6 +60,7 @@ from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
+from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug
 
 
 class ActivityRow(TypedDict):
@@ -119,6 +121,7 @@ def _layout(title: str, body: str, context: TenantContext, csrf: str, active: st
         (
             _nav_link("/dashboard", "Dashboard", "dashboard", active),
             _nav_link("/installations", "Impianti", "installations", active),
+            _nav_link("/voice-categories", "Categorie sensori", "voice-categories", active),
             _nav_link("/activity", "Attività", "activity", active),
             _nav_link("/system", "Sistema", "system", active),
             _nav_link("/pair", "Collega a e-Control", "pair", active),
@@ -228,6 +231,102 @@ async def renew_admin_csrf(
 def _admin(context: TenantContext) -> None:
     if context.role not in WRITE_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Permessi insufficienti")
+
+
+async def _voice_categories(session: AsyncSession, context: TenantContext) -> list[VoiceCategory]:
+    items = list(
+        (
+            await session.scalars(
+                select(VoiceCategory)
+                .where(VoiceCategory.tenant_id == context.tenant_id)
+                .order_by(VoiceCategory.name)
+            )
+        ).all()
+    )
+    if items:
+        return items
+    session.add_all(
+        [
+            VoiceCategory(
+                tenant_id=context.tenant_id,
+                slug=slug,
+                name=name,
+                description=description,
+                builtin=True,
+            )
+            for slug, name, description in STANDARD_VOICE_CATEGORIES
+        ]
+    )
+    await session.commit()
+    return list(
+        (
+            await session.scalars(
+                select(VoiceCategory)
+                .where(VoiceCategory.tenant_id == context.tenant_id)
+                .order_by(VoiceCategory.name)
+            )
+        ).all()
+    )
+
+
+@router.get("/voice-categories", response_class=HTMLResponse)
+async def voice_categories_page(
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> HTMLResponse:
+    _admin(context)
+    csrf = _csrf(context)
+    rows = "".join(
+        f'<tr><td><b>{_e(item.name)}</b><br><span class="muted">{_e(item.slug)}</span></td>'
+        f"<td>{_e(item.description or '—')}</td><td>{'Standard' if item.builtin else 'Personalizzata'}</td></tr>"
+        for item in await _voice_categories(session, context)
+    )
+    body = f'''<div class="card"><h2>Crea categoria</h2>
+<p class="muted">La categoria indica che cosa rappresenta il sensore; il nome vocale identifica il singolo sensore.</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
+<label class="field"><b>Nome categoria</b><input name="name" maxlength="120" required></label>
+<label class="field"><b>Codice</b><input name="slug" maxlength="64" placeholder="Generato automaticamente"></label>
+<label class="field"><b>Descrizione</b><input name="description" maxlength="300"></label>
+<button>Crea categoria</button></form></div>
+<table><thead><tr><th>Categoria</th><th>Descrizione</th><th>Tipo</th></tr></thead><tbody>{rows}</tbody></table>'''
+    response = HTMLResponse(_layout("Categorie sensori", body, context, csrf, "voice-categories"))
+    response.set_cookie(
+        CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
+    )
+    return response
+
+
+@router.post("/voice-categories", response_class=RedirectResponse)
+async def create_voice_category(
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    _admin(context)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    name = values.get("name", "").strip()
+    if not name or len(name) > 120:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nome non valido")
+    slug = category_slug(values.get("slug", "") or name)
+    if await session.scalar(
+        select(VoiceCategory.id).where(
+            VoiceCategory.tenant_id == context.tenant_id, VoiceCategory.slug == slug
+        )
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Categoria già esistente")
+    session.add(
+        VoiceCategory(
+            tenant_id=context.tenant_id,
+            slug=slug,
+            name=name,
+            description=values.get("description", "").strip() or None,
+            builtin=False,
+        )
+    )
+    await session.commit()
+    return RedirectResponse("/voice-categories", status_code=status.HTTP_303_SEE_OTHER)
 
 
 async def _installation(
@@ -642,10 +741,10 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
         label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
         sections.append(
             f'<details class="entity-group" data-domain="{_e(domain)}">'
-            f'<summary><span>{_e(label)}</span>'
+            f"<summary><span>{_e(label)}</span>"
             f'<span class="entity-group-count">{len(domain_entities)}</span></summary>'
-            '<table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th>'
-            f'<th>Comandi diretti</th></tr></thead><tbody>{rows}</tbody></table></details>'
+            "<table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th>"
+            f"<th>Comandi diretti</th></tr></thead><tbody>{rows}</tbody></table></details>"
         )
     return "".join(sections)
 
@@ -829,11 +928,16 @@ def _entity_names_form(
     installation: Installation,
     entity: Entity,
     csrf: str,
+    categories: list[VoiceCategory],
     *,
     message: str = "",
     error: bool = False,
 ) -> str:
     aliases = "\n".join(entity.voice_aliases or [])
+    category_options = '<option value="">Nessuna categoria</option>' + "".join(
+        f'<option value="{item.id}"{" selected" if item.id == entity.voice_category_id else ""}>{_e(item.name)}</option>'
+        for item in categories
+    )
     notice = f'<p class="{"bad" if error else "ok"}">{_e(message)}</p>' if message else ""
     selected_device_type = entity.alexa_device_type or "auto"
     device_type_labels = {
@@ -877,6 +981,7 @@ def _entity_names_form(
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>
 <label class="field"><b>Nome vocale</b><input name="voice_name" maxlength="120" value="{_e(entity.voice_name)}" placeholder="Fallback: {_e(effective_display_name(entity))}"><span class="muted">Se vuoto: Nome visualizzato → Nome e-Control.</span></label>
 <label class="field"><b>Alias vocali</b><textarea name="voice_aliases" maxlength="2420" placeholder="Un alias per riga">{_e(aliases)}</textarea><span class="muted">Massimo 20 alias; spazi e duplicati senza distinzione maiuscole/minuscole vengono normalizzati.</span></label>
+<label class="field"><b>Categoria vocale</b><select name="voice_category_id">{category_options}</select><span class="muted">Indica a Ekonex se il sensore rappresenta produzione, consumo, batteria, temperatura, allarme, serratura o altro.</span></label>
 {device_type}
 {cover_mode}
 <p><b>Nome dashboard effettivo:</b> {_e(effective_display_name(entity))}<br><b>Nome vocale effettivo:</b> {_e(effective_voice_name(entity))}<br><b>Tutti i nomi vocali:</b> {_e(", ".join(all_voice_names(entity)))}</p>
@@ -888,6 +993,7 @@ def _names_page(
     entity: Entity,
     context: TenantContext,
     csrf: str,
+    categories: list[VoiceCategory],
     *,
     message: str = "",
     error: bool = False,
@@ -896,7 +1002,9 @@ def _names_page(
     response = HTMLResponse(
         _layout(
             "Modifica nomi entità",
-            _entity_names_form(installation, entity, csrf, message=message, error=error),
+            _entity_names_form(
+                installation, entity, csrf, categories, message=message, error=error
+            ),
             context,
             csrf,
             "installations",
@@ -922,7 +1030,9 @@ async def edit_entity_names_page(
     installation = await _installation(session, context, installation_id)
     entity = await _entity(session, installation, entity_id)
     csrf = _csrf(context)
-    return _names_page(installation, entity, context, csrf)
+    return _names_page(
+        installation, entity, context, csrf, await _voice_categories(session, context)
+    )
 
 
 @router.post(
@@ -938,6 +1048,7 @@ async def update_entity_names(
     _admin(context)
     installation = await _installation(session, context, installation_id)
     entity = await _entity(session, installation, entity_id)
+    categories = await _voice_categories(session, context)
     values = await _form(request)
     if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
@@ -947,6 +1058,7 @@ async def update_entity_names(
         list(entity.voice_aliases or []),
         entity.alexa_cover_mode,
         entity.alexa_device_type,
+        entity.voice_category_id,
     )
     try:
         if values.get("action") == "reset":
@@ -957,6 +1069,12 @@ async def update_entity_names(
             entity.voice_aliases = clean_voice_aliases(
                 re.split(r"[\r\n,]+", values.get("voice_aliases", ""))
             )
+            requested_category = values.get("voice_category_id", "")
+            entity.voice_category_id = UUID(requested_category) if requested_category else None
+            if entity.voice_category_id is not None and not any(
+                item.id == entity.voice_category_id for item in categories
+            ):
+                raise ValueError("unknown category")
             requested_device_type = values.get("alexa_device_type", "auto")
             entity.alexa_device_type = (
                 None
@@ -977,12 +1095,14 @@ async def update_entity_names(
             entity.voice_aliases,
             entity.alexa_cover_mode,
             entity.alexa_device_type,
+            entity.voice_category_id,
         ) = previous
         return _names_page(
             installation,
             entity,
             context,
             _csrf(context),
+            categories,
             message=(
                 "Modalità Alexa incompatibile con le funzioni e-Control disponibili."
                 if entity.ha_domain == "cover"
@@ -1007,12 +1127,14 @@ async def update_entity_names(
             entity.voice_aliases,
             entity.alexa_cover_mode,
             entity.alexa_device_type,
+            entity.voice_category_id,
         ) = previous
         return _names_page(
             installation,
             entity,
             context,
             _csrf(context),
+            categories,
             message="Nome vocale o alias già utilizzato da un’altra entità.",
             error=True,
             status_code=status.HTTP_409_CONFLICT,
@@ -1023,6 +1145,7 @@ async def update_entity_names(
         list(entity.voice_aliases or []),
         entity.alexa_cover_mode,
         entity.alexa_device_type,
+        entity.voice_category_id,
     )
     changed_fields = [
         name
@@ -1033,6 +1156,7 @@ async def update_entity_names(
                 "voice_aliases",
                 "alexa_cover_mode",
                 "alexa_device_type",
+                "voice_category_id",
             ),
             previous,
             current,
@@ -1055,7 +1179,14 @@ async def update_entity_names(
     )
     await session.commit()
     await reconcile_discovery_safely(session, installation)
-    return _names_page(installation, entity, context, _csrf(context), message="Nomi salvati.")
+    return _names_page(
+        installation,
+        entity,
+        context,
+        _csrf(context),
+        categories,
+        message="Nomi salvati. Categoria aggiornata.",
+    )
 
 
 def _command_data(operation: str, value: str) -> dict[str, object]:

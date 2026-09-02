@@ -57,8 +57,10 @@ class EntityRepository:
     async def list_for_installation(
         self, *, tenant_id: UUID, installation_id: UUID
     ) -> list[Entity]:
-        statement = self._tenant_statement(tenant_id).where(
-            Entity.installation_id == installation_id
+        statement = (
+            self._tenant_statement(tenant_id)
+            .where(Entity.installation_id == installation_id)
+            .options(selectinload(Entity.voice_category))
         )
         return list((await self._session.scalars(statement)).all())
 

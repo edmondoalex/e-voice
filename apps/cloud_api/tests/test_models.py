@@ -28,6 +28,7 @@ def test_domain_tables_are_registered() -> None:
         "tenant_memberships",
         "tenants",
         "users",
+        "voice_categories",
     }
 
 

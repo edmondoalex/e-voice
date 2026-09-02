@@ -22,7 +22,12 @@ class OpenAIQuestionInterpreter:
         if not self._api_key:
             return None
         allowed = [
-            {"name": entity.name, "aliases": list(entity.aliases), "domain": entity.domain}
+            {
+                "name": entity.name,
+                "aliases": list(entity.aliases),
+                "domain": entity.domain,
+                "category": entity.category,
+            }
             for entity in entities
         ]
         payload = {
