@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5.4-nano"
     openai_timeout_seconds: float = Field(default=4.0, ge=1.0, le=10.0)
+    conversation_learning_enabled: bool = False
+    conversation_learning_ttl_days: int = Field(default=180, ge=1, le=730)
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

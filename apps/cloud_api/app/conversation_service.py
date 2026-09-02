@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from .ai_interpreter import OpenAIQuestionInterpreter
 from .auth import TenantContext
 from .config import get_settings
 from .conversation import ConversationEngine, ConversationReply, EntitySnapshot, ReplyStatus
+from .conversation_learning import ConversationLearningStore
 from .domain.models import Entity
 from .repositories import EntityRepository, InstallationRepository
 from .services import ResourceNotFoundError
@@ -19,10 +21,20 @@ from .services import ResourceNotFoundError
 class ConversationEntityService:
     """Risponde usando soltanto entità dell'installazione appartenente al tenant."""
 
-    def __init__(self, session: AsyncSession, engine: ConversationEngine | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        engine: ConversationEngine | None = None,
+        learning_store: ConversationLearningStore | None = None,
+    ) -> None:
         self._installations = InstallationRepository(session)
         self._entities = EntityRepository(session)
         self._engine = engine or ConversationEngine()
+        settings = get_settings()
+        self._learning_store = learning_store or ConversationLearningStore(
+            settings.redis_url,
+            settings.conversation_learning_ttl_days * 24 * 60 * 60,
+        )
 
     async def ask(
         self,
@@ -66,15 +78,58 @@ class ConversationEntityService:
         }
         if reply.status not in fallback_statuses:
             return reply
+        if not settings.conversation_learning_enabled:
+            return await self._ask_with_ai(utterance, snapshots, reply, now=now)
+
+        learned = await self._learning_store.get(tenant_id, installation_id, utterance)
+        if learned:
+            interpreted = self._engine.ask(learned, snapshots, now=now)
+            if interpreted.status is ReplyStatus.ANSWERED:
+                return replace(
+                    interpreted,
+                    diagnostics={**interpreted.diagnostics, "interpretation": "learned"},
+                )
+
+        interpreted = await self._ask_with_ai(utterance, snapshots, reply, now=now)
+        canonical = interpreted.diagnostics.get("canonical_query")
+        if interpreted.status is ReplyStatus.ANSWERED and canonical:
+            await self._learning_store.remember(
+                tenant_id, installation_id, utterance, canonical
+            )
+            return replace(
+                interpreted,
+                diagnostics={
+                    key: value
+                    for key, value in interpreted.diagnostics.items()
+                    if key != "canonical_query"
+                }
+                | {"interpretation": "ai"},
+            )
+        return interpreted
+
+    async def _ask_with_ai(
+        self,
+        utterance: str,
+        snapshots: tuple[EntitySnapshot, ...],
+        original: ConversationReply,
+        *,
+        now: datetime | None,
+    ) -> ConversationReply:
+        settings = get_settings()
         canonical = await OpenAIQuestionInterpreter(
             settings.openai_api_key,
             settings.openai_model,
             settings.openai_timeout_seconds,
         ).interpret(utterance, snapshots)
         if canonical is None:
-            return reply
+            return original
         interpreted = self._engine.ask(canonical, snapshots, now=now)
-        return interpreted if interpreted.status is ReplyStatus.ANSWERED else reply
+        if interpreted.status is not ReplyStatus.ANSWERED:
+            return original
+        return replace(
+            interpreted,
+            diagnostics={**interpreted.diagnostics, "canonical_query": canonical},
+        )
 
     @staticmethod
     def _snapshot(entity: Entity) -> EntitySnapshot:
