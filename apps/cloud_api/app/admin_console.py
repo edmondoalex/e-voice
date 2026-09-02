@@ -122,6 +122,7 @@ def _layout(title: str, body: str, context: TenantContext, csrf: str, active: st
             _nav_link("/dashboard", "Dashboard", "dashboard", active),
             _nav_link("/installations", "Impianti", "installations", active),
             _nav_link("/voice-categories", "Categorie sensori", "voice-categories", active),
+            _nav_link("/laboratory/learning", "Apprendimento IA", "ai-learning", active),
             _nav_link("/activity", "Attività", "activity", active),
             _nav_link("/system", "Sistema", "system", active),
             _nav_link("/pair", "Collega a e-Control", "pair", active),
