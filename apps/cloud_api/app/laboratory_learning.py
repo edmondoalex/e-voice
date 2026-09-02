@@ -47,7 +47,10 @@ _INTENT_MAP = {
 
 def _alexa_intent(intent: str, canonical: str) -> str:
     normalized = canonical.casefold()
-    collective = any(word in normalized.split() for word in ("tutti", "tutte", "entrambi", "entrambe"))
+    collective = (
+        any(word in normalized.split() for word in ("tutti", "tutte", "entrambi", "entrambe"))
+        or ("sas" in normalized.split() and "privato" in normalized.split())
+    )
     collective_intents = {
         "battery_level": "BatterySummaryIntent",
         "consumption_power": "ConsumptionSummaryIntent",

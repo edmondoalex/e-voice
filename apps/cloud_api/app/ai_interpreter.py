@@ -43,6 +43,8 @@ class OpenAIQuestionInterpreter:
                 "Se la domanda chiede tutte le batterie, genera esattamente 'percentuale di "
                 "tutte le batterie'. Se la domanda chiede tutti gli elementi di qualunque "
                 "categoria, conserva la richiesta collettiva nella query canonica. "
+                "Se la domanda nomina sia SAS sia privato, conserva sempre entrambi i siti "
+                "nella query canonica, per qualunque categoria richiesta. "
                 "Se manca il sito, non sceglierlo arbitrariamente: genera la query generica "
                 "'quanto produce il fotovoltaico', così Ekonex potrà chiedere quale "
                 "sensore usare. Se la richiesta è un comando, "

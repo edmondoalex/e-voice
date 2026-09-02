@@ -108,6 +108,24 @@ def test_summarizes_all_battery_percentages() -> None:
     assert len(reply.evidence) == 2
 
 
+def test_sas_and_private_exported_energy_returns_both_sites() -> None:
+    sas = entity(
+        "sensor.export_sas", "Energia oggi SAS esportata", "4.2", "kWh", "energy"
+    )
+    private = entity(
+        "sensor.export_private", "Energia oggi privato esportata", "2.1", "kWh", "energy"
+    )
+
+    reply = ConversationEngine().ask(
+        "L'energia SAS e privato oggi esportata", [sas, private], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "Energia oggi SAS esportata: 4,2 chilowattora" in reply.speech
+    assert "Energia oggi privato esportata: 2,1 chilowattora" in reply.speech
+    assert len(reply.evidence) == 2
+
+
 def test_answers_textual_alarm_state() -> None:
     alarm = entity("sensor.alarm", "Allarme", "SOLO ESTERNO", None, "")
 

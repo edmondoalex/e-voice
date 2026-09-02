@@ -293,7 +293,7 @@ class ConversationEngine:
             if combined is not None:
                 return combined
 
-        if self._requests_all(text):
+        if self._requests_all(text) or self._requests_both_sites(text):
             combined = self._summarize_all_values(text, intent, snapshots)
             if combined is not None:
                 return combined
@@ -416,6 +416,10 @@ class ConversationEngine:
             for term in ("tutti", "tutte", "entrambi", "entrambe")
         )
 
+    @staticmethod
+    def _requests_both_sites(text: str) -> bool:
+        return all(_contains_phrase(text, site) for site in ("sas", "privato"))
+
     @classmethod
     def _summarize_all_values(
         cls,
@@ -424,7 +428,15 @@ class ConversationEngine:
         entities: tuple[EntitySnapshot, ...],
     ) -> ConversationReply | None:
         ranked = cls._rank(text, intent, entities)
-        matching = tuple(entity for score, entity in ranked if score > 1)
+        matching = tuple(
+            entity
+            for score, entity in ranked
+            if score > 1
+            and any(
+                _contains_phrase(_normalize(" ".join((entity.name, *entity.aliases))), term)
+                for term in intent.subject_terms
+            )
+        )
         if not matching:
             return None
         evidence = tuple(
