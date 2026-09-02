@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = Field(default=4.0, ge=1.0, le=10.0)
     conversation_learning_enabled: bool = False
     conversation_learning_ttl_days: int = Field(default=180, ge=1, le=730)
+    laboratory_learning_username: str = "ekonex-lab"
+    laboratory_learning_password: str = ""
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

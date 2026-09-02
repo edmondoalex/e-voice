@@ -11,6 +11,7 @@ from .alexa import router as alexa_router
 from .alexa_laboratory import router as alexa_laboratory_router
 from .alexa_portal_oauth import router as alexa_portal_oauth_router
 from .evcp import router as evcp_router
+from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
@@ -35,6 +36,7 @@ app.include_router(evcp_router)
 app.include_router(alexa_portal_oauth_router)
 app.include_router(alexa_router)
 app.include_router(alexa_laboratory_router)
+app.include_router(laboratory_learning_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

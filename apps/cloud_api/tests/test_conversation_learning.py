@@ -20,6 +20,7 @@ class FakeLearningStore:
         installation_id: object,
         utterance: str,
         canonical: str,
+        intent: str,
     ) -> None:
         self.values[(tenant_id, installation_id, utterance.casefold())] = canonical
 

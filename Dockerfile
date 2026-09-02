@@ -9,6 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY apps ./apps
 COPY brand ./brand
+COPY config ./config
 COPY migrations ./migrations
 COPY alembic.ini ./
 

@@ -94,7 +94,11 @@ class ConversationEntityService:
         canonical = interpreted.diagnostics.get("canonical_query")
         if interpreted.status is ReplyStatus.ANSWERED and canonical:
             await self._learning_store.remember(
-                tenant_id, installation_id, utterance, canonical
+                tenant_id,
+                installation_id,
+                utterance,
+                canonical,
+                interpreted.intent or "",
             )
             return replace(
                 interpreted,
