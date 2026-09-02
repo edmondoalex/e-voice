@@ -20,10 +20,11 @@ def entity(
     **kwargs: Any,
 ) -> EntitySnapshot:
     observed_at = kwargs.pop("observed_at", NOW)
+    domain = kwargs.pop("domain", "sensor")
     return EntitySnapshot(
         entity_id=entity_id,
         name=name,
-        domain="sensor",
+        domain=domain,
         state=state,
         unit=unit,
         device_class=device_class,
@@ -175,8 +176,24 @@ def test_authorized_temperature_alias_can_be_asked_without_saying_temperature() 
     reply = ConversationEngine().ask("Puffer?", [puffer], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
-    assert reply.speech == "La temperatura è 70.75°C."
+    assert reply.speech == "La temperatura è 71°C."
     assert reply.evidence[0].entity_id == "sensor.puffer"
+
+
+def test_thermostat_temperature_keeps_one_decimal_with_italian_separator() -> None:
+    thermostat = entity(
+        "climate.living_room",
+        "Termostato soggiorno",
+        "22.44",
+        "°C",
+        "temperature",
+        domain="climate",
+        aliases=("temperatura soggiorno",),
+    )
+
+    reply = ConversationEngine().ask("temperatura soggiorno", (thermostat,), now=NOW)
+
+    assert reply.speech == "La temperatura è 22,4°C."
 
 
 def test_answers_consumption_by_mapped_name() -> None:
@@ -242,7 +259,23 @@ def test_exact_exported_energy_name_is_not_mistaken_for_pv_power() -> None:
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.intent == "exported_energy_today"
-    assert reply.speech == "Oggi l'impianto SAS ha esportato 4.2 kWh."
+    assert reply.speech == "Oggi l'impianto SAS ha esportato 4,2 chilowattora."
+
+
+def test_small_energy_value_is_spoken_in_watt_hours() -> None:
+    exported = entity(
+        "sensor.export_sas",
+        "energia oggi fotovoltaico SAS esportata",
+        "0.08",
+        "kWh",
+        "energy",
+    )
+
+    reply = ConversationEngine().ask(
+        "Energia oggi fotovoltaico SAS esportata", [exported], now=NOW
+    )
+
+    assert reply.speech == "Oggi l'impianto SAS ha esportato 80 wattora."
 
 
 def test_exact_imported_energy_name_selects_private_site() -> None:
@@ -260,7 +293,7 @@ def test_exact_imported_energy_name_selects_private_site() -> None:
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.intent == "imported_energy_today"
-    assert reply.speech == "Oggi l'impianto privato ha importato 1.6 kWh."
+    assert reply.speech == "Oggi l'impianto privato ha importato 1,6 chilowattora."
 
 
 def test_unavailable_value_is_never_presented_as_measurement() -> None:

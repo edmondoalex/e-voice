@@ -12,6 +12,7 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import StrEnum
 
 
@@ -186,6 +187,28 @@ def _format_value(entity: EntitySnapshot) -> str:
             "power": "W",
             "temperature": "°C",
         }.get(entity.device_class or "")
+    normalized_unit = (unit or "").strip().casefold()
+    if normalized_unit in {"kwh", "wh"}:
+        try:
+            energy = Decimal(value)
+            if normalized_unit == "kwh" and abs(energy) < 1:
+                watt_hours = (energy * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                return f"{watt_hours} wattora"
+            if normalized_unit == "wh":
+                watt_hours = energy.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                return f"{watt_hours} wattora"
+            kilowatt_hours = energy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            spoken = format(kilowatt_hours, "f").rstrip("0").rstrip(".").replace(".", ",")
+            return f"{spoken} chilowattora"
+        except InvalidOperation:
+            pass
+    if unit in {"°C", "°F"} or entity.device_class == "temperature":
+        try:
+            precision = Decimal("0.1") if entity.domain == "climate" else Decimal("1")
+            value = str(Decimal(value).quantize(precision, rounding=ROUND_HALF_UP))
+            value = value.replace(".", ",")
+        except InvalidOperation:
+            pass
     if not unit:
         return value
     if unit in {"%", "°C", "°F"}:
@@ -281,7 +304,11 @@ class ConversationEngine:
                 intent=intent.name,
                 evidence=(evidence,),
             )
-        if intent.name not in {"alarm_status", "lock_status", "opening_status"} and not _has_numeric_state(entity):
+        if intent.name not in {
+            "alarm_status",
+            "lock_status",
+            "opening_status",
+        } and not _has_numeric_state(entity):
             return ConversationReply(
                 ReplyStatus.UNAVAILABLE,
                 f"Il sensore {entity.name} non contiene un valore numerico valido.",
@@ -429,7 +456,10 @@ class ConversationEngine:
     ) -> list[tuple[int, EntitySnapshot]]:
         ranked: list[tuple[int, EntitySnapshot]] = []
         for entity in entities:
-            if entity.domain != intent.domain:
+            thermostat_temperature = (
+                intent.device_class == "temperature" and entity.domain == "climate"
+            )
+            if entity.domain != intent.domain and not thermostat_temperature:
                 continue
             if intent.device_class is not None and entity.device_class != intent.device_class:
                 continue
