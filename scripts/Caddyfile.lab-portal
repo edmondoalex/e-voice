@@ -1,0 +1,7 @@
+voice.e-control.tech {
+	reverse_proxy 127.0.0.1:8000
+}
+
+voice-lab.e-control.tech {
+	reverse_proxy 127.0.0.1:8001
+}
