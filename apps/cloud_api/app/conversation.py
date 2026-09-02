@@ -119,12 +119,24 @@ _INTENTS = (
     _Intent(
         "produced_energy_today",
         "energy",
-        ("energia prodotta oggi", "energia oggi prodotta", "produzione di oggi"),
+        (
+            "energia prodotta oggi",
+            "energia oggi prodotta",
+            "produzione di oggi",
+            "totale prodotto oggi",
+            "totale prodotta oggi",
+        ),
     ),
     _Intent(
         "consumed_energy_today",
         "energy",
-        ("energia consumata oggi", "energia oggi consumata", "consumo di oggi"),
+        (
+            "energia consumata oggi",
+            "energia oggi consumata",
+            "consumo di oggi",
+            "totale consumato oggi",
+            "totale consumata oggi",
+        ),
     ),
     _Intent(
         "consumption_power",
@@ -423,7 +435,7 @@ class ConversationEngine:
     def _requests_all(text: str) -> bool:
         return any(
             _contains_phrase(text, term)
-            for term in ("tutti", "tutte", "entrambi", "entrambe")
+            for term in ("tutti", "tutte", "entrambi", "entrambe", "totale", "complessivo")
         )
 
     @staticmethod
@@ -461,6 +473,35 @@ class ConversationEngine:
             else f"{entity.name}: non disponibile"
             for entity in sorted(matching, key=lambda item: item.name.casefold())
         ]
+        if intent.name in {"produced_energy_today", "consumed_energy_today"}:
+            total_kwh = Decimal("0")
+            can_total = True
+            for entity in matching:
+                if (
+                    not entity.available
+                    or entity.state in {None, "unknown", "unavailable"}
+                    or not _has_numeric_state(entity)
+                ):
+                    can_total = False
+                    break
+                try:
+                    value = Decimal(str(entity.state))
+                except InvalidOperation:
+                    can_total = False
+                    break
+                unit = (entity.unit or "kWh").strip().casefold()
+                if unit == "wh":
+                    value /= Decimal("1000")
+                elif unit != "kwh":
+                    can_total = False
+                    break
+                total_kwh += value
+            if can_total:
+                total = format(
+                    total_kwh.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"
+                ).rstrip("0").rstrip(".").replace(".", ",")
+                action = "prodotta" if intent.name == "produced_energy_today" else "consumata"
+                parts.insert(0, f"Energia totale {action} oggi: {total} chilowattora")
         return ConversationReply(
             ReplyStatus.ANSWERED,
             "; ".join(parts) + ".",

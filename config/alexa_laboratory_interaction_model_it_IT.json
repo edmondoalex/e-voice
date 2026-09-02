@@ -135,6 +135,8 @@
             "energia oggi prodotta da tutti gli impianti",
             "energia prodotta oggi SAS e privato",
             "totale prodotto oggi",
+            "totale prodotta oggi",
+            "energia totale prodotta oggi",
             "produzione totale di oggi",
             "quanta energia hanno prodotto oggi tutti gli impianti"
           ]
@@ -147,6 +149,8 @@
             "energia oggi consumata da tutti gli impianti",
             "energia consumata oggi SAS e privato",
             "totale consumato oggi",
+            "totale consumata oggi",
+            "energia totale consumata oggi",
             "consumo totale di oggi",
             "quanta energia hanno consumato oggi tutti gli impianti"
           ]
