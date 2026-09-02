@@ -222,6 +222,45 @@ def test_asks_for_clarification_when_temperature_is_ambiguous() -> None:
     assert set(reply.candidates) == {"Temperatura cucina", "Temperatura camera"}
 
 
+def test_thermal_category_summarizes_sensors_without_ha_device_class_or_temperature_name() -> None:
+    sensors = (
+        entity(
+            "sensor.acs",
+            "Acqua Calda",
+            "69.125",
+            "\N{DEGREE SIGN}C",
+            "temperature",
+            category="thermal_temperature",
+        ),
+        entity(
+            "sensor.puffer",
+            "Puffer Alto",
+            "73.5625",
+            "\N{DEGREE SIGN}C",
+            "",
+            category="thermal_temperature",
+        ),
+        entity(
+            "sensor.volano",
+            "Volano",
+            "62.875",
+            "\N{DEGREE SIGN}C",
+            "",
+            category="thermal_temperature",
+        ),
+    )
+
+    reply = ConversationEngine().ask("tutte le temperature", sensors, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert {item.entity_id for item in reply.evidence} == {
+        "sensor.acs",
+        "sensor.puffer",
+        "sensor.volano",
+    }
+    assert "Volano: 63\N{DEGREE SIGN}C" in reply.speech
+
+
 def test_area_disambiguates_temperature() -> None:
     kitchen = entity(
         "sensor.kitchen", "Temperatura cucina", "23", "°C", "temperature", area="cucina"

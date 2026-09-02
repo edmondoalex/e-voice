@@ -210,6 +210,7 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 def _format_value(entity: EntitySnapshot) -> str:
     value = entity.state or ""
     unit = entity.unit
+    temperature_categories = {"temperature", "acs_temperature", "thermal_temperature"}
     if not unit:
         unit = {
             "battery": "%",
@@ -218,6 +219,8 @@ def _format_value(entity: EntitySnapshot) -> str:
             "power": "W",
             "temperature": "°C",
         }.get(entity.device_class or "")
+    if not unit and entity.category in temperature_categories:
+        unit = "°C"
     normalized_unit = (unit or "").strip().casefold()
     if normalized_unit in {"kwh", "wh"}:
         try:
@@ -233,7 +236,11 @@ def _format_value(entity: EntitySnapshot) -> str:
             return f"{spoken} chilowattora"
         except InvalidOperation:
             pass
-    if unit in {"°C", "°F"} or entity.device_class == "temperature":
+    if (
+        unit in {"°C", "°F"}
+        or entity.device_class == "temperature"
+        or entity.category in temperature_categories
+    ):
         try:
             precision = Decimal("0.1") if entity.domain == "climate" else Decimal("1")
             value = str(Decimal(value).quantize(precision, rounding=ROUND_HALF_UP))
@@ -457,10 +464,13 @@ class ConversationEngine:
         matching = tuple(
             entity
             for score, entity in ranked
-            if score > 1
-            and any(
-                _contains_phrase(_normalize(" ".join((entity.name, *entity.aliases))), term)
-                for term in intent.subject_terms
+            if entity.category is not None
+            or (
+                score > 1
+                and any(
+                    _contains_phrase(_normalize(" ".join((entity.name, *entity.aliases))), term)
+                    for term in intent.subject_terms
+                )
             )
         )
         if not matching:
@@ -621,13 +631,14 @@ class ConversationEngine:
             }.get(intent.name, {intent.name})
             if entity.category is not None and entity.category not in compatible_categories:
                 continue
-            thermostat_temperature = (
-                intent.device_class == "temperature" and entity.domain == "climate"
-            )
-            if entity.domain != intent.domain and not thermostat_temperature:
-                continue
-            if intent.device_class is not None and entity.device_class != intent.device_class:
-                continue
+            if entity.category is None:
+                thermostat_temperature = (
+                    intent.device_class == "temperature" and entity.domain == "climate"
+                )
+                if entity.domain != intent.domain and not thermostat_temperature:
+                    continue
+                if intent.device_class is not None and entity.device_class != intent.device_class:
+                    continue
             searchable = (entity.name, *entity.aliases)
             score = 1
             if entity.area and _contains_phrase(text, entity.area):
