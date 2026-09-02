@@ -61,7 +61,7 @@ from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
-from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug
+from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug, infer_standard_category
 
 
 class ActivityRow(TypedDict):
@@ -287,6 +287,7 @@ async def _voice_categories(session: AsyncSession, context: TenantContext) -> li
 
 @router.get("/voice-categories", response_class=HTMLResponse)
 async def voice_categories_page(
+    request: Request,
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> HTMLResponse:
@@ -297,7 +298,16 @@ async def voice_categories_page(
         f"<td>{_e(item.description or '—')}</td><td>{'Standard' if item.builtin else 'Personalizzata'}</td></tr>"
         for item in await _voice_categories(session, context)
     )
-    body = f'''<div class="card"><h2>Crea categoria</h2>
+    assigned = request.query_params.get("assigned", "").strip()
+    result = (
+        f'<div class="card ok"><b>Classificazione completata:</b> {_e(assigned)} entità assegnate. Le categorie già presenti non sono state modificate.</div>'
+        if assigned.isdigit()
+        else ""
+    )
+    body = f'''{result}<div class="card"><h2>Classificazione automatica</h2>
+<p class="muted">Assegna le categorie standard alle sole entità ancora senza categoria, usando tipo, unità, device class, nome ed entity_id. Le scelte manuali non vengono sovrascritte.</p>
+<form method="post" action="/voice-categories/auto-assign"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Classifica automaticamente le entità non assegnate</button></form></div>
+<div class="card"><h2>Crea categoria</h2>
 <p class="muted">La categoria indica che cosa rappresenta il sensore; il nome vocale identifica il singolo sensore.</p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
 <label class="field"><b>Nome categoria</b><input name="name" maxlength="120" required></label>
@@ -343,6 +353,59 @@ async def create_voice_category(
     )
     await session.commit()
     return RedirectResponse("/voice-categories", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/voice-categories/auto-assign", response_class=RedirectResponse)
+async def auto_assign_voice_categories(
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    _admin(context)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    categories = {item.slug: item for item in await _voice_categories(session, context)}
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .join(Installation)
+                .where(
+                    Installation.tenant_id == context.tenant_id,
+                    Entity.deleted_at.is_(None),
+                    Entity.voice_category_id.is_(None),
+                )
+            )
+        ).all()
+    )
+    assigned = 0
+    for entity in entities:
+        attributes = entity.attributes_json or {}
+        slug = infer_standard_category(
+            domain=entity.ha_domain,
+            device_class=entity.device_class,
+            unit=str(attributes.get("unit_of_measurement") or "") or None,
+            names=tuple(
+                value
+                for value in (
+                    entity.voice_name,
+                    entity.display_name,
+                    entity.friendly_name,
+                    entity.ha_entity_id,
+                    *(entity.voice_aliases or []),
+                )
+                if value
+            ),
+        )
+        category = categories.get(slug or "")
+        if category is not None:
+            entity.voice_category_id = category.id
+            assigned += 1
+    await session.commit()
+    return RedirectResponse(
+        f"/voice-categories?assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 async def _installation(
