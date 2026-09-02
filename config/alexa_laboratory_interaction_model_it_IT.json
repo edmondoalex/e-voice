@@ -84,7 +84,7 @@
         },
         {
           "name": "LockStatusIntent",
-          "slots": [{"name": "lock", "type": "AMAZON.SearchQuery"}],
+          "slots": [{"name": "lock", "type": "EKONEX_LOCK"}],
           "samples": [
             "qual è lo stato di {lock}",
             "controlla la serratura {lock}",
@@ -121,6 +121,14 @@
             {"id": "acs", "name": {"value": "acqua calda", "synonyms": ["ACS", "a c s", "bollitore", "sanitario"]}},
             {"id": "puffer_alto", "name": {"value": "puffer alto", "synonyms": ["accumulo termico alto", "parte alta del puffer", "puffer"]}},
             {"id": "volano", "name": {"value": "volano", "synonyms": ["volano termico", "temperatura volano"]}}
+          ]
+        },
+        {
+          "name": "EKONEX_LOCK",
+          "values": [
+            {"id": "porta_sala", "name": {"value": "porta sala", "synonyms": ["serratura porta sala", "porta della sala"]}},
+            {"id": "porta_ufficio", "name": {"value": "porta ufficio", "synonyms": ["serratura porta ufficio", "porta dell'ufficio"]}},
+            {"id": "portoncino_scala", "name": {"value": "portoncino scala", "synonyms": ["serratura portoncino scala", "portoncino della scala"]}}
           ]
         }
       ]
