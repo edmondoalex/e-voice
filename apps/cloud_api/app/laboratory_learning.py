@@ -144,6 +144,8 @@ async def learning_page(
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Apprendimento IA · Ekonex</title>
 <style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;cursor:pointer}}button.danger{{background:#c62828}}.actions{{display:flex;align-items:center;gap:8px}}.actions form{{margin:0}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}.filter{{box-sizing:border-box;width:100%;margin:4px 0 14px;padding:12px 14px;border:1px solid #bcc5d0;border-radius:8px;font:inherit}}</style></head><body><main>
+<div style="background:#b42318;color:white;padding:12px 16px;border-radius:8px;font-weight:900;text-align:center;margin-bottom:18px">LABORATORIO — NON È PRODUZIONE</div>
+<p><a href="/dashboard">← Torna al portale</a></p>
 <h1>Apprendimento IA</h1><p>Le frasi vengono apprese solo dopo una risposta valida. L'approvazione le inserisce nella bozza JSON Alexa.</p>
 <div class="cards"><div class="card"><b>{len(records)}</b><br>Frasi apprese</div><div class="card"><b>{sum(item.approved for item in records)}</b><br>Approvate</div></div>
 <p><a class="button" href="/laboratory/learning/model.json">Scarica JSON Alexa aggiornato</a></p>
