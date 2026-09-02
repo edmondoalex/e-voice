@@ -139,11 +139,13 @@ async def learning_page(
     )
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Apprendimento IA · Ekonex</title>
-<style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;cursor:pointer}}button.danger{{background:#c62828}}.actions{{display:flex;align-items:center;gap:8px}}.actions form{{margin:0}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}</style></head><body><main>
+<style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;cursor:pointer}}button.danger{{background:#c62828}}.actions{{display:flex;align-items:center;gap:8px}}.actions form{{margin:0}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}.filter{{box-sizing:border-box;width:100%;margin:4px 0 14px;padding:12px 14px;border:1px solid #bcc5d0;border-radius:8px;font:inherit}}</style></head><body><main>
 <h1>Apprendimento IA</h1><p>Le frasi vengono apprese solo dopo una risposta valida. L'approvazione le inserisce nella bozza JSON Alexa.</p>
 <div class="cards"><div class="card"><b>{len(records)}</b><br>Frasi apprese</div><div class="card"><b>{sum(item.approved for item in records)}</b><br>Approvate</div></div>
 <p><a class="button" href="/laboratory/learning/model.json">Scarica JSON Alexa aggiornato</a></p>
-<table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody>{rows or '<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>'}</tbody></table>
+<input class="filter" id="phrase-filter" type="search" placeholder="Filtra per frase, interpretazione, intent, impianto o stato..." autocomplete="off">
+<table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody id="learning-rows">{rows or '<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>'}</tbody></table>
+<script>const filter=document.getElementById('phrase-filter');const rows=[...document.querySelectorAll('#learning-rows tr')];filter.addEventListener('input',()=>{{const query=filter.value.trim().toLocaleLowerCase('it');for(const row of rows)row.hidden=query&&!row.textContent.toLocaleLowerCase('it').includes(query);}});</script>
 </main></body></html>"""
     return HTMLResponse(body)
 
