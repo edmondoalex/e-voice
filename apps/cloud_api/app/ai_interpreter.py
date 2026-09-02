@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 
 from .conversation import EntitySnapshot
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIQuestionInterpreter:
@@ -67,6 +70,7 @@ class OpenAIQuestionInterpreter:
                     if content.get("type") == "output_text":
                         query = json.loads(content.get("text", "{}"))["query"].strip()
                         return query or None
-        except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            logger.warning("OpenAI question interpretation failed: %s", type(error).__name__)
             return None
         return None

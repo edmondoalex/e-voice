@@ -131,6 +131,8 @@
           "name": "EkonexQueryIntent",
           "slots": [{"name": "query", "type": "AMAZON.SearchQuery"}],
           "samples": [
+            "dimmi {query}",
+            "spiegami {query}",
             "fammi sapere {query}",
             "vorrei sapere {query}",
             "dammi informazioni su {query}",
