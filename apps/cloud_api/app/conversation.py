@@ -74,6 +74,12 @@ _INTENTS = (
         ("allarme", "antifurto", "sistema di allarme", "stato allarme"),
     ),
     _Intent(
+        "lock_summary",
+        None,
+        ("tutte le serrature", "tutti gli accessi", "riepilogo serrature"),
+        domain="lock",
+    ),
+    _Intent(
         "lock_status",
         None,
         ("stato serratura", "serratura", "porta", "portoncino"),
@@ -228,6 +234,9 @@ class ConversationEngine:
                 "temperatura ACS, temperature e batterie.",
             )
 
+        if intent.name == "lock_summary":
+            return self._summarize_locks(snapshots)
+
         candidates = self._rank(text, intent, snapshots)
         if not candidates:
             return ConversationReply(
@@ -277,6 +286,44 @@ class ConversationEngine:
             intent=intent.name,
             evidence=(evidence,),
             diagnostics={"freshness": "stale" if stale else "current"},
+        )
+
+    @staticmethod
+    def _lock_state(entity: EntitySnapshot) -> str:
+        masculine = _normalize(entity.name).startswith("portoncino")
+        states = {
+            "locked": "chiuso a chiave" if masculine else "chiusa a chiave",
+            "unlocked": "aperto" if masculine else "aperta",
+            "locking": "in chiusura",
+            "unlocking": "in apertura",
+            "jammed": "bloccato per un problema" if masculine else "bloccata per un problema",
+        }
+        return states.get(str(entity.state).casefold(), str(entity.state))
+
+    @classmethod
+    def _summarize_locks(cls, entities: tuple[EntitySnapshot, ...]) -> ConversationReply:
+        locks = tuple(entity for entity in entities if entity.domain == "lock")
+        if not locks:
+            return ConversationReply(
+                ReplyStatus.NOT_FOUND,
+                "Non trovo serrature autorizzate.",
+                intent="lock_summary",
+            )
+        parts = [
+            f"{entity.name}: {cls._lock_state(entity)}"
+            if entity.available and entity.state not in {None, "unknown", "unavailable"}
+            else f"{entity.name}: non disponibile"
+            for entity in sorted(locks, key=lambda item: item.name.casefold())
+        ]
+        evidence = tuple(
+            Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
+            for entity in locks
+        )
+        return ConversationReply(
+            ReplyStatus.ANSWERED,
+            ". ".join(parts) + ".",
+            intent="lock_summary",
+            evidence=evidence,
         )
 
     @staticmethod
@@ -371,15 +418,7 @@ class ConversationEngine:
         if intent.name == "alarm_status":
             return f"Lo stato dell'allarme è {entity.state}."
         if intent.name == "lock_status":
-            lock_states = {
-                "locked": "chiusa a chiave",
-                "unlocked": "aperta",
-                "locking": "in chiusura",
-                "unlocking": "in apertura",
-                "jammed": "bloccata per un problema",
-            }
-            state = lock_states.get(str(entity.state).casefold(), str(entity.state))
-            return f"{entity.name} è {state}."
+            return f"{entity.name} è {ConversationEngine._lock_state(entity)}."
         if intent.name == "photovoltaic_power":
             return f"In questo momento il fotovoltaico sta producendo {value}."
         if intent.name == "consumption_power":

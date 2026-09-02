@@ -83,13 +83,22 @@
           ]
         },
         {
+          "name": "LockSummaryIntent",
+          "slots": [],
+          "samples": [
+            "qual è lo stato di tutte le serrature",
+            "controlla tutte le serrature",
+            "riepilogo serrature"
+          ]
+        },
+        {
           "name": "LockStatusIntent",
           "slots": [{"name": "lock", "type": "EKONEX_LOCK"}],
           "samples": [
             "qual è lo stato di {lock}",
-            "controlla la serratura {lock}",
-            "la serratura {lock} è chiusa",
-            "stato della porta {lock}"
+            "controlla {lock}",
+            "{lock} è chiusa",
+            "stato di {lock}"
           ]
         },
         {
@@ -126,9 +135,9 @@
         {
           "name": "EKONEX_LOCK",
           "values": [
-            {"id": "porta_sala", "name": {"value": "porta sala", "synonyms": ["serratura porta sala", "porta della sala"]}},
-            {"id": "porta_ufficio", "name": {"value": "porta ufficio", "synonyms": ["serratura porta ufficio", "porta dell'ufficio"]}},
-            {"id": "portoncino_scala", "name": {"value": "portoncino scala", "synonyms": ["serratura portoncino scala", "portoncino della scala"]}}
+            {"id": "serratura_sala", "name": {"value": "serratura sala", "synonyms": ["serratura della sala", "porta della sala"]}},
+            {"id": "serratura_ufficio", "name": {"value": "serratura ufficio", "synonyms": ["serratura dell'ufficio", "porta dell'ufficio"]}},
+            {"id": "portoncino_scala", "name": {"value": "portoncino scala", "synonyms": ["portoncino delle scale", "serratura scala", "serratura delle scale"]}}
           ]
         }
       ]

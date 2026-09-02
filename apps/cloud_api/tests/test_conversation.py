@@ -86,6 +86,18 @@ def test_answers_exact_lock_state_for_named_door() -> None:
     assert reply.speech == "Porta Ufficio è chiusa a chiave."
 
 
+def test_summarizes_all_authorized_locks() -> None:
+    locks = (
+        EntitySnapshot("lock.sala", "Serratura Sala", "lock", "locked"),
+        EntitySnapshot("lock.scala", "Portoncino Scala", "lock", "unlocked"),
+    )
+
+    reply = ConversationEngine().ask("stato di tutte le serrature", locks, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert reply.speech == "Portoncino Scala: aperto. Serratura Sala: chiusa a chiave."
+
+
 def test_resolves_acs_alias_instead_of_room_temperature() -> None:
     acs = entity(
         "sensor.acs",

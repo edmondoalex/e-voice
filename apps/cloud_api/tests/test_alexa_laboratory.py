@@ -103,6 +103,14 @@ def test_lock_status_intent_preserves_requested_lock_name() -> None:
     assert _utterance(alexa_intent) == "stato serratura porta ufficio"
 
 
+def test_lock_summary_intent_builds_summary_utterance() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("LockSummaryIntent")["request"]["intent"]
+
+    assert _utterance(alexa_intent) == "stato di tutte le serrature"
+
+
 async def test_fallback_gives_a_useful_example(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/alexa/laboratory",
