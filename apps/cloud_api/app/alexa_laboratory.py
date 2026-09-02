@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -16,6 +17,7 @@ from .domain.models import Installation, Tenant
 
 router = APIRouter(tags=["alexa-laboratory"])
 session_dependency = Depends(get_database_session)
+logger = logging.getLogger(__name__)
 
 _INTENT_PREFIXES = {
     "CombinedPhotovoltaicIntent": "quanto produce il fotovoltaico SAS e privato",
@@ -128,6 +130,7 @@ async def laboratory(
         return _speech("Questa richiesta non è supportata dal laboratorio.", end=True)
     intent = request.get("intent")
     intent_name = intent.get("name") if isinstance(intent, dict) else None
+    logger.info("Alexa laboratory received intent=%s", intent_name)
     if intent_name in {"AMAZON.StopIntent", "AMAZON.CancelIntent"}:
         return _speech("Va bene, a presto.", end=True)
     if intent_name == "AMAZON.HelpIntent":
