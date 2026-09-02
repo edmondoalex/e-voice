@@ -4,6 +4,16 @@
       "invocationName": "casa econex",
       "intents": [
         {
+          "name": "CombinedPhotovoltaicIntent",
+          "slots": [],
+          "samples": [
+            "dimmi la produzione del fotovoltaico SAS e privato",
+            "quanto producono i fotovoltaici SAS e privato",
+            "produzione fotovoltaico SAS e privato",
+            "quanto producono entrambi i fotovoltaici"
+          ]
+        },
+        {
           "name": "PhotovoltaicIntent",
           "slots": [{"name": "site", "type": "EKONEX_SITE"}],
           "samples": [

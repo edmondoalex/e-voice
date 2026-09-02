@@ -79,6 +79,14 @@ def test_structured_temperature_intent_builds_canonical_utterance() -> None:
     assert _utterance(alexa_intent) == "temperatura acqua calda"
 
 
+def test_combined_photovoltaic_intent_preserves_both_sites() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _utterance
+
+    alexa_intent = intent("CombinedPhotovoltaicIntent")["request"]["intent"]
+
+    assert _utterance(alexa_intent) == "quanto produce il fotovoltaico SAS e privato"
+
+
 def test_structured_intent_prefers_alexa_canonical_slot_resolution() -> None:
     from apps.cloud_api.app.alexa_laboratory import _utterance
 

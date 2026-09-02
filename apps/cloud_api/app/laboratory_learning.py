@@ -45,6 +45,13 @@ _INTENT_MAP = {
 }
 
 
+def _alexa_intent(intent: str, canonical: str) -> str:
+    normalized = canonical.casefold()
+    if intent == "photovoltaic_power" and "sas" in normalized and "privato" in normalized:
+        return "CombinedPhotovoltaicIntent"
+    return _INTENT_MAP.get(intent, intent)
+
+
 def _authorize(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> None:
     settings = get_settings()
     valid = bool(settings.laboratory_learning_password) and hmac.compare_digest(
@@ -98,7 +105,7 @@ async def learning_page(
         "<tr>"
         f"<td>{html.escape(record.utterance)}</td>"
         f"<td>{html.escape(record.canonical)}</td>"
-        f"<td>{html.escape(_INTENT_MAP.get(record.intent, record.intent))}</td>"
+        f"<td>{html.escape(_alexa_intent(record.intent, record.canonical))}</td>"
         f"<td>{html.escape(installations.get(record.installation_id, record.installation_id))}</td>"
         f"<td>{record.hits}</td>"
         f"<td>{'Approvata' if record.approved else '<form method=post action=/laboratory/learning/approve><input type=hidden name=key value=\"' + html.escape(record.key, quote=True) + '\"><button>Approva</button></form>'}</td>"
@@ -144,7 +151,7 @@ async def download_model(
         for item in model["interactionModel"]["languageModel"]["intents"]
     }
     for record in records:
-        intent_name = _INTENT_MAP.get(record.intent)
+        intent_name = _alexa_intent(record.intent, record.canonical)
         if not record.approved or intent_name not in intents:
             continue
         sample = re.sub(r"[^\wÀ-ÿ' ]+", " ", record.utterance, flags=re.UNICODE)

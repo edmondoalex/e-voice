@@ -18,6 +18,7 @@ router = APIRouter(tags=["alexa-laboratory"])
 session_dependency = Depends(get_database_session)
 
 _INTENT_PREFIXES = {
+    "CombinedPhotovoltaicIntent": "quanto produce il fotovoltaico SAS e privato",
     "PhotovoltaicIntent": "quanto produce il fotovoltaico",
     "ConsumptionIntent": "quanto consuma",
     "BatteryIntent": "batteria",
