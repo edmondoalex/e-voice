@@ -76,15 +76,22 @@ class ConversationLearningStore:
         try:
             key = self._key(tenant_id, installation_id, utterance)
             now = datetime.now(UTC).isoformat()
+            existing_value = await self._redis.get(key)
+            existing: LearnedPhrase | None = None
+            if isinstance(existing_value, str):
+                try:
+                    existing = LearnedPhrase(**json.loads(existing_value))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    existing = None
             record = LearnedPhrase(
                 key=key,
                 installation_id=str(installation_id),
                 utterance=utterance[:500],
                 canonical=canonical[:500],
                 intent=intent[:100],
-                hits=1,
-                approved=False,
-                first_seen_at=now,
+                hits=(existing.hits + 1) if existing else 1,
+                approved=existing.approved if existing else False,
+                first_seen_at=existing.first_seen_at if existing else now,
                 last_used_at=now,
             )
             async with self._redis.pipeline(transaction=True) as pipeline:
