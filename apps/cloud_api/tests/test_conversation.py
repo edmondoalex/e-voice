@@ -81,6 +81,19 @@ def test_answers_photovoltaic_power_for_both_sites() -> None:
     }
 
 
+def test_all_photovoltaics_means_both_sites() -> None:
+    sas = entity("sensor.pv_sas", "Fotovoltaico SAS", "5600", "W", "power")
+    private = entity("sensor.pv_private", "Fotovoltaico Privato", "3200", "W", "power")
+
+    reply = ConversationEngine().ask(
+        "Dimmi la produzione di tutti i fotovoltaici", [sas, private], now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "5600 W" in reply.speech
+    assert "3200 W" in reply.speech
+
+
 def test_answers_textual_alarm_state() -> None:
     alarm = entity("sensor.alarm", "Allarme", "SOLO ESTERNO", None, "")
 

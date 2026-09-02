@@ -116,7 +116,7 @@ _INTENTS = (
     _Intent(
         "photovoltaic_power",
         "power",
-        ("fotovoltaico", "produzione fotovoltaica", "pannelli solari", "pv"),
+        ("fotovoltaico", "fotovoltaici", "produzione fotovoltaica", "pannelli solari", "pv"),
     ),
     _Intent(
         "grid_power",
@@ -274,9 +274,13 @@ class ConversationEngine:
         if intent.name == "opening_summary":
             return self._summarize_openings(snapshots)
 
-        if intent.name == "photovoltaic_power" and all(
-            _contains_phrase(text, site) for site in ("sas", "privato")
-        ):
+        multiple_photovoltaics = (
+            all(_contains_phrase(text, site) for site in ("sas", "privato"))
+            or _contains_phrase(text, "tutti i fotovoltaici")
+            or _contains_phrase(text, "tutti gli impianti fotovoltaici")
+            or _contains_phrase(text, "entrambi i fotovoltaici")
+        )
+        if intent.name == "photovoltaic_power" and multiple_photovoltaics:
             combined = self._summarize_site_values(text, intent, snapshots)
             if combined is not None:
                 return combined
