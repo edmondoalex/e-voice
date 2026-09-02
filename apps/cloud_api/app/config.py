@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     alexa_laboratory_backend_token: str = ""
     alexa_laboratory_tenant_slug: str = ""
     alexa_laboratory_installation_public_id: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.4-nano"
+    openai_timeout_seconds: float = Field(default=4.0, ge=1.0, le=10.0)
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

@@ -7,8 +7,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .ai_interpreter import OpenAIQuestionInterpreter
 from .auth import TenantContext
-from .conversation import ConversationEngine, ConversationReply, EntitySnapshot
+from .config import get_settings
+from .conversation import ConversationEngine, ConversationReply, EntitySnapshot, ReplyStatus
 from .domain.models import Entity
 from .repositories import EntityRepository, InstallationRepository
 from .services import ResourceNotFoundError
@@ -55,7 +57,24 @@ class ConversationEntityService:
             for entity in entities
             if entity.deleted_at is None and (not named_only or bool(entity.voice_name))
         )
-        return self._engine.ask(utterance, snapshots, now=now)
+        reply = self._engine.ask(utterance, snapshots, now=now)
+        settings = get_settings()
+        fallback_statuses = {
+            ReplyStatus.UNSUPPORTED,
+            ReplyStatus.NOT_FOUND,
+            ReplyStatus.AMBIGUOUS,
+        }
+        if reply.status not in fallback_statuses:
+            return reply
+        canonical = await OpenAIQuestionInterpreter(
+            settings.openai_api_key,
+            settings.openai_model,
+            settings.openai_timeout_seconds,
+        ).interpret(utterance, snapshots)
+        if canonical is None:
+            return reply
+        interpreted = self._engine.ask(canonical, snapshots, now=now)
+        return interpreted if interpreted.status is ReplyStatus.ANSWERED else reply
 
     @staticmethod
     def _snapshot(entity: Entity) -> EntitySnapshot:
