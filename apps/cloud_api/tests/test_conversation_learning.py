@@ -83,3 +83,49 @@ def test_first_unknown_phrase_uses_ai_and_second_uses_learning(monkeypatch) -> N
 
     assert asyncio.run(exercise()) == ("ai", "learned")
     assert calls == 1
+
+
+def test_combined_site_query_is_visible_in_learning_store(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "apps.cloud_api.app.conversation_service.get_settings",
+        lambda: SimpleNamespace(conversation_learning_enabled=True),
+    )
+    entities = [
+        SimpleNamespace(
+            deleted_at=None,
+            voice_name=f"Fotovoltaico {site}",
+            display_name=None,
+            friendly_name=None,
+            ha_entity_id=f"sensor.pv_{site.casefold()}",
+            ha_domain="sensor",
+            state=value,
+            attributes_json={"unit_of_measurement": "W"},
+            device_class="power",
+            area_name=None,
+            voice_aliases=[],
+            available=True,
+            last_seen_at=None,
+            last_changed_at=None,
+        )
+        for site, value in (("SAS", "5600"), ("Privato", "3200"))
+    ]
+
+    class Entities:
+        async def list_for_installation(self, **kwargs):
+            return entities
+
+    store = FakeLearningStore()
+    service = object.__new__(ConversationEntityService)
+    service._entities = Entities()
+    service._engine = ConversationEngine()
+    service._learning_store = store
+    tenant_id = uuid4()
+    installation_id = uuid4()
+    utterance = "Dimmi la produzione del fotovoltaico SAS e privato"
+
+    reply = asyncio.run(
+        service.ask_for_scope(tenant_id, installation_id, utterance, named_only=True)
+    )
+
+    assert "mentre quello privato" in reply.speech
+    assert store.values[(tenant_id, installation_id, utterance.casefold())] == utterance

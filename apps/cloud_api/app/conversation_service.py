@@ -71,6 +71,18 @@ class ConversationEntityService:
         )
         reply = self._engine.ask(utterance, snapshots, now=now)
         settings = get_settings()
+        if (
+            settings.conversation_learning_enabled
+            and reply.status is ReplyStatus.ANSWERED
+            and reply.diagnostics.get("scope") == "multiple_sites"
+        ):
+            await self._learning_store.remember(
+                tenant_id,
+                installation_id,
+                utterance,
+                utterance,
+                reply.intent or "",
+            )
         fallback_statuses = {
             ReplyStatus.UNSUPPORTED,
             ReplyStatus.NOT_FOUND,
