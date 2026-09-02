@@ -128,6 +128,30 @@
           ]
         },
         {
+          "name": "ProducedEnergySummaryIntent",
+          "slots": [],
+          "samples": [
+            "energia prodotta oggi da tutti gli impianti",
+            "energia oggi prodotta da tutti gli impianti",
+            "energia prodotta oggi SAS e privato",
+            "totale prodotto oggi",
+            "produzione totale di oggi",
+            "quanta energia hanno prodotto oggi tutti gli impianti"
+          ]
+        },
+        {
+          "name": "ConsumedEnergySummaryIntent",
+          "slots": [],
+          "samples": [
+            "energia consumata oggi da tutti gli impianti",
+            "energia oggi consumata da tutti gli impianti",
+            "energia consumata oggi SAS e privato",
+            "totale consumato oggi",
+            "consumo totale di oggi",
+            "quanta energia hanno consumato oggi tutti gli impianti"
+          ]
+        },
+        {
           "name": "PhotovoltaicIntent",
           "slots": [{"name": "site", "type": "EKONEX_SITE"}],
           "samples": [
@@ -193,6 +217,24 @@
             "quanta energia ha importato oggi {site}",
             "energia importata oggi {site}",
             "quanto ha prelevato oggi {site}"
+          ]
+        },
+        {
+          "name": "ProducedEnergyIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "energia prodotta oggi {site}",
+            "quanto ha prodotto oggi {site}",
+            "produzione di oggi {site}"
+          ]
+        },
+        {
+          "name": "ConsumedEnergyIntent",
+          "slots": [{"name": "site", "type": "EKONEX_SITE"}],
+          "samples": [
+            "energia consumata oggi {site}",
+            "quanto ha consumato oggi {site}",
+            "consumo di oggi {site}"
           ]
         },
         {

@@ -117,6 +117,16 @@ _INTENTS = (
         ("energia importata", "energia oggi importata", "importata", "prelevata oggi"),
     ),
     _Intent(
+        "produced_energy_today",
+        "energy",
+        ("energia prodotta oggi", "energia oggi prodotta", "produzione di oggi"),
+    ),
+    _Intent(
+        "consumed_energy_today",
+        "energy",
+        ("energia consumata oggi", "energia oggi consumata", "consumo di oggi"),
+    ),
+    _Intent(
         "consumption_power",
         "power",
         ("consumo", "consumi", "consuma", "assorbimento"),
@@ -569,6 +579,14 @@ class ConversationEngine:
                 return next(
                     intent for intent in _INTENTS if intent.name == "imported_energy_today"
                 )
+            if "prodotta" in normalized_names or "production" in normalized_names:
+                return next(
+                    intent for intent in _INTENTS if intent.name == "produced_energy_today"
+                )
+            if "consumata" in normalized_names or "consumption" in normalized_names:
+                return next(
+                    intent for intent in _INTENTS if intent.name == "consumed_energy_today"
+                )
         if matching_classes == {"power"}:
             matching_text = " ".join(
                 value
@@ -650,6 +668,12 @@ class ConversationEngine:
         if intent.name == "imported_energy_today":
             site = "SAS" if "sas" in _normalize(entity.name).split() else "privato"
             return f"Oggi l'impianto {site} ha importato {value}."
+        if intent.name == "produced_energy_today":
+            site = "SAS" if "sas" in _normalize(entity.name).split() else "privato"
+            return f"Oggi l'impianto {site} ha prodotto {value}."
+        if intent.name == "consumed_energy_today":
+            site = "SAS" if "sas" in _normalize(entity.name).split() else "privato"
+            return f"Oggi l'impianto {site} ha consumato {value}."
         if intent.name == "acs_temperature":
             return f"La temperatura dell'acqua calda è {value}."
         if intent.name == "battery_level":

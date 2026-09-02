@@ -37,6 +37,8 @@ _INTENT_MAP = {
     "acs_temperature": "TemperatureIntent",
     "exported_energy_today": "ExportedEnergyIntent",
     "imported_energy_today": "ImportedEnergyIntent",
+    "produced_energy_today": "ProducedEnergyIntent",
+    "consumed_energy_today": "ConsumedEnergyIntent",
     "alarm_status": "AlarmStatusIntent",
     "lock_summary": "LockSummaryIntent",
     "lock_status": "LockStatusIntent",
@@ -58,6 +60,8 @@ def _alexa_intent(intent: str, canonical: str) -> str:
         "grid_power": "GridPowerSummaryIntent",
         "exported_energy_today": "ExportedEnergySummaryIntent",
         "imported_energy_today": "ImportedEnergySummaryIntent",
+        "produced_energy_today": "ProducedEnergySummaryIntent",
+        "consumed_energy_today": "ConsumedEnergySummaryIntent",
     }
     if intent == "photovoltaic_power" and "sas" in normalized and "privato" in normalized:
         return "CombinedPhotovoltaicIntent"
