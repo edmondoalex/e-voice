@@ -134,7 +134,11 @@ async def laboratory(
         return _speech("Questa richiesta non è supportata dal laboratorio.", end=True)
     intent = request.get("intent")
     intent_name = intent.get("name") if isinstance(intent, dict) else None
-    logger.info("Alexa laboratory received intent=%s", intent_name)
+    logger.warning(
+        "Alexa laboratory routing intent=%s site=%s",
+        intent_name,
+        _slot_value(intent, "site") if isinstance(intent, dict) else None,
+    )
     if intent_name in {"AMAZON.StopIntent", "AMAZON.CancelIntent"}:
         return _speech("Va bene, a presto.", end=True)
     if intent_name == "AMAZON.HelpIntent":
