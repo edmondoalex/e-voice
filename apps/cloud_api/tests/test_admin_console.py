@@ -66,8 +66,8 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     assert page.status_code == 200
     assert "Home A" in page.text
     assert "Home B" not in page.text
-    assert '<img class="brand-logo" src="/static/ekonex-cloud-voice.png"' in page.text
-    assert 'alt="Ekonex Cloud Voice"' in page.text
+    assert '<img class="brand-logo" src="/static/ekonex-e-voice-laboratorio.png"' in page.text
+    assert 'alt="Ekonex Laboratorio e-Voice"' in page.text
     assert ">Impianti<" in page.text
     assert "Home Assistant" not in page.text
     for href in ("/dashboard", "/installations", "/activity", "/system", "/pair"):

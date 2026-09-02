@@ -117,11 +117,18 @@ def _nav_link(href: str, label: str, key: str, active: str) -> str:
 
 
 def _layout(title: str, body: str, context: TenantContext, csrf: str, active: str) -> str:
+    is_laboratory = get_settings().environment == "laboratory"
     laboratory_banner = (
         '<div class="laboratory-banner">LABORATORIO — NON È PRODUZIONE</div>'
-        if get_settings().environment == "laboratory"
+        if is_laboratory
         else ""
     )
+    logo_filename = (
+        "ekonex-e-voice-laboratorio.png"
+        if is_laboratory
+        else "ekonex-cloud-voice.png"
+    )
+    logo_alt = "Ekonex Laboratorio e-Voice" if is_laboratory else "Ekonex Cloud Voice"
     navigation = "".join(
         (
             _nav_link("/dashboard", "Dashboard", "dashboard", active),
@@ -147,7 +154,7 @@ th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,selec
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
 .ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.warn{{color:var(--removed)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}.compat-badge{{display:inline-block;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800}}.compat-ok{{background:#dcfae6;color:var(--ok)}}.compat-update{{background:#fef0c7;color:#93370d}}.compat-bad{{background:#fee4e2;color:var(--bad)}}.compat-offline{{background:#eaecf0;color:var(--off)}}.compat-alert{{border:2px solid var(--bad);background:#fff5f4}}.global-warning{{border-left:6px solid var(--bad);background:#fff5f4;margin-bottom:16px}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
 .laboratory-banner{{background:#b42318;color:white;padding:12px 16px;border-radius:8px;font-weight:900;text-align:center;margin-bottom:18px;letter-spacing:.04em}}
-</style></head><body><aside><img class="brand-logo" src="/static/ekonex-cloud-voice.png" width="1254" height="1254" alt="Ekonex Cloud Voice">
+</style></head><body><aside><img class="brand-logo" src="/static/{logo_filename}" width="1254" height="1254" alt="{logo_alt}">
 <nav aria-label="Navigazione principale">{navigation}</nav>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Esci</button></form>
 </aside><main>{laboratory_banner}<p class="muted">Tenant: {_e(context.tenant_id)}</p><h1>{_e(title)}</h1>{body}</main><script>
