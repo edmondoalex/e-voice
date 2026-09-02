@@ -707,6 +707,7 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     controls = _entity_controls(installation, entity, csrf, enabled)
     voice_name = effective_voice_name(entity)
     display_name = effective_display_name(entity)
+    category_name = entity.voice_category.name if entity.voice_category is not None else "Non assegnata"
     aliases = " · ".join(_e(alias) for alias in (entity.voice_aliases or [])) or "—"
     lifecycle = "rimossa" if entity.deleted_at else (entity.state or "—")
     edit = f'<a class="button" href="/installations/{installation.id}/entities/{entity.id}/edit">Modifica</a>'
@@ -722,7 +723,7 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     else:
         state_class = "neutral"
     icon = entity_icon_svg(entity.icon, entity.ha_domain)
-    return f'<tr class="state-{state_class}" data-entity-row="{entity.id}"><td><div class="entity-summary">{icon}<div class="entity-meta"><span class="voice-label">Nome vocale: {_e(voice_name)}</span><br><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot state-{state_class}"></span><span class="entity-state">{_e(lifecycle)}</span><br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}<span class="command-feedback" role="status" aria-live="polite"></span></div></td></tr>'
+    return f'<tr class="state-{state_class}" data-entity-row="{entity.id}"><td><div class="entity-summary">{icon}<div class="entity-meta"><span class="voice-label">Nome vocale: {_e(voice_name)}</span><br><b>{_e(voice_name)}</b><br><span class="muted">Nome visualizzato: {_e(display_name)}</span><br><span class="muted">Nome e-Control: {_e(entity.friendly_name or entity.ha_entity_id)}</span><br><span class="muted">entity_id: {_e(entity.ha_entity_id)}</span><br><span class="muted">Alias: {aliases}</span></div></div></td><td><span class="badge">{_e(category_name)}</span></td><td>{_e(entity.ha_domain)} / {_e(entity.area_name or "—")}</td><td><span class="status-dot state-{state_class}"></span><span class="entity-state">{_e(lifecycle)}</span><br><span class="muted">{availability}</span></td><td><div class="direct-controls">{controls}{edit}<span class="command-feedback" role="status" aria-live="polite"></span></div></td></tr>'
 
 
 ENTITY_DOMAIN_LABELS = {
@@ -757,7 +758,7 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
             f'<details class="entity-group" data-domain="{_e(domain)}">'
             f"<summary><span>{_e(label)}</span>"
             f'<span class="entity-group-count">{len(domain_entities)}</span></summary>'
-            "<table><thead><tr><th>Entità</th><th>Dominio/area</th><th>Stato</th>"
+            "<table><thead><tr><th>Entità</th><th>Categoria vocale</th><th>Dominio/area</th><th>Stato</th>"
             f"<th>Comandi diretti</th></tr></thead><tbody>{rows}</tbody></table></details>"
         )
     return "".join(sections)
