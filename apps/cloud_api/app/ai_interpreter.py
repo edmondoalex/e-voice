@@ -35,7 +35,11 @@ class OpenAIQuestionInterpreter:
                 "Ekonex possa risolvere. Sono ammessi: fotovoltaico, consumo, batteria, potenza "
                 "rete, temperatura, energia importata o esportata oggi, stato allarme, stato di "
                 "una serratura, tutte le serrature, stato di un'apertura, porte o portoni aperti. "
-                "Usa soltanto nomi presenti nell'elenco. Se la richiesta è un comando, "
+                "Usa soltanto nomi presenti nell'elenco. Interpreta sole, pannelli e produzione "
+                "solare come produzione fotovoltaica istantanea; non come energia importata o "
+                "esportata. Se manca il sito, non sceglierlo arbitrariamente: genera la query "
+                "generica 'quanto produce il fotovoltaico', così Ekonex potrà chiedere quale "
+                "sensore usare. Se la richiesta è un comando, "
                 "non riguarda "
                 "la casa o non è risolvibile, restituisci una stringa vuota."
             ),
