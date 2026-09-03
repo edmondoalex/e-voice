@@ -84,7 +84,12 @@ class ConversationEntityService:
                 )
             )
         )
-        reply = self._engine.ask(utterance, snapshots, now=now)
+        reply = self._engine.ask(
+            utterance,
+            snapshots,
+            now=now,
+            category_routed=category_slug is not None,
+        )
         if (
             settings.conversation_learning_enabled
             and reply.status is ReplyStatus.ANSWERED

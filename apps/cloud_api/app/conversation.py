@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import StrEnum
@@ -290,7 +290,12 @@ class ConversationEngine:
     """Risolve le prime domande informative senza invocare un modello generativo."""
 
     def ask(
-        self, utterance: str, entities: Iterable[EntitySnapshot], *, now: datetime | None = None
+        self,
+        utterance: str,
+        entities: Iterable[EntitySnapshot],
+        *,
+        now: datetime | None = None,
+        category_routed: bool = False,
     ) -> ConversationReply:
         text = _normalize(utterance)
         if not text:
@@ -310,6 +315,19 @@ class ConversationEngine:
                 ReplyStatus.UNSUPPORTED,
                 "Per ora posso leggere fotovoltaico, consumi, potenza di rete, "
                 "temperatura ACS, temperature e batterie.",
+            )
+
+        # Se il canale ha già risolto e filtrato una categoria autorizzata,
+        # quello è il vincolo più forte. Normalizziamo la categoria solo per il
+        # ranking interno: le istantanee sono già state ristrette allo slug
+        # richiesto e non devono essere scartate per differenze tra slug custom
+        # e nomi tecnici degli intent.
+        if category_routed:
+            ranking_category = intent.name
+            if intent.name == "temperature" and _contains_phrase(text, "centrale termica"):
+                ranking_category = "thermal_temperature"
+            snapshots = tuple(
+                replace(entity, category=ranking_category) for entity in snapshots
             )
 
         if intent.name == "lock_summary":
