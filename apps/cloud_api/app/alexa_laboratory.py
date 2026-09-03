@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
-from .domain.models import Installation, Tenant
+from .domain.models import Installation, Tenant, VoiceCategory
 
 router = APIRouter(tags=["alexa-laboratory"])
 session_dependency = Depends(get_database_session)
@@ -95,8 +95,34 @@ def _slot_value(intent: dict[str, Any], name: str) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def _slot_id(intent: dict[str, Any], name: str) -> str | None:
+    slots = intent.get("slots")
+    slot = slots.get(name) if isinstance(slots, dict) else None
+    resolutions = slot.get("resolutions") if isinstance(slot, dict) else None
+    authorities = (
+        resolutions.get("resolutionsPerAuthority")
+        if isinstance(resolutions, dict)
+        else None
+    )
+    if not isinstance(authorities, list):
+        return None
+    for authority in authorities:
+        values = authority.get("values") if isinstance(authority, dict) else None
+        if not isinstance(values, list):
+            continue
+        for candidate in values:
+            resolved = candidate.get("value") if isinstance(candidate, dict) else None
+            identifier = resolved.get("id") if isinstance(resolved, dict) else None
+            if isinstance(identifier, str) and identifier.strip():
+                return identifier.strip()
+    return None
+
+
 def _utterance(intent: dict[str, Any]) -> str | None:
     intent_name = intent.get("name")
+    if intent_name == "CategorySummaryIntent":
+        category = _slot_value(intent, "category")
+        return f"tutti i valori {category}" if category else None
     if intent_name == "EkonexQueryIntent":
         return _slot_value(intent, "query")
     prefix = _INTENT_PREFIXES.get(str(intent_name))
@@ -177,7 +203,21 @@ async def laboratory(
     if row is None:
         return _speech("L'installazione di laboratorio non è configurata.", end=True)
     installation, tenant = row
+    category_slug = _slot_id(intent, "category") if isinstance(intent, dict) else None
+    if category_slug is not None:
+        exists = await database.scalar(
+            select(VoiceCategory.id).where(
+                VoiceCategory.tenant_id == tenant.id,
+                VoiceCategory.slug == category_slug,
+            )
+        )
+        if exists is None:
+            category_slug = None
     reply = await ConversationEntityService(database).ask_for_scope(
-        tenant.id, installation.id, utterance, named_only=True
+        tenant.id,
+        installation.id,
+        utterance,
+        named_only=True,
+        category_slug=category_slug,
     )
     return _speech(reply.speech, end=False)

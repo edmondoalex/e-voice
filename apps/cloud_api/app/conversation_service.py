@@ -61,6 +61,7 @@ class ConversationEntityService:
         *,
         now: datetime | None = None,
         named_only: bool = False,
+        category_slug: str | None = None,
     ) -> ConversationReply:
         entities = await self._entities.list_for_installation(
             tenant_id=tenant_id, installation_id=installation_id
@@ -73,7 +74,15 @@ class ConversationEntityService:
         snapshots = tuple(
             self._snapshot(entity)
             for entity in entities
-            if entity.deleted_at is None and (not named_only or bool(entity.voice_name))
+            if entity.deleted_at is None
+            and (not named_only or bool(entity.voice_name))
+            and (
+                category_slug is None
+                or (
+                    entity.voice_category is not None
+                    and entity.voice_category.slug == category_slug
+                )
+            )
         )
         reply = self._engine.ask(utterance, snapshots, now=now)
         if (

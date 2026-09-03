@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .conversation_learning import ConversationLearningStore
 from .database import get_database_session
-from .domain.models import Installation, Tenant
+from .domain.models import Installation, Tenant, VoiceCategory
 
 router = APIRouter(prefix="/laboratory/learning", tags=["laboratory-learning"])
 security = HTTPBasic()
@@ -194,6 +194,27 @@ async def download_model(
     records = await _store().list_for_tenant(tenant.id)
     model_path = Path(__file__).resolve().parents[3] / "config" / "alexa_laboratory_interaction_model_it_IT.json"
     model = copy.deepcopy(json.loads(model_path.read_text(encoding="utf-8")))
+    categories = list(
+        (
+            await session.scalars(
+                select(VoiceCategory)
+                .where(VoiceCategory.tenant_id == tenant.id)
+                .order_by(VoiceCategory.name)
+            )
+        ).all()
+    )
+    category_type = next(
+        item
+        for item in model["interactionModel"]["languageModel"]["types"]
+        if item["name"] == "EKONEX_CATEGORY"
+    )
+    category_type["values"] = [
+        {
+            "id": category.slug,
+            "name": {"value": category.name, "synonyms": [category.slug.replace("_", " ")]},
+        }
+        for category in categories
+    ]
     intents = {
         item["name"]: item
         for item in model["interactionModel"]["languageModel"]["intents"]

@@ -66,6 +66,18 @@
           ]
         },
         {
+          "name": "CategorySummaryIntent",
+          "slots": [{"name": "category", "type": "EKONEX_CATEGORY"}],
+          "samples": [
+            "tutti i valori di {category}",
+            "tutte le {category}",
+            "tutti i {category}",
+            "riepilogo {category}",
+            "stato di {category}",
+            "controlla {category}"
+          ]
+        },
+        {
           "name": "AmbientTemperatureSummaryIntent",
           "slots": [],
           "samples": [
@@ -345,6 +357,10 @@
         {"name": "AMAZON.FallbackIntent", "samples": []}
       ],
       "types": [
+        {
+          "name": "EKONEX_CATEGORY",
+          "values": []
+        },
         {
           "name": "EKONEX_SITE",
           "values": [
