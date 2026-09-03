@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hmac
 import html
 import json
 import re
+import tempfile
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs
@@ -201,6 +203,67 @@ def _model_errors(model: dict[str, object]) -> list[str]:
     return errors
 
 
+async def _compiled_model(
+    session: AsyncSession, tenant: Tenant
+) -> tuple[dict[str, object], list[str]]:
+    records = await _store().list_for_tenant(tenant.id)
+    model_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "alexa_laboratory_interaction_model_it_IT.json"
+    )
+    base_model = json.loads(model_path.read_text(encoding="utf-8"))
+    categories = list(
+        (
+            await session.scalars(
+                select(VoiceCategory)
+                .where(VoiceCategory.tenant_id == tenant.id)
+                .order_by(VoiceCategory.name)
+            )
+        ).all()
+    )
+    model = _compile_model(base_model, categories, records)
+    return model, _model_errors(model)
+
+
+async def _publish_model(model: dict[str, object]) -> tuple[bool, str]:
+    settings = get_settings()
+    if settings.environment != "laboratory" or not settings.alexa_laboratory_skill_id:
+        return False, "Pubblicazione disponibile soltanto nel Laboratorio."
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", encoding="utf-8", delete=False, dir="/tmp"
+    ) as output:
+        json.dump(model, output, ensure_ascii=False)
+        model_path = output.name
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ask",
+            "smapi",
+            "set-interaction-model",
+            "--skill-id",
+            settings.alexa_laboratory_skill_id,
+            "--stage",
+            "development",
+            "--locale",
+            "it-IT",
+            "--interaction-model",
+            f"file:{model_path}",
+            "--profile",
+            "default",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+    except (FileNotFoundError, TimeoutError):
+        return False, "ASK CLI non disponibile o pubblicazione scaduta."
+    finally:
+        Path(model_path).unlink(missing_ok=True)
+    if process.returncode != 0:
+        detail = (stderr or stdout).decode("utf-8", errors="replace").strip()
+        return False, f"Amazon ha rifiutato il modello: {detail[:300]}"
+    return True, "Modello inviato ad Amazon; build avviata."
+
+
 def _record_actions(key: str, approved: bool) -> str:
     safe_key = html.escape(key, quote=True)
     approve = (
@@ -215,6 +278,7 @@ def _record_actions(key: str, approved: bool) -> str:
 @router.get("", response_class=HTMLResponse)
 async def learning_page(
     _: Annotated[None, auth_dependency],
+    request: Request,
     session: Annotated[AsyncSession, session_dependency],
 ) -> HTMLResponse:
     tenant = await _tenant(session)
@@ -238,6 +302,14 @@ async def learning_page(
         "</tr>"
         for record in records
     )
+    publish_status = request.query_params.get("publish", "")
+    publish_notice = (
+        '<p style="color:#067647;font-weight:700">Modello valido, inviato ad Amazon. Build avviata.</p>'
+        if publish_status == "success"
+        else '<p style="color:#b42318;font-weight:700">Pubblicazione non riuscita. Controlla i log del Laboratorio.</p>'
+        if publish_status == "error"
+        else ""
+    )
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Apprendimento IA · Ekonex</title>
 <style>body{{font:15px system-ui;margin:0;background:#f4f6f9;color:#17202a}}main{{max-width:1400px;margin:auto;padding:28px}}.laboratory-logo{{display:block;width:180px;height:180px;object-fit:contain;margin:0 auto 18px;border-radius:12px;background:#050505}}table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:12px;border-bottom:1px solid #ddd;text-align:left}}button,a.button{{background:#1769e0;color:white;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;cursor:pointer}}button.danger{{background:#c62828}}.actions{{display:flex;align-items:center;gap:8px}}.actions form{{margin:0}}.cards{{display:flex;gap:14px;margin:18px 0}}.card{{background:white;padding:18px;border-radius:10px}}.filter{{box-sizing:border-box;width:100%;margin:4px 0 14px;padding:12px 14px;border:1px solid #bcc5d0;border-radius:8px;font:inherit}}</style></head><body><main>
@@ -246,7 +318,8 @@ async def learning_page(
 <p><a href="/dashboard">← Torna al portale</a></p>
 <h1>Apprendimento IA</h1><p>Le frasi vengono apprese solo dopo una risposta valida. L'approvazione le inserisce nella bozza JSON Alexa.</p>
 <div class="cards"><div class="card"><b>{len(records)}</b><br>Frasi apprese</div><div class="card"><b>{sum(item.approved for item in records)}</b><br>Approvate</div></div>
-<p><a class="button" href="/laboratory/learning/model.json">Genera, verifica e scarica modello</a></p>
+{publish_notice}
+<div class="actions"><a class="button" href="/laboratory/learning/model.json">Genera, verifica e scarica modello</a><form method="post" action="/laboratory/learning/publish" onsubmit="return confirm('Validare e pubblicare il modello nella skill Laboratorio?')"><button>Valida, pubblica e avvia Build</button></form></div>
 <input class="filter" id="phrase-filter" type="search" placeholder="Filtra per frase, interpretazione, intent, impianto o stato..." autocomplete="off">
 <table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody id="learning-rows">{rows or '<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>'}</tbody></table>
 <script>const filter=document.getElementById('phrase-filter');const rows=[...document.querySelectorAll('#learning-rows tr')];filter.addEventListener('input',()=>{{const query=filter.value.trim().toLocaleLowerCase('it');for(const row of rows)row.hidden=query&&!row.textContent.toLocaleLowerCase('it').includes(query);}});</script>
@@ -288,20 +361,7 @@ async def download_model(
     session: Annotated[AsyncSession, session_dependency],
 ) -> JSONResponse:
     tenant = await _tenant(session)
-    records = await _store().list_for_tenant(tenant.id)
-    model_path = Path(__file__).resolve().parents[3] / "config" / "alexa_laboratory_interaction_model_it_IT.json"
-    base_model = json.loads(model_path.read_text(encoding="utf-8"))
-    categories = list(
-        (
-            await session.scalars(
-                select(VoiceCategory)
-                .where(VoiceCategory.tenant_id == tenant.id)
-                .order_by(VoiceCategory.name)
-            )
-        ).all()
-    )
-    model = _compile_model(base_model, categories, records)
-    errors = _model_errors(model)
+    model, errors = await _compiled_model(session, tenant)
     if errors:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -310,4 +370,25 @@ async def download_model(
     return JSONResponse(
         model,
         headers={"Content-Disposition": 'attachment; filename="ekonex-laboratorio-it-IT.json"'},
+    )
+
+
+@router.post("/publish", response_class=RedirectResponse)
+async def publish_model(
+    _: Annotated[None, auth_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    tenant = await _tenant(session)
+    model, errors = await _compiled_model(session, tenant)
+    if errors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Modello Alexa non valido: " + " ".join(errors[:10]),
+        )
+    published, message = await _publish_model(model)
+    if not published:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, message)
+    return RedirectResponse(
+        "/laboratory/learning?publish=success",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
