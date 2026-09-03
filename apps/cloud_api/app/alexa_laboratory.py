@@ -204,6 +204,10 @@ async def laboratory(
         return _speech("L'installazione di laboratorio non è configurata.", end=True)
     installation, tenant = row
     category_slug = _slot_id(intent, "category") if isinstance(intent, dict) else None
+    if intent_name == "AmbientTemperatureSummaryIntent":
+        category_slug = "temperature_ambiente"
+    elif intent_name == "ThermalTemperatureSummaryIntent":
+        category_slug = "thermal_temperature"
     if category_slug is not None:
         exists = await database.scalar(
             select(VoiceCategory.id).where(

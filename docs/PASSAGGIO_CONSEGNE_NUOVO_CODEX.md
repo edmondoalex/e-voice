@@ -45,7 +45,8 @@ Amazon Developer Advocate (Jayanth A.) ha confermato per iscritto:
 
 - Percorso Windows: `C:\Users\NUC Alex\OneDrive\EA SAS\0000000033-TOOL\HASSIO ADDON\e-Voice`
 - Branch attuale: `agent/conversation-core-demo`
-- Ultimo commit noto e distribuito nel laboratorio: `a15284a feat: route Alexa requests by voice category`
+- Ultimo rilascio stabile al momento della prima stesura: `a15284a feat: route Alexa requests by voice category`.
+- Correzioni successive: `896d0cb` ripristina la pagina categorie; il commit successivo deve gestire `temperature_ambiente` e leggere `current_temperature` dalle entità `climate`.
 
 ### VPS
 
@@ -146,6 +147,7 @@ Categorie standard osservate/aggiunte:
 - `lock_status` — Stato serratura
 - `temperature` — Temperatura ambiente/generica
 - `thermal_temperature` — Temperatura centrale termica
+- `temperature_ambiente` — categoria personalizzata realmente assegnata al Termostato Ufficio nel laboratorio
 - categoria personalizzata osservata: Sensori allarme
 
 Il dettaglio installazione mostra ora una colonna **Categoria vocale** tra Entità e Dominio/area.
@@ -410,4 +412,3 @@ In una nuova sessione, scrivere soltanto:
 > Leggi interamente `docs/PASSAGGIO_CONSEGNE_NUOVO_CODEX.md`. Continua dal punto 12 senza modificare la produzione, che è sotto certificazione. Prima controlla lo stato Git e dimmi in due righe cosa farai.
 
 Questo documento sostituisce la necessità di reinviare l'intera chat precedente.
-

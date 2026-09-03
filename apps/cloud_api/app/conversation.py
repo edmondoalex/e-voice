@@ -478,7 +478,7 @@ class ConversationEngine:
             if not (
                 intent.name == "temperature"
                 and _contains_phrase(text, "ambiente")
-                and entity.category != "temperature"
+                and entity.category not in {"temperature", "temperature_ambiente"}
             )
             if entity.category is not None
             or (

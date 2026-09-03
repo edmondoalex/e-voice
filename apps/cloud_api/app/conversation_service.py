@@ -166,6 +166,20 @@ class ConversationEntityService:
         attributes = entity.attributes_json if isinstance(entity.attributes_json, dict) else {}
         raw_unit = attributes.get("unit_of_measurement")
         unit = str(raw_unit)[:32] if isinstance(raw_unit, str) else None
+        state = entity.state
+        if entity.ha_domain == "climate":
+            current_temperature = attributes.get("current_temperature")
+            if (
+                isinstance(current_temperature, (int, float))
+                and not isinstance(current_temperature, bool)
+            ):
+                state = str(current_temperature)
+                temperature_unit = attributes.get("temperature_unit")
+                unit = (
+                    str(temperature_unit)[:32]
+                    if isinstance(temperature_unit, str)
+                    else "°C"
+                )
         aliases = tuple(alias for alias in entity.voice_aliases if isinstance(alias, str))
         observed_at = entity.last_seen_at or entity.last_changed_at
         if observed_at is not None and observed_at.tzinfo is None:
@@ -179,7 +193,7 @@ class ConversationEntityService:
                 or entity.ha_entity_id
             ),
             domain=entity.ha_domain,
-            state=entity.state,
+            state=state,
             unit=unit,
             device_class=entity.device_class,
             area=entity.area_name,
