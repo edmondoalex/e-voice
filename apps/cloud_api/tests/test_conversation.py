@@ -277,6 +277,62 @@ def test_thermal_category_summarizes_sensors_without_ha_device_class_or_temperat
     assert "Volano: 63\N{DEGREE SIGN}C" in reply.speech
 
 
+def test_ambient_temperature_summary_excludes_thermal_category() -> None:
+    sensors = (
+        entity(
+            "sensor.living",
+            "Temperatura soggiorno",
+            "22.4",
+            "°C",
+            "temperature",
+            category="temperature",
+        ),
+        entity(
+            "sensor.puffer",
+            "Puffer alto",
+            "71",
+            "°C",
+            "temperature",
+            category="thermal_temperature",
+        ),
+    )
+
+    reply = ConversationEngine().ask("tutte le temperature ambiente", sensors, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "Temperatura soggiorno" in reply.speech
+    assert "Puffer alto" not in reply.speech
+
+
+def test_thermal_temperature_summary_excludes_ambient_category() -> None:
+    sensors = (
+        entity(
+            "sensor.living",
+            "Temperatura soggiorno",
+            "22.4",
+            "°C",
+            "temperature",
+            category="temperature",
+        ),
+        entity(
+            "sensor.puffer",
+            "Puffer alto",
+            "71",
+            "°C",
+            "temperature",
+            category="thermal_temperature",
+        ),
+    )
+
+    reply = ConversationEngine().ask(
+        "tutte le temperature della centrale termica", sensors, now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "Puffer alto" in reply.speech
+    assert "Temperatura soggiorno" not in reply.speech
+
+
 def test_area_disambiguates_temperature() -> None:
     kitchen = entity(
         "sensor.kitchen", "Temperatura cucina", "23", "°C", "temperature", area="cucina"

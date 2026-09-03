@@ -66,6 +66,31 @@
           ]
         },
         {
+          "name": "AmbientTemperatureSummaryIntent",
+          "slots": [],
+          "samples": [
+            "tutte le temperature ambiente",
+            "temperature ambiente",
+            "riepilogo temperature ambiente",
+            "dimmi tutte le temperature ambiente",
+            "quali sono le temperature ambiente",
+            "temperature della casa",
+            "controlla le temperature ambiente"
+          ]
+        },
+        {
+          "name": "ThermalTemperatureSummaryIntent",
+          "slots": [],
+          "samples": [
+            "tutte le temperature della centrale termica",
+            "temperature della centrale termica",
+            "riepilogo centrale termica",
+            "dimmi le temperature della centrale termica",
+            "quali sono le temperature della centrale termica",
+            "controlla la centrale termica"
+          ]
+        },
+        {
           "name": "GridPowerSummaryIntent",
           "slots": [],
           "samples": [

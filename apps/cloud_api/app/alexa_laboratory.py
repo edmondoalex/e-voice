@@ -24,6 +24,8 @@ _INTENT_PREFIXES = {
     "BatterySummaryIntent": "percentuale di tutte le batterie",
     "ConsumptionSummaryIntent": "tutti i consumi",
     "TemperatureSummaryIntent": "tutte le temperature",
+    "AmbientTemperatureSummaryIntent": "tutte le temperature ambiente",
+    "ThermalTemperatureSummaryIntent": "tutte le temperature della centrale termica",
     "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
     "ExportedEnergySummaryIntent": "energia oggi esportata da tutti gli impianti",
     "ImportedEnergySummaryIntent": "energia oggi importata da tutti gli impianti",

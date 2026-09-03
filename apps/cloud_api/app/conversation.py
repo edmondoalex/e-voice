@@ -470,6 +470,16 @@ class ConversationEngine:
         matching = tuple(
             entity
             for score, entity in ranked
+            if not (
+                intent.name == "temperature"
+                and _contains_phrase(text, "centrale termica")
+                and entity.category != "thermal_temperature"
+            )
+            if not (
+                intent.name == "temperature"
+                and _contains_phrase(text, "ambiente")
+                and entity.category != "temperature"
+            )
             if entity.category is not None
             or (
                 score > 1
@@ -505,7 +515,9 @@ class ConversationEngine:
         for entity in sorted(matching, key=lambda item: item.name.casefold()):
             value = summarized_value(entity)
             parts.append(
-                f"{entity.name}: {value}" if value is not None else f"{entity.name}: non disponibile"
+                f"{entity.name}: {value}"
+                if value is not None
+                else f"{entity.name}: non disponibile"
             )
         return ConversationReply(
             ReplyStatus.ANSWERED,
