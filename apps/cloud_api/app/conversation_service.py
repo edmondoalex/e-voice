@@ -14,6 +14,7 @@ from .config import get_settings
 from .conversation import ConversationEngine, ConversationReply, EntitySnapshot, ReplyStatus
 from .conversation_learning import ConversationLearningStore
 from .domain.models import Entity
+from .laboratory_live_state import load_live_states, overlay_entities
 from .repositories import EntityRepository, InstallationRepository
 from .services import ResourceNotFoundError
 
@@ -64,13 +65,17 @@ class ConversationEntityService:
         entities = await self._entities.list_for_installation(
             tenant_id=tenant_id, installation_id=installation_id
         )
+        settings = get_settings()
+        live_states = await load_live_states(
+            settings.alexa_laboratory_installation_public_id
+        )
+        overlay_entities(entities, live_states)
         snapshots = tuple(
             self._snapshot(entity)
             for entity in entities
             if entity.deleted_at is None and (not named_only or bool(entity.voice_name))
         )
         reply = self._engine.ask(utterance, snapshots, now=now)
-        settings = get_settings()
         if (
             settings.conversation_learning_enabled
             and reply.status is ReplyStatus.ANSWERED

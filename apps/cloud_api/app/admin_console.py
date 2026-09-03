@@ -594,6 +594,9 @@ async def installation_detail(
             )
         ).all()
     )
+    from .laboratory_live_state import load_live_states, overlay_entities
+
+    overlay_entities(entities, await load_live_states(item.public_id))
     discovery = await session.scalar(
         select(AlexaDiscoverySnapshot).where(
             AlexaDiscoverySnapshot.tenant_id == context.tenant_id,
