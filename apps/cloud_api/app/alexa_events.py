@@ -559,12 +559,13 @@ async def reconcile_discovery_safely(
     session: AsyncSession, installation: Installation, *, force: bool = False
 ) -> int | None:
     """Run bounded proactive discovery without failing the authoritative sync."""
+    installation_id = installation.id
     gateway = AlexaEventGateway(session)
     try:
         return await gateway.reconcile_discovery(installation, force=force)
     except Exception:  # The external observability path must never fail entity synchronization.
         await session.rollback()
-        logger.exception("Alexa proactive discovery failed installation_id=%s", installation.id)
+        logger.exception("Alexa proactive discovery failed installation_id=%s", installation_id)
         return None
     finally:
         await gateway.close()

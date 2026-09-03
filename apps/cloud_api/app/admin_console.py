@@ -1311,7 +1311,8 @@ async def update_entity_names(
         )
     )
     await session.commit()
-    await reconcile_discovery_safely(session, installation)
+    if get_settings().environment != "laboratory":
+        await reconcile_discovery_safely(session, installation)
     return _names_page(
         installation,
         entity,
