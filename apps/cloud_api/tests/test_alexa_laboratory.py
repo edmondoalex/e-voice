@@ -105,6 +105,31 @@ def test_collective_intents_build_generic_engine_queries() -> None:
         assert _utterance(alexa_intent) == utterance
 
 
+def test_temperature_summary_intents_are_category_scoped() -> None:
+    from apps.cloud_api.app.alexa_laboratory import _INTENT_CATEGORY_SLUGS
+
+    assert _INTENT_CATEGORY_SLUGS["TemperatureSummaryIntent"] == "temperature_ambiente"
+    assert _INTENT_CATEGORY_SLUGS["AmbientTemperatureSummaryIntent"] == "temperature_ambiente"
+    assert _INTENT_CATEGORY_SLUGS["ThermalTemperatureSummaryIntent"] == "thermal_temperature"
+
+
+def test_learned_temperature_summaries_do_not_collide_in_generic_intent() -> None:
+    from apps.cloud_api.app.laboratory_learning import _alexa_intent
+
+    assert (
+        _alexa_intent("temperature", "tutte le temperature ambiente")
+        == "AmbientTemperatureSummaryIntent"
+    )
+    assert (
+        _alexa_intent("temperature", "tutte le temperature della centrale termica")
+        == "ThermalTemperatureSummaryIntent"
+    )
+    assert (
+        _alexa_intent("temperature", "tutte le temperature")
+        == "TemperatureSummaryIntent"
+    )
+
+
 def test_site_less_energy_intent_falls_back_to_all_installations() -> None:
     from apps.cloud_api.app.alexa_laboratory import _utterance
 

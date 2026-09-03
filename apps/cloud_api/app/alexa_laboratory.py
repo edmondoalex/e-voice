@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
-from .domain.models import Installation, Tenant, VoiceCategory
+from .domain.models import Installation, Tenant
 
 router = APIRouter(tags=["alexa-laboratory"])
 session_dependency = Depends(get_database_session)
@@ -45,6 +45,15 @@ _INTENT_PREFIXES = {
     "LockStatusIntent": "stato serratura",
     "OpeningSummaryIntent": "porte o portoni aperti",
     "OpeningStatusIntent": "stato apertura",
+}
+
+_INTENT_CATEGORY_SLUGS = {
+    # Alexa sometimes routes "tutte le temperature ambiente" to the older,
+    # generic summary intent. Treat that intent as ambient so it can never
+    # leak thermal-plant readings into an ambient-temperature answer.
+    "TemperatureSummaryIntent": "temperature_ambiente",
+    "AmbientTemperatureSummaryIntent": "temperature_ambiente",
+    "ThermalTemperatureSummaryIntent": "thermal_temperature",
 }
 
 
@@ -203,20 +212,9 @@ async def laboratory(
     if row is None:
         return _speech("L'installazione di laboratorio non è configurata.", end=True)
     installation, tenant = row
-    category_slug = _slot_id(intent, "category") if isinstance(intent, dict) else None
-    if intent_name == "AmbientTemperatureSummaryIntent":
-        category_slug = "temperature_ambiente"
-    elif intent_name == "ThermalTemperatureSummaryIntent":
-        category_slug = "thermal_temperature"
-    if category_slug is not None:
-        exists = await database.scalar(
-            select(VoiceCategory.id).where(
-                VoiceCategory.tenant_id == tenant.id,
-                VoiceCategory.slug == category_slug,
-            )
-        )
-        if exists is None:
-            category_slug = None
+    category_slug = (
+        _slot_id(intent, "category") if isinstance(intent, dict) else None
+    ) or _INTENT_CATEGORY_SLUGS.get(str(intent_name))
     reply = await ConversationEntityService(database).ask_for_scope(
         tenant.id,
         installation.id,

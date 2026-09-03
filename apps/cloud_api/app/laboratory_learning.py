@@ -34,6 +34,8 @@ _INTENT_MAP = {
     "battery_level": "BatteryIntent",
     "grid_power": "GridPowerIntent",
     "temperature": "TemperatureIntent",
+    "temperature_ambiente": "TemperatureIntent",
+    "thermal_temperature": "TemperatureIntent",
     "acs_temperature": "TemperatureIntent",
     "exported_energy_today": "ExportedEnergyIntent",
     "imported_energy_today": "ImportedEnergyIntent",
@@ -63,6 +65,19 @@ def _alexa_intent(intent: str, canonical: str) -> str:
         "produced_energy_today": "ProducedEnergySummaryIntent",
         "consumed_energy_today": "ConsumedEnergySummaryIntent",
     }
+    if collective and intent in {
+        "temperature",
+        "temperature_ambiente",
+        "thermal_temperature",
+    }:
+        if intent == "thermal_temperature" or "centrale termica" in normalized:
+            return "ThermalTemperatureSummaryIntent"
+        if (
+            intent == "temperature_ambiente"
+            or "temperatur" in normalized
+            and any(word in normalized.split() for word in ("ambiente", "ambienti", "casa"))
+        ):
+            return "AmbientTemperatureSummaryIntent"
     if intent == "photovoltaic_power" and "sas" in normalized and "privato" in normalized:
         return "CombinedPhotovoltaicIntent"
     if collective and intent in collective_intents:
