@@ -73,7 +73,9 @@
             "tutti i {category}",
             "riepilogo {category}",
             "stato di {category}",
-            "controlla {category}"
+            "controlla {category}",
+            "quali {category} sono accese",
+            "quali {category} sono accesi"
           ]
         },
         {

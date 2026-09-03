@@ -130,6 +130,14 @@ def test_learned_temperature_summaries_do_not_collide_in_generic_intent() -> Non
     )
 
 
+def test_light_category_synonyms_include_natural_floor_wording() -> None:
+    from apps.cloud_api.app.laboratory_learning import _category_synonyms
+
+    assert "luci del primo piano" in _category_synonyms(
+        "Luci primo piano", "lights_first_floor"
+    )
+
+
 def test_site_less_energy_intent_falls_back_to_all_installations() -> None:
     from apps.cloud_api.app.alexa_laboratory import _utterance
 

@@ -71,6 +71,12 @@ class _Intent:
 
 _INTENTS = (
     _Intent(
+        "light_status",
+        None,
+        ("luce", "luci", "illuminazione", "lampade", "lampadine"),
+        domain="light",
+    ),
+    _Intent(
         "alarm_status",
         None,
         ("allarme", "antifurto", "sistema di allarme", "stato allarme"),
@@ -330,6 +336,10 @@ class ConversationEngine:
                 replace(entity, category=ranking_category) for entity in snapshots
             )
 
+        if intent.name == "light_status" and (
+            category_routed or self._requests_all(text) or "accese" in text
+        ):
+            return self._summarize_lights(snapshots)
         if intent.name == "lock_summary":
             return self._summarize_locks(snapshots)
         if intent.name == "opening_summary":
@@ -621,6 +631,41 @@ class ConversationEngine:
             speech,
             intent="opening_summary",
             evidence=evidence,
+        )
+
+    @staticmethod
+    def _summarize_lights(entities: tuple[EntitySnapshot, ...]) -> ConversationReply:
+        lights = tuple(entity for entity in entities if entity.domain == "light")
+        if not lights:
+            return ConversationReply(
+                ReplyStatus.NOT_FOUND,
+                "Non trovo luci autorizzate in questa categoria.",
+                intent="light_status",
+            )
+        active = tuple(
+            entity
+            for entity in lights
+            if entity.available and str(entity.state).casefold() == "on"
+        )
+        speech = (
+            "Nessuna luce della categoria risulta accesa."
+            if not active
+            else "Risultano accese: "
+            + ", ".join(
+                entity.name for entity in sorted(active, key=lambda item: item.name.casefold())
+            )
+            + "."
+        )
+        evidence = tuple(
+            Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
+            for entity in lights
+        )
+        return ConversationReply(
+            ReplyStatus.ANSWERED,
+            speech,
+            intent="light_status",
+            evidence=evidence,
+            diagnostics={"freshness": "current", "scope": "multiple_entities"},
         )
 
     @staticmethod

@@ -597,3 +597,18 @@ def test_session_discards_context_after_answer() -> None:
     unrelated = session.ask("soggiorno", [kitchen, living], now=NOW)
 
     assert unrelated.status is ReplyStatus.UNSUPPORTED
+
+
+def test_category_routed_light_summary_reports_only_lights_on() -> None:
+    lights = (
+        EntitySnapshot("light.scrivania", "Scrivania", "light", "on", category="luci_primo"),
+        EntitySnapshot("light.corridoio", "Corridoio", "light", "off", category="luci_primo"),
+    )
+
+    reply = ConversationEngine().ask(
+        "tutti i valori luci primo piano", lights, now=NOW, category_routed=True
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert "Scrivania" in reply.speech
+    assert "Corridoio" not in reply.speech

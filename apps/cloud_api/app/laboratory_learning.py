@@ -119,6 +119,21 @@ def _store() -> ConversationLearningStore:
     )
 
 
+def _category_synonyms(name: str, slug: str) -> list[str]:
+    synonyms = [slug.replace("_", " ")]
+    normalized = name.casefold().strip()
+    light_locations = {
+        "luci primo piano": "luci del primo piano",
+        "luci piano terra": "luci del piano terra",
+        "luci garage": "luci del garage",
+        "luci mansarda": "luci della mansarda",
+        "luci esterne": "illuminazione esterna",
+    }
+    if normalized in light_locations:
+        synonyms.append(light_locations[normalized])
+    return list(dict.fromkeys(value for value in synonyms if value.casefold() != normalized))
+
+
 def _record_actions(key: str, approved: bool) -> str:
     safe_key = html.escape(key, quote=True)
     approve = (
@@ -226,7 +241,10 @@ async def download_model(
     category_type["values"] = [
         {
             "id": category.slug,
-            "name": {"value": category.name, "synonyms": [category.slug.replace("_", " ")]},
+            "name": {
+                "value": category.name,
+                "synonyms": _category_synonyms(category.name, category.slug),
+            },
         }
         for category in categories
     ]
