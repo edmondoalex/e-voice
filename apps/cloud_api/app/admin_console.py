@@ -63,6 +63,7 @@ from .laboratory_live_state import (
     load_live_states,
     overlay_entities,
     overlay_installation,
+    sync_live_entities,
 )
 from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
@@ -572,6 +573,7 @@ async def installation_detail(
     _admin(context)
     item = await _installation(session, context, installation_id)
     overlay_installation(item, await load_live_installation(item.public_id))
+    await sync_live_entities(session, item)
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     page = max(1, int(request.query_params.get("page", "1")))
     query = (

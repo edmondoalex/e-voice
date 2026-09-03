@@ -9,8 +9,8 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm.attributes import set_committed_value
 
 from .config import get_settings
@@ -21,10 +21,20 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class LiveEntityState:
+    ha_entity_id: str
+    ha_registry_id: str | None
+    ha_domain: str
+    icon: str | None
+    friendly_name: str | None
+    area_id: str | None
+    area_name: str | None
+    device_id: str | None
+    device_name: str | None
     state: str | None
     available: bool
     attributes: dict[str, Any]
     device_class: str | None
+    supported_features: int
     last_changed_at: datetime | None
     last_seen_at: datetime | None
 
@@ -60,8 +70,11 @@ async def load_live_states(installation_public_id: str) -> dict[str, LiveEntityS
             result = await connection.execute(
                 text(
                     """
-                    SELECT e.ha_entity_id, e.state, e.available, e.attributes_json,
-                           e.device_class, e.last_changed_at, e.last_seen_at
+                    SELECT e.ha_entity_id, e.ha_registry_id, e.ha_domain, e.icon,
+                           e.friendly_name, e.area_id, e.area_name, e.device_id,
+                           e.device_name, e.state, e.available, e.attributes_json,
+                           e.device_class, e.supported_features, e.last_changed_at,
+                           e.last_seen_at
                     FROM entities AS e
                     JOIN installations AS i ON i.id = e.installation_id
                     WHERE i.public_id = :public_id AND e.deleted_at IS NULL
@@ -71,12 +84,22 @@ async def load_live_states(installation_public_id: str) -> dict[str, LiveEntityS
             )
             return {
                 row.ha_entity_id: LiveEntityState(
+                    ha_entity_id=row.ha_entity_id,
+                    ha_registry_id=row.ha_registry_id,
+                    ha_domain=row.ha_domain,
+                    icon=row.icon,
+                    friendly_name=row.friendly_name,
+                    area_id=row.area_id,
+                    area_name=row.area_name,
+                    device_id=row.device_id,
+                    device_name=row.device_name,
                     state=row.state,
                     available=bool(row.available),
                     attributes=row.attributes_json
                     if isinstance(row.attributes_json, dict)
                     else {},
                     device_class=row.device_class,
+                    supported_features=int(row.supported_features or 0),
                     last_changed_at=row.last_changed_at,
                     last_seen_at=row.last_seen_at,
                 )
@@ -85,6 +108,54 @@ async def load_live_states(installation_public_id: str) -> dict[str, LiveEntityS
     except Exception:
         LOGGER.warning("Laboratory live-state overlay unavailable", exc_info=True)
         return {}
+
+
+async def sync_live_entities(session: AsyncSession, installation: Installation) -> int:
+    """Import production inventory into the isolated laboratory database."""
+    states = await load_live_states(installation.public_id)
+    if not states:
+        return 0
+    local_entities = list(
+        (
+            await session.scalars(
+                select(Entity).where(Entity.installation_id == installation.id)
+            )
+        ).all()
+    )
+    by_entity_id = {entity.ha_entity_id: entity for entity in local_entities}
+    created = 0
+    for live in states.values():
+        entity = by_entity_id.get(live.ha_entity_id)
+        if entity is None:
+            entity = Entity(
+                installation_id=installation.id,
+                ha_entity_id=live.ha_entity_id,
+                ha_domain=live.ha_domain,
+                voice_aliases=[],
+            )
+            session.add(entity)
+            created += 1
+        for field, value in (
+            ("ha_registry_id", live.ha_registry_id),
+            ("ha_domain", live.ha_domain),
+            ("icon", live.icon),
+            ("friendly_name", live.friendly_name),
+            ("area_id", live.area_id),
+            ("area_name", live.area_name),
+            ("device_id", live.device_id),
+            ("device_name", live.device_name),
+            ("device_class", live.device_class),
+            ("supported_features", live.supported_features),
+            ("state", live.state),
+            ("available", live.available),
+            ("attributes_json", live.attributes),
+            ("last_changed_at", live.last_changed_at),
+            ("last_seen_at", live.last_seen_at),
+            ("deleted_at", None),
+        ):
+            setattr(entity, field, value)
+    await session.commit()
+    return created
 
 
 async def load_live_installation(
