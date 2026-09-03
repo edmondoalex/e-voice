@@ -58,6 +58,12 @@ from .entity_names import (
     voice_collisions,
 )
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
+from .laboratory_live_state import (
+    load_live_installation,
+    load_live_states,
+    overlay_entities,
+    overlay_installation,
+)
 from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
@@ -258,6 +264,8 @@ async def _voice_categories(session: AsyncSession, context: TenantContext) -> li
             )
         ).all()
     )
+    for item in items:
+        overlay_installation(item, await load_live_installation(item.public_id))
     existing_slugs = {item.slug for item in items}
     missing = [
         VoiceCategory(
@@ -540,9 +548,12 @@ async def installations_page(
         .group_by(Installation.id)
         .order_by(Installation.name)
     )
+    result_rows = result.all()
+    for item, _entity_count in result_rows:
+        overlay_installation(item, await load_live_installation(item.public_id))
     rows = "".join(
         f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{_compatibility_badge(item)}</td><td>{entity_count}</td><td>{_e(item.last_seen_at)}</td></tr>'
-        for item, entity_count in result.all()
+        for item, entity_count in result_rows
     )
     csrf = _csrf(context)
     body = f"<table><thead><tr><th>Nome</th><th>Stato</th><th>Versione e-Control</th><th>Versione Connector</th><th>Compatibilità</th><th>Entità esposte</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or '<tr><td colspan=7>Nessun impianto</td></tr>'}</tbody></table>"
@@ -562,6 +573,7 @@ async def installation_detail(
 ) -> HTMLResponse:
     _admin(context)
     item = await _installation(session, context, installation_id)
+    overlay_installation(item, await load_live_installation(item.public_id))
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     page = max(1, int(request.query_params.get("page", "1")))
     query = (
@@ -594,8 +606,6 @@ async def installation_detail(
             )
         ).all()
     )
-    from .laboratory_live_state import load_live_states, overlay_entities
-
     overlay_entities(entities, await load_live_states(item.public_id))
     discovery = await session.scalar(
         select(AlexaDiscoverySnapshot).where(
