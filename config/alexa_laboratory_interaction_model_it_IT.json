@@ -80,6 +80,11 @@
           "name": "LightSummaryIntent",
           "slots": [{"name": "category", "type": "EKONEX_CATEGORY"}],
           "samples": [
+            "stato di tutte le luci",
+            "stato delle luci",
+            "quali luci sono accese",
+            "dimmi quali luci sono accese",
+            "controlla tutte le luci",
             "quali {category} sono accese",
             "quali sono le {category} accese",
             "dimmi quali {category} sono accese",
