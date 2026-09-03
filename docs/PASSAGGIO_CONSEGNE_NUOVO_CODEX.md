@@ -46,7 +46,7 @@ Amazon Developer Advocate (Jayanth A.) ha confermato per iscritto:
 - Percorso Windows: `C:\Users\NUC Alex\OneDrive\EA SAS\0000000033-TOOL\HASSIO ADDON\e-Voice`
 - Branch attuale: `agent/conversation-core-demo`
 - Ultimo rilascio stabile al momento della prima stesura: `a15284a feat: route Alexa requests by voice category`.
-- Correzioni successive: `896d0cb` ripristina la pagina categorie; il commit successivo deve gestire `temperature_ambiente` e leggere `current_temperature` dalle entità `climate`.
+- Correzioni successive: `896d0cb` ripristina la pagina categorie; `b5d9330` instrada la temperatura ambiente e legge `current_temperature` dalle entità `climate`; `0d60cec` include lo slug custom `temperature_ambiente`; `3194274` rende universale la priorità delle categorie già risolte e filtrate.
 
 ### VPS
 
@@ -212,6 +212,10 @@ Poiché alcuni segreti sono comparsi visivamente durante le sessioni precedenti,
 - `9a31a33` — riepilogo degli stati testuali delle serrature
 - `7d97a25` — classificazione automatica delle entità senza categoria
 - `7ba9a1c` — usa con priorità le categorie vocali nelle richieste di gruppo
+- `896d0cb` — ripristina la pagina Categorie sensori dopo l'overlay live
+- `b5d9330` — usa la temperatura corrente dei termostati e lo slug ambiente
+- `0d60cec` — compatibilità con la categoria custom `temperature_ambiente`
+- `3194274` — una categoria risolta da Alexa diventa vincolo universale del ranking
 
 Consultare `git show <commit>` prima di modificare queste aree.
 
