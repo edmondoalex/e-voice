@@ -264,8 +264,6 @@ async def _voice_categories(session: AsyncSession, context: TenantContext) -> li
             )
         ).all()
     )
-    for item in items:
-        overlay_installation(item, await load_live_installation(item.public_id))
     existing_slugs = {item.slug for item in items}
     missing = [
         VoiceCategory(
