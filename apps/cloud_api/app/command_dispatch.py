@@ -86,6 +86,15 @@ class SelectCommand(StrictCommand):
     option: str = Field(min_length=1, max_length=255)
 
 
+class AlexaSpeechCommand(StrictCommand):
+    operation: Literal["announce", "speak"]
+    message: str = Field(
+        min_length=1,
+        max_length=500,
+        pattern=r"^[^<>\x00-\x08\x0b\x0c\x0e-\x1f]+$",
+    )
+
+
 type CommandSpec = Annotated[
     PowerCommand
     | BrightnessCommand
@@ -99,7 +108,8 @@ type CommandSpec = Annotated[
     | ActivateCommand
     | PressCommand
     | NumberCommand
-    | SelectCommand,
+    | SelectCommand
+    | AlexaSpeechCommand,
     Field(discriminator="operation"),
 ]
 command_adapter: TypeAdapter[CommandSpec] = TypeAdapter(CommandSpec)

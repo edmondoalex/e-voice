@@ -250,6 +250,51 @@ class Entity(TimestampMixin, Base):
     )
 
 
+class AlexaSpeakerGroup(TimestampMixin, Base):
+    """Tenant-owned collection of Alexa Devices speakers for voice routines."""
+
+    __tablename__ = "alexa_speaker_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id", "slug", name="uq_alexa_speaker_groups_installation_slug"
+        ),
+        Index("ix_alexa_speaker_groups_tenant", "tenant_id"),
+        Index("ix_alexa_speaker_groups_installation", "installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(64))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+    members: Mapped[list["AlexaSpeakerGroupMember"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class AlexaSpeakerGroupMember(Base):
+    """One explicitly selected Alexa device in a portal-defined group."""
+
+    __tablename__ = "alexa_speaker_group_members"
+    __table_args__ = (
+        UniqueConstraint("group_id", "entity_id", name="uq_alexa_speaker_group_member"),
+        Index("ix_alexa_speaker_group_members_group", "group_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_id: Mapped[UUID] = mapped_column(
+        ForeignKey("alexa_speaker_groups.id", ondelete="CASCADE")
+    )
+    entity_id: Mapped[UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+
+    group: Mapped[AlexaSpeakerGroup] = relationship(back_populates="members")
+    entity: Mapped[Entity] = relationship()
+
+
 class EntityStateHistory(Base):
     __tablename__ = "entity_state_history"
     __table_args__ = (

@@ -358,6 +358,17 @@ def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> 
         {"operation": "set_color", "rgb_color": [0, 0, 999]},
         {"operation": "power_on", "service": "lock.unlock"},
         {"operation": "call_service", "domain": "shell_command"},
+        {"operation": "announce", "message": ""},
+        {"operation": "announce", "message": "x" * 501},
+        {"operation": "announce", "message": "<audio>non ammesso</audio>"},
     ):
         with pytest.raises(ValidationError):
             command_adapter.validate_python(value)
+
+
+def test_typed_cloud_schema_accepts_bounded_plain_alexa_speech() -> None:
+    command = command_adapter.validate_python(
+        {"operation": "announce", "message": "La porta del garage è aperta"}
+    )
+    assert command.operation == "announce"
+    assert command.message == "La porta del garage è aperta"
