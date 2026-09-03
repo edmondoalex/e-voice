@@ -573,7 +573,6 @@ async def installation_detail(
     _admin(context)
     item = await _installation(session, context, installation_id)
     overlay_installation(item, await load_live_installation(item.public_id))
-    await sync_live_entities(session, item)
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     page = max(1, int(request.query_params.get("page", "1")))
     query = (
@@ -662,13 +661,50 @@ async def installation_detail(
         else ""
     )
     resync_form = f'<form method="post" action="/installations/{item.id}/alexa/resync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Risincronizza Alexa</button></form>'
+    inventory_sync_status = request.query_params.get("inventory_sync", "")
+    inventory_sync_count = request.query_params.get("imported", "0")
+    inventory_sync_notice = (
+        f'<p class="ok">Entità aggiornate dal vivo. Nuove entità importate: {_e(inventory_sync_count)}.</p>'
+        if inventory_sync_status == "success"
+        else ""
+    )
+    inventory_sync_form = (
+        f'<form method="post" action="/installations/{item.id}/laboratory/sync" class="actions"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Aggiorna entità dal vivo</button></form>'
+        if get_settings().environment == "laboratory"
+        else ""
+    )
     entity_content = entity_groups or '<div class="card"><p>Nessuna entità</p></div>'
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{inventory_sync_notice}{inventory_sync_form}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+@router.post(
+    "/installations/{installation_id}/laboratory/sync",
+    response_class=RedirectResponse,
+)
+async def sync_laboratory_inventory(
+    installation_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Import the live inventory without ever writing to production."""
+    _admin(context)
+    if get_settings().environment != "laboratory":
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    installation = await _installation(session, context, installation_id)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    imported = await sync_live_entities(session, installation)
+    return RedirectResponse(
+        f"/installations/{installation.id}?inventory_sync=success&imported={imported}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.post("/installations/{installation_id}/alexa/resync", response_class=RedirectResponse)
