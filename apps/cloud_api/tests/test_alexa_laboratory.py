@@ -94,6 +94,7 @@ def test_collective_intents_build_generic_engine_queries() -> None:
         "BatterySummaryIntent": "percentuale di tutte le batterie",
         "ConsumptionSummaryIntent": "tutti i consumi",
         "TemperatureSummaryIntent": "tutte le temperature",
+        "LightSummaryIntent": "quali luci sono accese",
         "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
         "ExportedEnergySummaryIntent": "energia oggi esportata da tutti gli impianti",
         "ImportedEnergySummaryIntent": "energia oggi importata da tutti gli impianti",

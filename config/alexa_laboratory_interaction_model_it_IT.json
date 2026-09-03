@@ -73,9 +73,19 @@
             "tutti i {category}",
             "riepilogo {category}",
             "stato di {category}",
-            "controlla {category}",
+            "controlla {category}"
+          ]
+        },
+        {
+          "name": "LightSummaryIntent",
+          "slots": [{"name": "category", "type": "EKONEX_CATEGORY"}],
+          "samples": [
             "quali {category} sono accese",
-            "quali {category} sono accesi"
+            "quali sono le {category} accese",
+            "dimmi quali {category} sono accese",
+            "ci sono {category} accese",
+            "stato delle {category}",
+            "controlla le {category}"
           ]
         },
         {

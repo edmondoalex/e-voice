@@ -24,6 +24,7 @@ _INTENT_PREFIXES = {
     "BatterySummaryIntent": "percentuale di tutte le batterie",
     "ConsumptionSummaryIntent": "tutti i consumi",
     "TemperatureSummaryIntent": "tutte le temperature",
+    "LightSummaryIntent": "quali luci sono accese",
     "AmbientTemperatureSummaryIntent": "tutte le temperature ambiente",
     "ThermalTemperatureSummaryIntent": "tutte le temperature della centrale termica",
     "GridPowerSummaryIntent": "potenza rete di tutti gli impianti",
@@ -179,9 +180,11 @@ async def laboratory(
     intent = request.get("intent")
     intent_name = intent.get("name") if isinstance(intent, dict) else None
     logger.warning(
-        "Alexa laboratory routing intent=%s site=%s",
+        "Alexa laboratory routing intent=%s site=%s category=%s category_id=%s",
         intent_name,
         _slot_value(intent, "site") if isinstance(intent, dict) else None,
+        _slot_value(intent, "category") if isinstance(intent, dict) else None,
+        _slot_id(intent, "category") if isinstance(intent, dict) else None,
     )
     if intent_name in {"AMAZON.StopIntent", "AMAZON.CancelIntent"}:
         return _speech("Va bene, a presto.", end=True)
