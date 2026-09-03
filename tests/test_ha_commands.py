@@ -3,10 +3,12 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import voluptuous as vol
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.ekonex_voice.announcement import async_announce
 from custom_components.ekonex_voice.command_executor import EkonexVoiceCommandExecutor
 from custom_components.ekonex_voice.entity_inventory import EntityInventorySynchronizer
 
@@ -157,6 +159,104 @@ async def test_arbitrary_service_injection_and_unexposed_target_are_rejected(
         )
     ).status == "target_not_exposed"
 
+
+@pytest.mark.parametrize("operation", ["announce", "speak"])
+async def test_alexa_devices_notify_operations_are_explicit_and_bounded(
+    hass: HomeAssistant, operation: str
+) -> None:
+    entry = er.async_get(hass).async_get_or_create(
+        "notify", "alexa_devices", f"echo-kitchen-{operation}",
+        suggested_object_id=f"echo_kitchen_{operation}",
+    )
+    hass.states.async_set(entry.entity_id, "unknown")
+    inventory = EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    executor = EkonexVoiceCommandExecutor(hass, inventory)
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            f"alexa-{operation}",
+            entry.id,
+            {"operation": operation, "message": "  Porta   garage aperta  "},
+        )
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "notify",
+        "send_message",
+        {"entity_id": entry.entity_id, "message": "Porta garage aperta"},
+        blocking=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform", "object_id", "operation", "message"),
+    [
+        ("test", "echo_announce", "announce", "Messaggio"),
+        ("alexa_devices", "echo_speak", "announce", "Messaggio"),
+        ("alexa_devices", "echo_announce", "announce", ""),
+        ("alexa_devices", "echo_announce", "announce", "x" * 501),
+        ("alexa_devices", "echo_announce", "announce", "<audio>non ammesso</audio>"),
+    ],
+)
+async def test_alexa_speech_rejects_wrong_targets_and_unsafe_messages(
+    hass: HomeAssistant,
+    platform: str,
+    object_id: str,
+    operation: str,
+    message: str,
+) -> None:
+    entry = er.async_get(hass).async_get_or_create(
+        "notify", platform, f"{platform}-{object_id}", suggested_object_id=object_id
+    )
+    hass.states.async_set(entry.entity_id, "unknown")
+    executor = EkonexVoiceCommandExecutor(
+        hass, EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    )
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            f"reject-{platform}-{object_id}-{len(message)}",
+            entry.id,
+            {"operation": operation, "message": message},
+        )
+    assert result.status in {"target_not_exposed", "invalid_argument"}
+    call.assert_not_awaited()
+
+
+async def test_local_announcement_action_calls_only_validated_notify_target(
+    hass: HomeAssistant,
+) -> None:
+    entry = er.async_get(hass).async_get_or_create(
+        "notify",
+        "alexa_devices",
+        "local-echo-announce",
+        suggested_object_id="local_echo_announce",
+    )
+    call = AsyncMock()
+    with (
+        patch(
+            "custom_components.ekonex_voice.announcement._is_authorized_alexa_target",
+            return_value=True,
+        ),
+        patch("homeassistant.core.ServiceRegistry.async_call", new=call),
+    ):
+        await async_announce(hass, [entry.entity_id], "  Valore   corrente  ", "announce")
+    call.assert_awaited_once_with(
+        "notify",
+        "send_message",
+        {"entity_id": entry.entity_id, "message": "Valore corrente"},
+        blocking=True,
+    )
+
+
+@pytest.mark.parametrize("message", ["", "x" * 501, "<audio>test</audio>", "test\x00"])
+async def test_local_announcement_action_rejects_unsafe_text_before_side_effect(
+    hass: HomeAssistant, message: str
+) -> None:
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        with pytest.raises(vol.Invalid):
+            await async_announce(hass, ["notify.echo_announce"], message, "announce")
+    call.assert_not_awaited()
 
 async def test_missing_disabled_and_unavailable_entities_never_execute(
     hass: HomeAssistant,

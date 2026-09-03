@@ -8,6 +8,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_integration
 
+from .announcement import register_announcement_service
 from .client import (
     EkonexVoiceAuthError,
     EkonexVoiceCannotConnect,
@@ -27,6 +28,12 @@ from .const import (
 )
 from .entity_inventory import EntityInventorySynchronizer
 from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
+
+
+async def async_setup(hass: HomeAssistant, config: dict[str, object]) -> bool:
+    """Register local automation actions without opening another connection."""
+    register_announcement_service(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) -> bool:

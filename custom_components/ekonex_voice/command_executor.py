@@ -22,6 +22,7 @@ from .entity_inventory import EntityInventorySynchronizer
 
 COMMAND_TIMEOUT_SECONDS = 8.0
 RESULT_CACHE_SIZE = 256
+MAX_ANNOUNCEMENT_LENGTH = 500
 CommandStatus = Literal[
     "success",
     "target_not_found",
@@ -163,6 +164,16 @@ class EkonexVoiceCommandExecutor:
                 correlation_id,
                 tuple(diagnostics),
             )
+        if command.get("operation") in {"announce", "speak"} and not _is_alexa_notify(
+            entry, str(command.get("operation"))
+        ):
+            return CommandResult(
+                command_id,
+                "target_not_exposed",
+                "ALEXA_NOTIFY_TARGET_REQUIRED",
+                correlation_id,
+                tuple(diagnostics),
+            )
         try:
             domain, service, data = _map_command(entry.domain, state, command)
         except UnsupportedCommand:
@@ -293,6 +304,19 @@ def _map_command(
     if not isinstance(operation, str):
         raise UnsupportedCommand
     arguments = set(command) - {"operation"}
+    if domain == "notify" and operation in {"announce", "speak"}:
+        _require_keys(arguments, {"message"})
+        message = command.get("message")
+        if (
+            not isinstance(message, str)
+            or not message.strip()
+            or len(message) > MAX_ANNOUNCEMENT_LENGTH
+            or any(ord(character) < 32 and character not in "\n\r\t" for character in message)
+            or "<" in message
+            or ">" in message
+        ):
+            raise InvalidArgument
+        return "notify", "send_message", {"message": " ".join(message.split())}
     if domain in {"light", "switch"} and operation in {"power_on", "power_off"}:
         _require_keys(arguments, set())
         return domain, "turn_on" if operation == "power_on" else "turn_off", {}
@@ -327,6 +351,15 @@ def _map_command(
             raise InvalidArgument
         return domain, "select_option", {"option": option}
     raise UnsupportedCommand
+
+
+def _is_alexa_notify(entry: er.RegistryEntry, operation: str) -> bool:
+    """Allow speech only through Alexa Devices notify entities of the requested kind."""
+    return (
+        entry.domain == "notify"
+        and entry.platform == "alexa_devices"
+        and entry.entity_id.endswith(f"_{operation}")
+    )
 
 
 def _map_light(

@@ -1,0 +1,31 @@
+announce:
+  name: Annuncio Alexa
+  description: Pronuncia un testo semplice sugli Echo Alexa Devices autorizzati in e-Voice.
+  fields:
+    targets:
+      name: Destinatari
+      description: Entità Alexa Devices Speak oppure Announce già esposte a e-Voice.
+      required: true
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: notify
+    message:
+      name: Messaggio
+      description: Testo semplice da pronunciare, massimo 500 caratteri.
+      required: true
+      selector:
+        text:
+          multiline: true
+    mode:
+      name: Modalità
+      required: true
+      default: announce
+      selector:
+        select:
+          options:
+            - label: Annuncio con suono
+              value: announce
+            - label: Parla senza suono
+              value: speak
