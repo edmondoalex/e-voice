@@ -90,7 +90,12 @@
             "dimmi quali {category} sono accese",
             "ci sono {category} accese",
             "stato delle {category}",
-            "controlla le {category}"
+            "controlla le {category}",
+            "quali luci sono accese {category}",
+            "dimmi quali luci sono accese {category}",
+            "ci sono luci accese {category}",
+            "stato delle luci {category}",
+            "controlla le luci {category}"
           ]
         },
         {

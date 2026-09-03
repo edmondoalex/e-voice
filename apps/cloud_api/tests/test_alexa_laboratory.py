@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -9,6 +11,7 @@ from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.main import app
 
 SKILL_ID = "amzn1.ask.skill.6f4ff736-deee-43b8-bf09-6399d0f0a4a2"
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def launch(skill_id: str = SKILL_ID) -> dict[str, object]:
@@ -136,9 +139,21 @@ def test_learned_temperature_summaries_do_not_collide_in_generic_intent() -> Non
 def test_light_category_synonyms_include_natural_floor_wording() -> None:
     from apps.cloud_api.app.laboratory_learning import _category_synonyms
 
-    assert "luci del primo piano" in _category_synonyms(
-        "Luci primo piano", "lights_first_floor"
+    synonyms = _category_synonyms("Luci primo piano", "lights_first_floor")
+    assert "luci del primo piano" in synonyms
+    assert "primo piano" in synonyms
+    assert "al primo piano" in synonyms
+
+
+def test_light_summary_accepts_category_after_active_state_wording() -> None:
+    model = json.loads(
+        (ROOT / "config" / "alexa_laboratory_interaction_model_it_IT.json").read_text(
+            encoding="utf-8"
+        )
     )
+    intents = model["interactionModel"]["languageModel"]["intents"]
+    light_summary = next(item for item in intents if item["name"] == "LightSummaryIntent")
+    assert "quali luci sono accese {category}" in light_summary["samples"]
 
 
 def test_model_compiler_moves_learned_phrase_to_one_intent() -> None:

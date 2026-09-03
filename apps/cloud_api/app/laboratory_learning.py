@@ -125,14 +125,14 @@ def _category_synonyms(name: str, slug: str) -> list[str]:
     synonyms = [slug.replace("_", " ")]
     normalized = name.casefold().strip()
     light_locations = {
-        "luci primo piano": "luci del primo piano",
-        "luci piano terra": "luci del piano terra",
-        "luci garage": "luci del garage",
-        "luci mansarda": "luci della mansarda",
-        "luci esterne": "illuminazione esterna",
+        "luci primo piano": ("luci del primo piano", "primo piano", "al primo piano"),
+        "luci piano terra": ("luci del piano terra", "piano terra", "al piano terra"),
+        "luci garage": ("luci del garage", "garage", "nel garage"),
+        "luci mansarda": ("luci della mansarda", "mansarda", "in mansarda"),
+        "luci esterne": ("illuminazione esterna", "esterne", "all'esterno"),
     }
     if normalized in light_locations:
-        synonyms.append(light_locations[normalized])
+        synonyms.extend(light_locations[normalized])
     return list(dict.fromkeys(value for value in synonyms if value.casefold() != normalized))
 
 
