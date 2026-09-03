@@ -55,6 +55,36 @@ async def load_live_states(installation_public_id: str) -> dict[str, LiveEntityS
     database_url = settings.laboratory_live_database_url.strip()
     if settings.environment != "laboratory" or not database_url or not installation_public_id:
         return {}
+    try:
+        async with _engine(database_url).connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT e.ha_entity_id, e.state, e.available, e.attributes_json,
+                           e.device_class, e.last_changed_at, e.last_seen_at
+                    FROM entities AS e
+                    JOIN installations AS i ON i.id = e.installation_id
+                    WHERE i.public_id = :public_id AND e.deleted_at IS NULL
+                    """
+                ),
+                {"public_id": installation_public_id},
+            )
+            return {
+                row.ha_entity_id: LiveEntityState(
+                    state=row.state,
+                    available=bool(row.available),
+                    attributes=row.attributes_json
+                    if isinstance(row.attributes_json, dict)
+                    else {},
+                    device_class=row.device_class,
+                    last_changed_at=row.last_changed_at,
+                    last_seen_at=row.last_seen_at,
+                )
+                for row in result
+            }
+    except Exception:
+        LOGGER.warning("Laboratory live-state overlay unavailable", exc_info=True)
+        return {}
 
 
 async def load_live_installation(
@@ -101,36 +131,6 @@ async def load_live_installation(
     except Exception:
         LOGGER.warning("Laboratory live installation overlay unavailable", exc_info=True)
         return None
-    try:
-        async with _engine(database_url).connect() as connection:
-            result = await connection.execute(
-                text(
-                    """
-                    SELECT e.ha_entity_id, e.state, e.available, e.attributes_json,
-                           e.device_class, e.last_changed_at, e.last_seen_at
-                    FROM entities AS e
-                    JOIN installations AS i ON i.id = e.installation_id
-                    WHERE i.public_id = :public_id AND e.deleted_at IS NULL
-                    """
-                ),
-                {"public_id": installation_public_id},
-            )
-            return {
-                row.ha_entity_id: LiveEntityState(
-                    state=row.state,
-                    available=bool(row.available),
-                    attributes=row.attributes_json
-                    if isinstance(row.attributes_json, dict)
-                    else {},
-                    device_class=row.device_class,
-                    last_changed_at=row.last_changed_at,
-                    last_seen_at=row.last_seen_at,
-                )
-                for row in result
-            }
-    except Exception:
-        LOGGER.warning("Laboratory live-state overlay unavailable", exc_info=True)
-        return {}
 
 
 def overlay_entities(entities: Iterable[Entity], states: dict[str, LiveEntityState]) -> None:
