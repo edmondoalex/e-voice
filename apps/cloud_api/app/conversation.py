@@ -210,7 +210,12 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 def _format_value(entity: EntitySnapshot) -> str:
     value = entity.state or ""
     unit = entity.unit
-    temperature_categories = {"temperature", "acs_temperature", "thermal_temperature"}
+    temperature_categories = {
+        "temperature",
+        "temperature_ambiente",
+        "acs_temperature",
+        "thermal_temperature",
+    }
     if not unit:
         unit = {
             "battery": "%",
@@ -659,7 +664,11 @@ class ConversationEngine:
         ranked: list[tuple[int, EntitySnapshot]] = []
         for entity in entities:
             compatible_categories = {
-                "temperature": {"temperature", "thermal_temperature"},
+                "temperature": {
+                    "temperature",
+                    "temperature_ambiente",
+                    "thermal_temperature",
+                },
             }.get(intent.name, {intent.name})
             if entity.category is not None and entity.category not in compatible_categories:
                 continue
