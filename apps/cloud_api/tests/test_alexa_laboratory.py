@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,6 +139,38 @@ def test_light_category_synonyms_include_natural_floor_wording() -> None:
     assert "luci del primo piano" in _category_synonyms(
         "Luci primo piano", "lights_first_floor"
     )
+
+
+def test_model_compiler_moves_learned_phrase_to_one_intent() -> None:
+    from apps.cloud_api.app.laboratory_learning import _compile_model, _model_errors
+
+    base = {
+        "interactionModel": {
+            "languageModel": {
+                "intents": [
+                    {"name": "TemperatureSummaryIntent", "samples": ["temperature ambiente"]},
+                    {"name": "AmbientTemperatureSummaryIntent", "samples": []},
+                ],
+                "types": [{"name": "EKONEX_CATEGORY", "values": []}],
+            }
+        }
+    }
+    record = SimpleNamespace(
+        approved=True,
+        intent="temperature",
+        canonical="tutte le temperature ambiente",
+        utterance="temperature ambiente",
+    )
+
+    compiled = _compile_model(base, [], (record,))
+    intents = {
+        item["name"]: item
+        for item in compiled["interactionModel"]["languageModel"]["intents"]
+    }
+
+    assert intents["TemperatureSummaryIntent"]["samples"] == []
+    assert intents["AmbientTemperatureSummaryIntent"]["samples"] == ["temperature ambiente"]
+    assert _model_errors(compiled) == []
 
 
 def test_site_less_energy_intent_falls_back_to_all_installations() -> None:

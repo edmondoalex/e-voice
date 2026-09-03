@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
-from .conversation_learning import ConversationLearningStore
+from .conversation_learning import ConversationLearningStore, LearnedPhrase
 from .database import get_database_session
 from .domain.models import Installation, Tenant, VoiceCategory
 
@@ -134,6 +134,73 @@ def _category_synonyms(name: str, slug: str) -> list[str]:
     return list(dict.fromkeys(value for value in synonyms if value.casefold() != normalized))
 
 
+def _normalized_sample(value: str) -> str:
+    sample = re.sub(r"[^\wÀ-ÿ' {}]+", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", sample).strip().casefold()
+
+
+def _compile_model(
+    base_model: dict[str, object],
+    categories: list[VoiceCategory],
+    records: tuple[LearnedPhrase, ...],
+) -> dict[str, object]:
+    model = copy.deepcopy(base_model)
+    language_model = model["interactionModel"]["languageModel"]  # type: ignore[index]
+    category_type = next(
+        item for item in language_model["types"] if item["name"] == "EKONEX_CATEGORY"
+    )
+    category_type["values"] = [
+        {
+            "id": category.slug,
+            "name": {
+                "value": category.name,
+                "synonyms": _category_synonyms(category.name, category.slug),
+            },
+        }
+        for category in categories
+    ]
+    intents = {item["name"]: item for item in language_model["intents"]}
+    for record in records:
+        intent_name = _alexa_intent(record.intent, record.canonical)
+        sample = _normalized_sample(record.utterance)
+        if not record.approved or intent_name not in intents or not sample:
+            continue
+        # A learned phrase belongs to exactly one intent. Remove stale assignments
+        # produced by earlier model versions before adding the current assignment.
+        for item in intents.values():
+            item["samples"] = [
+                value
+                for value in item.get("samples", [])
+                if _normalized_sample(value) != sample
+            ]
+        intents[intent_name].setdefault("samples", []).append(sample)
+    return model
+
+
+def _model_errors(model: dict[str, object]) -> list[str]:
+    language_model = model["interactionModel"]["languageModel"]  # type: ignore[index]
+    intents = language_model["intents"]
+    types = {item["name"] for item in language_model["types"]}
+    errors: list[str] = []
+    intent_names = [item["name"] for item in intents]
+    if len(intent_names) != len(set(intent_names)):
+        errors.append("Sono presenti intent duplicati.")
+    owners: dict[str, str] = {}
+    for intent in intents:
+        for slot in intent.get("slots", []):
+            if slot["type"] not in types and not slot["type"].startswith("AMAZON."):
+                errors.append(f"Tipo slot mancante: {slot['type']}.")
+        for sample in intent.get("samples", []):
+            normalized = _normalized_sample(sample)
+            previous = owners.get(normalized)
+            if previous is not None and previous != intent["name"]:
+                errors.append(
+                    f"Frase duplicata tra {previous} e {intent['name']}: {sample}."
+                )
+            owners[normalized] = intent["name"]
+    return errors
+
+
 def _record_actions(key: str, approved: bool) -> str:
     safe_key = html.escape(key, quote=True)
     approve = (
@@ -179,7 +246,7 @@ async def learning_page(
 <p><a href="/dashboard">← Torna al portale</a></p>
 <h1>Apprendimento IA</h1><p>Le frasi vengono apprese solo dopo una risposta valida. L'approvazione le inserisce nella bozza JSON Alexa.</p>
 <div class="cards"><div class="card"><b>{len(records)}</b><br>Frasi apprese</div><div class="card"><b>{sum(item.approved for item in records)}</b><br>Approvate</div></div>
-<p><a class="button" href="/laboratory/learning/model.json">Scarica JSON Alexa aggiornato</a></p>
+<p><a class="button" href="/laboratory/learning/model.json">Genera, verifica e scarica modello</a></p>
 <input class="filter" id="phrase-filter" type="search" placeholder="Filtra per frase, interpretazione, intent, impianto o stato..." autocomplete="off">
 <table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody id="learning-rows">{rows or '<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>'}</tbody></table>
 <script>const filter=document.getElementById('phrase-filter');const rows=[...document.querySelectorAll('#learning-rows tr')];filter.addEventListener('input',()=>{{const query=filter.value.trim().toLocaleLowerCase('it');for(const row of rows)row.hidden=query&&!row.textContent.toLocaleLowerCase('it').includes(query);}});</script>
@@ -223,7 +290,7 @@ async def download_model(
     tenant = await _tenant(session)
     records = await _store().list_for_tenant(tenant.id)
     model_path = Path(__file__).resolve().parents[3] / "config" / "alexa_laboratory_interaction_model_it_IT.json"
-    model = copy.deepcopy(json.loads(model_path.read_text(encoding="utf-8")))
+    base_model = json.loads(model_path.read_text(encoding="utf-8"))
     categories = list(
         (
             await session.scalars(
@@ -233,34 +300,13 @@ async def download_model(
             )
         ).all()
     )
-    category_type = next(
-        item
-        for item in model["interactionModel"]["languageModel"]["types"]
-        if item["name"] == "EKONEX_CATEGORY"
-    )
-    category_type["values"] = [
-        {
-            "id": category.slug,
-            "name": {
-                "value": category.name,
-                "synonyms": _category_synonyms(category.name, category.slug),
-            },
-        }
-        for category in categories
-    ]
-    intents = {
-        item["name"]: item
-        for item in model["interactionModel"]["languageModel"]["intents"]
-    }
-    for record in records:
-        intent_name = _alexa_intent(record.intent, record.canonical)
-        if not record.approved or intent_name not in intents:
-            continue
-        sample = re.sub(r"[^\wÀ-ÿ' ]+", " ", record.utterance, flags=re.UNICODE)
-        sample = re.sub(r"\s+", " ", sample).strip().casefold()
-        samples = intents[intent_name].setdefault("samples", [])
-        if sample and sample not in {item.casefold() for item in samples}:
-            samples.append(sample)
+    model = _compile_model(base_model, categories, records)
+    errors = _model_errors(model)
+    if errors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Modello Alexa non valido: " + " ".join(errors[:10]),
+        )
     return JSONResponse(
         model,
         headers={"Content-Disposition": 'attachment; filename="ekonex-laboratorio-it-IT.json"'},
