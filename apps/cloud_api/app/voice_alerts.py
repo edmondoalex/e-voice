@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import async_session_factory
 from .domain.models import AlexaVoiceAlert, Entity, Installation
+from .laboratory_live_state import load_live_states, overlay_entities
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,8 @@ async def create_voice_alert(
             )
         ).all()
     )
+    live_states = await load_live_states(installation.public_id)
+    overlay_entities(entities, live_states)
     wanted = _normalize(requested_name)
     matches = [
         entity
@@ -179,7 +182,11 @@ async def _evaluate_after_sync(installation_id: UUID, changed_ids: list[UUID]) -
 
 
 async def evaluate_voice_alerts(
-    session: AsyncSession, installation_id: UUID, changed_ids: list[UUID]
+    session: AsyncSession,
+    installation_id: UUID,
+    changed_ids: list[UUID],
+    *,
+    use_live_states: bool = False,
 ) -> None:
     now = datetime.now(UTC)
     changed = list(
@@ -228,10 +235,13 @@ async def evaluate_voice_alerts(
     installation = await session.get(Installation, installation_id)
     if installation is None:
         return
+    live_states = await load_live_states(installation.public_id) if use_live_states else {}
     from .alexa_routines import _dispatch_announcement
 
     for alert in alerts:
         target = await session.get(Entity, alert.target_entity_id)
+        if target is not None:
+            overlay_entities((target,), live_states)
         if target is None or not _matches_state(target, alert.expected_state):
             continue
         speaker = await session.scalar(
@@ -266,3 +276,37 @@ async def evaluate_voice_alerts(
             logger.exception("voice_alert_dispatch_failed alert_id=%s", alert.id)
         alert.triggered_at = datetime.now(UTC)
         await session.commit()
+
+
+async def run_live_alert_monitor() -> None:
+    """Poll the read-only live overlay because lab exposure may contain only Echo devices."""
+    while True:
+        try:
+            async with async_session_factory() as session:
+                pending = list(
+                    (
+                        await session.scalars(
+                            select(AlexaVoiceAlert).where(
+                                AlexaVoiceAlert.status == "pending",
+                                AlexaVoiceAlert.expires_at > datetime.now(UTC),
+                            )
+                        )
+                    ).all()
+                )
+                by_installation: dict[UUID, list[UUID]] = {}
+                for alert in pending:
+                    by_installation.setdefault(alert.installation_id, []).append(
+                        alert.target_entity_id
+                    )
+                for installation_id, target_ids in by_installation.items():
+                    await evaluate_voice_alerts(
+                        session,
+                        installation_id,
+                        list(dict.fromkeys(target_ids)),
+                        use_live_states=True,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("voice_alert_monitor_failed")
+        await asyncio.sleep(2)

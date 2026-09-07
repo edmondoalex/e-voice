@@ -1,5 +1,8 @@
 """FastAPI application entry point."""
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -12,18 +15,34 @@ from .alexa_laboratory import router as alexa_laboratory_router
 from .alexa_portal_oauth import router as alexa_portal_oauth_router
 from .alexa_routines import connector_router as alexa_routine_connector_router
 from .alexa_routines import router as alexa_routines_router
+from .config import get_settings
 from .evcp import router as evcp_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
+from .voice_alerts import run_live_alert_monitor
 
 try:
     application_version = version("ekonex-voice")
 except PackageNotFoundError:
     application_version = "0.1.0"
 
-app = FastAPI(title="Ekonex Voice Cloud API", version=application_version)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    monitor: asyncio.Task[None] | None = None
+    if get_settings().environment == "laboratory":
+        monitor = asyncio.create_task(run_live_alert_monitor())
+    try:
+        yield
+    finally:
+        if monitor is not None:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
+
+
+app = FastAPI(title="Ekonex Voice Cloud API", version=application_version, lifespan=lifespan)
 app.mount(
     "/static",
     StaticFiles(directory=Path(__file__).resolve().parents[3] / "brand"),
