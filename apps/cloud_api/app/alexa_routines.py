@@ -6,9 +6,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
+from collections.abc import Awaitable, Callable
+from datetime import datetime, time
+from itertools import count
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,6 +35,7 @@ from .command_dispatch import CommandDispatchService, DispatchOutcome, command_a
 from .config import get_settings
 from .database import get_database_session
 from .domain.models import (
+    AlexaRoutineExecution,
     AlexaSpeakerGroup,
     AlexaSpeakerGroupMember,
     AlexaVoiceAlert,
@@ -49,6 +55,21 @@ session_dependency = Depends(get_database_session)
 MAX_FORM_BYTES = 64_000
 ANNOUNCE_SUFFIXES = ("_announce", "_annuncio")
 SPEAK_SUFFIXES = ("_speak", "_parla")
+ROME = ZoneInfo("Europe/Rome")
+VARIABLE_PATTERN = re.compile(r"\{\{\s*([a-z_]+\.[a-z0-9_]+)\s*\}\}", re.IGNORECASE)
+_queue_sequence = count()
+_announcement_queues: dict[
+    UUID,
+    asyncio.PriorityQueue[
+        tuple[
+            int,
+            int,
+            asyncio.Future[list[DispatchOutcome]],
+            Callable[[], Awaitable[list[DispatchOutcome]]],
+        ]
+    ],
+] = {}
+_announcement_workers: dict[UUID, asyncio.Task[None]] = {}
 
 
 class RoutineTriggerRequest(BaseModel):
@@ -63,6 +84,122 @@ class RoutineTriggerResponse(BaseModel):
     attempted: int
     succeeded: int
     status: Literal["success", "partial", "failed"]
+
+
+def _clock(value: str | None) -> time | None:
+    if not value:
+        return None
+    return time.fromisoformat(value)
+
+
+def _within_period(now: time, start: time, end: time) -> bool:
+    return start <= now < end if start < end else now >= start or now < end
+
+
+async def _render_variables(session: AsyncSession, tenant_id: UUID, message: str) -> str:
+    requested = set(VARIABLE_PATTERN.findall(message))
+    if not requested:
+        return message
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .join(Installation, Installation.id == Entity.installation_id)
+                .where(
+                    Installation.tenant_id == tenant_id,
+                    Entity.ha_entity_id.in_(requested),
+                    Entity.deleted_at.is_(None),
+                )
+            )
+        ).all()
+    )
+    values = {item.ha_entity_id.casefold(): item.state or "non disponibile" for item in entities}
+    return VARIABLE_PATTERN.sub(
+        lambda match: values.get(match.group(1).casefold(), "non disponibile"), message
+    )
+
+
+async def _routine_allowed(session: AsyncSession, routine: AlexaVoiceRoutine) -> bool:
+    now = datetime.now(ROME).time()
+    start, end = _clock(routine.condition_start), _clock(routine.condition_end)
+    if start is not None and end is not None and not _within_period(now, start, end):
+        return False
+    if routine.condition_entity_id is not None:
+        entity = await session.get(Entity, routine.condition_entity_id)
+        if entity is None or not entity.available:
+            return False
+        if (
+            routine.condition_state
+            and (entity.state or "").casefold() != routine.condition_state.casefold()
+        ):
+            return False
+    return True
+
+
+def _routine_volume(routine: AlexaVoiceRoutine) -> int | None:
+    start, end = _clock(routine.night_start), _clock(routine.night_end)
+    if (
+        routine.night_volume_percent is not None
+        and start is not None
+        and end is not None
+        and _within_period(datetime.now(ROME).time(), start, end)
+    ):
+        return routine.night_volume_percent
+    return routine.volume_percent
+
+
+def _advanced_options(values: dict[str, list[str]]) -> dict[str, object]:
+    def optional_int(name: str) -> int | None:
+        raw = _one(values, name)
+        return int(raw) if raw else None
+
+    night_volume = optional_int("night_volume_percent")
+    repeat_count = optional_int("repeat_count") or 1
+    repeat_interval = optional_int("repeat_interval_seconds") or 1
+    priority = optional_int("priority") or 5
+    sound = _one(values, "sound") or "default"
+    night_start, night_end = _one(values, "night_start") or None, _one(values, "night_end") or None
+    condition_start = _one(values, "condition_start") or None
+    condition_end = _one(values, "condition_end") or None
+    if sound not in {"default", "none", "bell", "warning", "emergency"}:
+        raise ValueError
+    if not 1 <= repeat_count <= 3 or not 1 <= repeat_interval <= 30 or not 1 <= priority <= 10:
+        raise ValueError
+    if night_volume is not None and not 0 <= night_volume <= 100:
+        raise ValueError
+    for clock_value in (night_start, night_end, condition_start, condition_end):
+        _clock(clock_value)
+    return {
+        "night_volume_percent": night_volume,
+        "night_start": night_start,
+        "night_end": night_end,
+        "restore_volume": _one(values, "restore_volume") == "on",
+        "sound": sound,
+        "repeat_count": repeat_count,
+        "repeat_interval_seconds": repeat_interval,
+        "priority": priority,
+        "condition_entity_id": UUID(_one(values, "condition_entity_id"))
+        if _one(values, "condition_entity_id")
+        else None,
+        "condition_state": _one(values, "condition_state") or None,
+        "condition_start": condition_start,
+        "condition_end": condition_end,
+    }
+
+
+async def _condition_belongs_to_tenant(
+    session: AsyncSession, tenant_id: UUID, entity_id: object
+) -> bool:
+    if entity_id is None:
+        return True
+    return (
+        await session.scalar(
+            select(Entity.id)
+            .join(Installation, Installation.id == Entity.installation_id)
+            .where(Entity.id == entity_id, Installation.tenant_id == tenant_id)
+        )
+        is not None
+    )
 
 
 def _laboratory_only() -> None:
@@ -123,9 +260,7 @@ async def _speakers(session: AsyncSession, installation_id: UUID) -> list[Entity
                 .where(
                     Entity.installation_id == installation_id,
                     Entity.ha_domain == "notify",
-                    or_(
-                        *(Entity.ha_entity_id.endswith(suffix) for suffix in ANNOUNCE_SUFFIXES)
-                    ),
+                    or_(*(Entity.ha_entity_id.endswith(suffix) for suffix in ANNOUNCE_SUFFIXES)),
                     Entity.deleted_at.is_(None),
                 )
                 .order_by(Entity.display_name, Entity.friendly_name, Entity.ha_entity_id)
@@ -173,6 +308,19 @@ async def _alerts(session: AsyncSession, installation_id: UUID) -> list[AlexaVoi
     )
 
 
+async def _executions(session: AsyncSession, installation_id: UUID) -> list[AlexaRoutineExecution]:
+    return list(
+        (
+            await session.scalars(
+                select(AlexaRoutineExecution)
+                .where(AlexaRoutineExecution.installation_id == installation_id)
+                .order_by(AlexaRoutineExecution.created_at.desc())
+                .limit(50)
+            )
+        ).all()
+    )
+
+
 def _speaker_name(entity: Entity) -> str:
     return entity.display_name or entity.friendly_name or entity.ha_entity_id
 
@@ -209,6 +357,22 @@ async def routines_page(
         groups = await _groups(session, installation.id)
         routines = await _routines(session, installation.id)
         alerts = await _alerts(session, installation.id)
+        executions = await _executions(session, installation.id)
+        condition_entities = list(
+            (
+                await session.scalars(
+                    select(Entity)
+                    .join(Installation, Installation.id == Entity.installation_id)
+                    .where(
+                        Installation.tenant_id == context.tenant_id,
+                        Entity.deleted_at.is_(None),
+                        Entity.ha_domain.not_in(("notify", "event")),
+                    )
+                    .order_by(Entity.voice_name, Entity.friendly_name)
+                    .limit(500)
+                )
+            ).all()
+        )
         speaker_by_id = {item.id: item for item in speakers}
         installation_options = "".join(
             f'<option value="{item.id}"{" selected" if item.id == installation.id else ""}>{_e(item.name)}</option>'
@@ -232,6 +396,43 @@ async def routines_page(
             )
 
         destination_options = destination_options_for()
+
+        def advanced_fields(item: AlexaVoiceRoutine | None = None) -> str:
+            selected_condition = item.condition_entity_id if item else None
+            condition_options = '<option value="">Nessuna</option>' + "".join(
+                f'<option value="{entity.id}"{" selected" if entity.id == selected_condition else ""}>{_e(entity.voice_name or entity.friendly_name or entity.ha_entity_id)}</option>'
+                for entity in condition_entities
+            )
+            selected_sound = item.sound if item else "default"
+            sounds = "".join(
+                f'<option value="{value}"{" selected" if value == selected_sound else ""}>{label}</option>'
+                for value, label in (
+                    ("default", "Annuncio standard"),
+                    ("none", "Nessun suono"),
+                    ("bell", "Campanello"),
+                    ("warning", "Avviso"),
+                    ("emergency", "Emergenza"),
+                )
+            )
+
+            def value(name: str, default: object = "") -> str:
+                current = getattr(item, name, default) if item else default
+                return _e(str(current if current is not None else default))
+
+            checked = " checked" if item and item.restore_volume else ""
+            return f'''<details><summary>Opzioni avanzate</summary>
+<label class="field"><b>Volume notte (%)</b><input name="night_volume_percent" type="number" min="0" max="100" value="{value("night_volume_percent")}"></label>
+<label class="field"><b>Fascia notte</b><input name="night_start" type="time" value="{value("night_start", "22:00")}"> — <input name="night_end" type="time" value="{value("night_end", "07:00")}"></label>
+<label><input name="restore_volume" type="checkbox"{checked}> Ripristina il volume precedente</label>
+<label class="field"><b>Suono</b><select name="sound">{sounds}</select></label>
+<label class="field"><b>Ripetizioni</b><input name="repeat_count" type="number" min="1" max="3" value="{value("repeat_count", 1)}"></label>
+<label class="field"><b>Intervallo ripetizioni (secondi)</b><input name="repeat_interval_seconds" type="number" min="1" max="30" value="{value("repeat_interval_seconds", 1)}"></label>
+<label class="field"><b>Priorità (1 alta, 10 bassa)</b><input name="priority" type="number" min="1" max="10" value="{value("priority", 5)}"></label>
+<label class="field"><b>Condizione entità</b><select name="condition_entity_id">{condition_options}</select></label>
+<label class="field"><b>Stato richiesto</b><input name="condition_state" value="{value("condition_state")}" placeholder="es. on, off, home"></label>
+<label class="field"><b>Fascia consentita</b><input name="condition_start" type="time" value="{value("condition_start")}"> — <input name="condition_end" type="time" value="{value("condition_end")}"></label>
+</details>'''
+
         group_rows = "".join(
             "<tr>"
             f"<td><b>{_e(group.name)}</b><br><span class=muted>{_e(group.slug)}</span></td>"
@@ -256,7 +457,7 @@ async def routines_page(
             f"<td><b>{_e(item.name)}</b><br><span class=muted>{_e(item.slug)}</span></td>"
             f"<td>{_e(destination_names.get(f'{item.destination_type}:{item.destination_id or ""}', 'Destinazione non disponibile'))}</td>"
             f"<td>{_e(item.mode)}<br><span class=muted>Volume: {_e(str(item.volume_percent) + '%' if item.volume_percent is not None else 'invariato')}</span></td><td>{_e(item.default_message or 'Messaggio fornito dal trigger Home Assistant')}</td>"
-            f'<td><details><summary>Modifica</summary><form method="post" action="/alexa-routines/routines/{item.id}"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><label class="field"><b>Nome</b><input name="name" maxlength="120" value="{_e(item.name)}" required></label><label class="field"><b>Destinatario</b><select name="destination">{destination_options_for(_routine_destination(item))}</select></label><label class="field"><b>Modalità</b><select name="mode"><option value="announce"{" selected" if item.mode == "announce" else ""}>Annuncio</option><option value="speak"{" selected" if item.mode == "speak" else ""}>Parla</option></select></label><label class="field"><b>Volume (%)</b><input name="volume_percent" type="number" min="0" max="100" value="{item.volume_percent if item.volume_percent is not None else ""}" placeholder="Invariato"></label><label class="field"><b>Messaggio predefinito</b><textarea name="default_message" maxlength="500">{_e(item.default_message or "")}</textarea></label><button>Salva routine</button></form></details><form method="post" action="/alexa-routines/routines/{item.id}/delete"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><button class="danger">Elimina</button></form></td>'
+            f'<td><details><summary>Modifica</summary><form method="post" action="/alexa-routines/routines/{item.id}"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><label class="field"><b>Nome</b><input name="name" maxlength="120" value="{_e(item.name)}" required></label><label class="field"><b>Destinatario</b><select name="destination">{destination_options_for(_routine_destination(item))}</select></label><label class="field"><b>Modalità</b><select name="mode"><option value="announce"{" selected" if item.mode == "announce" else ""}>Annuncio</option><option value="speak"{" selected" if item.mode == "speak" else ""}>Parla</option></select></label><label class="field"><b>Volume (%)</b><input name="volume_percent" type="number" min="0" max="100" value="{item.volume_percent if item.volume_percent is not None else ""}" placeholder="Invariato"></label>{advanced_fields(item)}<label class="field"><b>Messaggio predefinito</b><textarea name="default_message" maxlength="500">{_e(item.default_message or "")}</textarea></label><button>Salva routine</button></form></details><form method="post" action="/alexa-routines/routines/{item.id}/test"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><button>Prova</button></form><form method="post" action="/alexa-routines/routines/{item.id}/delete"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><button class="danger">Elimina</button></form></td>'
             "</tr>"
             for item in routines
         )
@@ -266,6 +467,13 @@ async def routines_page(
             f"<td>{_e(item.expected_state)}</td><td>{_e(item.status)}</td><td>{_e(item.message)}</td>"
             f'<td><form method="post" action="/alexa-routines/alerts/{item.id}/cancel"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><button class="danger"{" disabled" if item.status != "pending" else ""}>Annulla</button></form></td></tr>'
             for item in alerts
+        )
+        execution_rows = "".join(
+            f"<tr><td>{item.created_at.astimezone(ROME).strftime('%d/%m %H:%M:%S')}</td>"
+            f"<td>{_e(item.destination)}</td><td>{_e(item.message_preview)}</td>"
+            f"<td>{str(item.volume_percent) + '%' if item.volume_percent is not None else '—'}</td>"
+            f"<td>{_e(item.status)} ({item.succeeded}/{item.attempted})</td><td>{_e(item.detail or '—')}</td></tr>"
+            for item in executions
         )
         notice = request.query_params.get("notice", "")
         notice_html = (
@@ -299,11 +507,14 @@ async def routines_page(
 <label class="field"><b>Destinatario</b><select name="destination">{destination_options}</select></label>
 <label class="field"><b>Modalità</b><select name="mode"><option value="announce">Annuncio con suono</option><option value="speak">Parla senza suono</option></select></label>
 <label class="field"><b>Volume (%) (facoltativo)</b><input name="volume_percent" type="number" min="0" max="100" step="1" placeholder="Lascia invariato"></label>
+{advanced_fields()}
 <label class="field"><b>Messaggio predefinito (facoltativo)</b><textarea name="default_message" maxlength="500"></textarea></label>
 <button{" disabled" if not speakers else ""}>Crea routine</button></form></div>
 <table><thead><tr><th>Routine / slug</th><th>Destinatario</th><th>Modalità</th><th>Messaggio</th><th>Azioni</th></tr></thead><tbody>{routine_rows or '<tr><td colspan="5">Nessuna routine configurata</td></tr>'}</tbody></table>"""
         body += f"""<div class="card"><h2>Avvisi richiesti ad Alexa</h2><p class="muted">Avvisi automatici creati dicendo: avvisami quando...</p></div>
 <table><thead><tr><th>Entità</th><th>Stato atteso</th><th>Stato avviso</th><th>Messaggio</th><th>Azioni</th></tr></thead><tbody>{alert_rows or '<tr><td colspan="5">Nessun avviso vocale</td></tr>'}</tbody></table>"""
+        body += f"""<div class="card"><h2>Storico annunci</h2></div>
+<table><thead><tr><th>Quando</th><th>Destinazione</th><th>Messaggio</th><th>Volume</th><th>Esito</th><th>Dettaglio</th></tr></thead><tbody>{execution_rows or '<tr><td colspan="6">Nessuna esecuzione registrata</td></tr>'}</tbody></table>"""
     response = HTMLResponse(_layout("Routine vocali", body, context, csrf, "alexa-routines"))
     response.set_cookie(
         CSRF_COOKIE,
@@ -609,7 +820,7 @@ def _test_outcome_summary(outcomes: list[DispatchOutcome]) -> tuple[str, str]:
     return "failed", "Annuncio non eseguito: verifica collegamento e componente beta."
 
 
-async def _dispatch_announcement(
+async def _dispatch_announcement_now(
     session: AsyncSession,
     tenant_id: UUID,
     installation: Installation,
@@ -617,6 +828,9 @@ async def _dispatch_announcement(
     mode: str,
     message: str,
     volume_percent: int | None = None,
+    repeat_count: int = 1,
+    repeat_interval_seconds: int = 1,
+    restore_volume: bool = False,
 ) -> list[DispatchOutcome]:
     command = command_adapter.validate_python({"operation": mode, "message": message})
     canonical = await _destination_speakers(session, tenant_id, installation, destination)
@@ -630,6 +844,7 @@ async def _dispatch_announcement(
     outcomes: list[DispatchOutcome] = []
     dispatcher = CommandDispatchService(session, sessions)
     for canonical_target, speech_target in targets:
+        previous_volume: int | None = None
         if volume_percent is not None:
             volume_target = await _volume_entity(session, installation.id, canonical_target)
             if volume_target is None or volume_target.ha_registry_id is None:
@@ -643,14 +858,85 @@ async def _dispatch_announcement(
             if volume_outcome.status != "success":
                 outcomes.append(volume_outcome)
                 continue
+            raw_previous = volume_target.attributes_json.get("volume_level")
+            if isinstance(raw_previous, (int, float)) and not isinstance(raw_previous, bool):
+                previous_volume = round(float(raw_previous) * 100)
             # Home Assistant confirms the service call before some Echo devices have
             # applied the new level. Avoid announcing with the previous volume.
             await asyncio.sleep(0.75)
         if speech_target.ha_registry_id is not None:
-            outcomes.append(
-                await dispatcher.dispatch(installation.id, speech_target.ha_registry_id, command)
+            for repetition in range(repeat_count):
+                outcomes.append(
+                    await dispatcher.dispatch(
+                        installation.id, speech_target.ha_registry_id, command
+                    )
+                )
+                if repetition + 1 < repeat_count:
+                    await asyncio.sleep(repeat_interval_seconds)
+        if restore_volume and previous_volume is not None:
+            assert volume_target is not None and volume_target.ha_registry_id is not None
+            await asyncio.sleep(1)
+            restore_command = command_adapter.validate_python(
+                {"operation": "set_volume", "volume_percent": previous_volume}
+            )
+            await dispatcher.dispatch(
+                installation.id, volume_target.ha_registry_id, restore_command
             )
     return outcomes
+
+
+async def _announcement_worker(installation_id: UUID) -> None:
+    queue = _announcement_queues[installation_id]
+    while True:
+        _, _, future, operation = await queue.get()
+        try:
+            result = await operation()
+            if not future.cancelled():
+                future.set_result(result)
+        except Exception as error:
+            if not future.cancelled():
+                future.set_exception(error)
+        finally:
+            queue.task_done()
+
+
+async def _dispatch_announcement(
+    session: AsyncSession,
+    tenant_id: UUID,
+    installation: Installation,
+    destination: str,
+    mode: str,
+    message: str,
+    volume_percent: int | None = None,
+    repeat_count: int = 1,
+    repeat_interval_seconds: int = 1,
+    restore_volume: bool = False,
+    priority: int = 5,
+) -> list[DispatchOutcome]:
+    queue = _announcement_queues.setdefault(installation.id, asyncio.PriorityQueue())
+    worker = _announcement_workers.get(installation.id)
+    if worker is None or worker.done():
+        _announcement_workers[installation.id] = asyncio.create_task(
+            _announcement_worker(installation.id)
+        )
+    future: asyncio.Future[list[DispatchOutcome]] = asyncio.get_running_loop().create_future()
+
+    async def operation() -> list[DispatchOutcome]:
+        return await _dispatch_announcement_now(
+            session,
+            tenant_id,
+            installation,
+            destination,
+            mode,
+            message,
+            volume_percent,
+            repeat_count,
+            repeat_interval_seconds,
+            restore_volume,
+        )
+
+    await queue.put((priority, next(_queue_sequence), future, operation))
+    return await future
 
 
 @router.post("/routines")
@@ -670,6 +956,7 @@ async def create_routine(
     mode = _one(values, "mode")
     raw_volume = _one(values, "volume_percent")
     try:
+        advanced = _advanced_options(values)
         slug = category_slug(name)
         destination_type, destination_id = _split_destination(_one(values, "destination"))
         if mode not in {"announce", "speak"} or (message and len(message) > 500):
@@ -684,6 +971,10 @@ async def create_routine(
             session, context.tenant_id, installation, _one(values, "destination")
         )
         if not selected_speakers:
+            raise ValueError
+        if not await _condition_belongs_to_tenant(
+            session, context.tenant_id, advanced["condition_entity_id"]
+        ):
             raise ValueError
         if volume_percent is not None and not await _all_have_volume_entity(
             session, installation.id, selected_speakers
@@ -702,6 +993,7 @@ async def create_routine(
             destination_id=destination_id,
             default_message=message,
             volume_percent=volume_percent,
+            **advanced,
         )
     )
     try:
@@ -772,6 +1064,7 @@ async def update_routine(
     raw_volume = _one(values, "volume_percent")
     destination = _one(values, "destination")
     try:
+        advanced = _advanced_options(values)
         destination_type, destination_id = _split_destination(destination)
         volume_percent = int(raw_volume) if raw_volume else None
         selected_speakers = await _destination_speakers(
@@ -788,6 +1081,10 @@ async def update_routine(
             session, installation.id, selected_speakers
         ):
             raise ValueError
+        if not await _condition_belongs_to_tenant(
+            session, context.tenant_id, advanced["condition_entity_id"]
+        ):
+            raise ValueError
         if message:
             command_adapter.validate_python({"operation": mode, "message": message})
         routine.name = name
@@ -797,6 +1094,8 @@ async def update_routine(
         routine.destination_id = destination_id
         routine.default_message = message
         routine.volume_percent = volume_percent
+        for field, value in advanced.items():
+            setattr(routine, field, value)
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
@@ -809,6 +1108,77 @@ async def update_routine(
         f"/alexa-routines?{urlencode({'installation': str(installation.id)})}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+@router.post("/routines/{routine_id}/test")
+async def test_routine(
+    routine_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    _laboratory_only()
+    _admin(context)
+    values = await _multi_form(request)
+    if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    installation = await _installation(session, context, UUID(_one(values, "installation_id")))
+    routine = await session.scalar(
+        select(AlexaVoiceRoutine).where(
+            AlexaVoiceRoutine.id == routine_id,
+            AlexaVoiceRoutine.tenant_id == context.tenant_id,
+            AlexaVoiceRoutine.installation_id == installation.id,
+        )
+    )
+    if routine is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Routine non trovata")
+    if not routine.default_message:
+        return _portal_redirect(
+            installation.id, notice="error", message="Inserisci prima un messaggio predefinito."
+        )
+    if not await _routine_allowed(session, routine):
+        return _portal_redirect(
+            installation.id, notice="error", message="Condizioni della routine non soddisfatte."
+        )
+    message = await _render_variables(session, context.tenant_id, routine.default_message)
+    message = {"bell": "Din don. ", "warning": "Attenzione. ", "emergency": "Avviso urgente. "}.get(
+        routine.sound, ""
+    ) + message
+    mode = "speak" if routine.sound == "none" else routine.mode
+    volume = _routine_volume(routine)
+    outcomes = await _dispatch_announcement(
+        session,
+        context.tenant_id,
+        installation,
+        _routine_destination(routine),
+        mode,
+        message,
+        volume,
+        routine.repeat_count,
+        routine.repeat_interval_seconds,
+        routine.restore_volume,
+        routine.priority,
+    )
+    succeeded = sum(item.status == "success" for item in outcomes)
+    result = "success" if succeeded == len(outcomes) else "partial" if succeeded else "failed"
+    session.add(
+        AlexaRoutineExecution(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            routine_id=routine.id,
+            destination=_routine_destination(routine),
+            mode=mode,
+            volume_percent=volume,
+            message_preview=message[:120],
+            attempted=len(outcomes),
+            succeeded=succeeded,
+            status=result,
+            detail=None if result == "success" else "Uno o più Echo non hanno risposto",
+        )
+    )
+    await session.commit()
+    notice, detail = _test_outcome_summary(outcomes)
+    return _portal_redirect(installation.id, notice=notice, message=detail)
 
 
 @connector_router.post("/{routine_slug}/trigger", response_model=RoutineTriggerResponse)
@@ -832,18 +1202,49 @@ async def trigger_routine(
     )
     if routine is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Routine non trovata")
+    if not await _routine_allowed(session, routine):
+        session.add(
+            AlexaRoutineExecution(
+                tenant_id=routine.tenant_id,
+                installation_id=routine.installation_id,
+                routine_id=routine.id,
+                destination=_routine_destination(routine),
+                mode=routine.mode,
+                volume_percent=_routine_volume(routine),
+                message_preview="Condizioni non soddisfatte",
+                status="skipped",
+                detail="Condizioni della routine non soddisfatte",
+            )
+        )
+        await session.commit()
+        return RoutineTriggerResponse(
+            routine=routine.slug, attempted=0, succeeded=0, status="success"
+        )
     message = payload.message or routine.default_message
     if not message:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Messaggio richiesto")
+    message = await _render_variables(session, installation.tenant_id, message)
+    sound_prefix = {
+        "bell": "Din don. ",
+        "warning": "Attenzione. ",
+        "emergency": "Avviso urgente. ",
+    }.get(routine.sound, "")
+    message = sound_prefix + message
+    effective_mode = "speak" if routine.sound == "none" else routine.mode
+    volume = _routine_volume(routine)
     try:
         outcomes = await _dispatch_announcement(
             session,
             installation.tenant_id,
             installation,
             _routine_destination(routine),
-            routine.mode,
+            effective_mode,
             message,
-            routine.volume_percent,
+            volume,
+            routine.repeat_count,
+            routine.repeat_interval_seconds,
+            routine.restore_volume,
+            routine.priority,
         )
     except (ValueError, ValidationError) as error:
         raise HTTPException(
@@ -851,6 +1252,22 @@ async def trigger_routine(
         ) from error
     succeeded = sum(getattr(item, "status", None) == "success" for item in outcomes)
     result = "success" if succeeded == len(outcomes) else "partial" if succeeded else "failed"
+    session.add(
+        AlexaRoutineExecution(
+            tenant_id=routine.tenant_id,
+            installation_id=routine.installation_id,
+            routine_id=routine.id,
+            destination=_routine_destination(routine),
+            mode=effective_mode,
+            volume_percent=volume,
+            message_preview=message[:120],
+            attempted=len(outcomes),
+            succeeded=succeeded,
+            status=result,
+            detail=None if result == "success" else "Uno o più Echo non hanno risposto",
+        )
+    )
+    await session.commit()
     return RoutineTriggerResponse(
         routine=routine.slug, attempted=len(outcomes), succeeded=succeeded, status=result
     )
@@ -886,6 +1303,23 @@ async def send_test(
     except (ValueError, ValidationError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Annuncio non valido") from error
     notice, detail = _test_outcome_summary(outcomes)
+    succeeded = sum(item.status == "success" for item in outcomes)
+    session.add(
+        AlexaRoutineExecution(
+            tenant_id=context.tenant_id,
+            installation_id=installation.id,
+            routine_id=None,
+            destination=_one(values, "destination"),
+            mode=mode,
+            volume_percent=volume_percent,
+            message_preview=message[:120],
+            attempted=len(outcomes),
+            succeeded=succeeded,
+            status=notice,
+            detail=detail,
+        )
+    )
+    await session.commit()
     query = urlencode(
         {
             "installation": str(installation.id),

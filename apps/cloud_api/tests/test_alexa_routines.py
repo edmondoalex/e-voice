@@ -12,7 +12,9 @@ from apps.cloud_api.app.alexa_routines import (
     RoutineTriggerRequest,
     _destination_speakers,
     _dispatch_announcement,
+    _dispatch_announcement_now,
     _mode_entity,
+    _render_variables,
     _speakers,
     _test_outcome_summary,
     _updated_group_members,
@@ -213,8 +215,8 @@ async def test_connector_trigger_uses_default_or_ha_rendered_message(
 
     assert default.status == "success" and default.succeeded == 2
     assert dynamic.status == "success" and dynamic.attempted == 2
-    assert dispatch.await_args_list[0].args[-2] == "Il cancello è aperto"
-    assert dispatch.await_args_list[1].args[-2] == "Temperatura 23 gradi"
+    assert dispatch.await_args_list[0].args[5] == "Il cancello è aperto"
+    assert dispatch.await_args_list[1].args[5] == "Temperatura 23 gradi"
 
 
 async def test_routine_sets_each_echo_volume_before_speech(
@@ -284,7 +286,75 @@ async def test_create_routine_form_exposes_volume_control(
 
     html = bytes(response.body).decode()
     assert html.count('name="volume_percent"') == 2
+    assert 'name="night_volume_percent"' in html
+    assert 'name="restore_volume"' in html
+    assert 'name="repeat_count"' in html
+    assert 'name="priority"' in html
+    assert "Storico annunci" in html
     assert "Crea routine richiamabile da Home Assistant" in html
+
+
+async def test_restores_previous_echo_volume_after_announcement(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    tenant_id = seeded_domain.tenant_a_id  # type: ignore[attr-defined]
+    installation = await session.get(Installation, installation_id)
+    assert installation is not None
+    announce, _ = await _echo_pair(session, installation_id, "echo_camera", "device-restore")
+    media = Entity(
+        installation_id=installation_id,
+        ha_entity_id="media_player.echo_camera",
+        ha_registry_id="registry-echo-camera-media",
+        ha_domain="media_player",
+        device_id="device-restore",
+        attributes_json={"volume_level": 0.32},
+    )
+    session.add(media)
+    await session.commit()
+    dispatched = AsyncMock(
+        side_effect=[
+            DispatchOutcome(uuid4(), "success", None),
+            DispatchOutcome(uuid4(), "success", None),
+            DispatchOutcome(uuid4(), "success", None),
+        ]
+    )
+    with (
+        patch("apps.cloud_api.app.alexa_routines.CommandDispatchService.dispatch", new=dispatched),
+        patch("apps.cloud_api.app.alexa_routines.asyncio.sleep", new=AsyncMock()),
+    ):
+        await _dispatch_announcement_now(
+            session,
+            tenant_id,
+            installation,
+            f"entity:{announce.id}",
+            "announce",
+            "Prova",
+            80,
+            restore_volume=True,
+        )
+    assert dispatched.await_args_list[-1].args[2].volume_percent == 32
+
+
+async def test_renders_synchronized_entity_variables(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    tenant_id = seeded_domain.tenant_a_id  # type: ignore[attr-defined]
+    session.add(
+        Entity(
+            installation_id=installation_id,
+            ha_entity_id="sensor.temperatura_esterna",
+            ha_registry_id="temperature-registry",
+            ha_domain="sensor",
+            state="18.5",
+        )
+    )
+    await session.commit()
+    rendered = await _render_variables(
+        session, tenant_id, "Fuori ci sono {{ sensor.temperatura_esterna }} gradi"
+    )
+    assert rendered == "Fuori ci sono 18.5 gradi"
 
 
 def test_manual_test_summary_distinguishes_partial_delivery() -> None:

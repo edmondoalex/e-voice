@@ -319,7 +319,51 @@ class AlexaVoiceRoutine(TimestampMixin, Base):
     destination_id: Mapped[UUID | None] = mapped_column(Uuid)
     default_message: Mapped[str | None] = mapped_column(String(500))
     volume_percent: Mapped[int | None] = mapped_column()
+    night_volume_percent: Mapped[int | None] = mapped_column()
+    night_start: Mapped[str | None] = mapped_column(String(5))
+    night_end: Mapped[str | None] = mapped_column(String(5))
+    restore_volume: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    sound: Mapped[str] = mapped_column(String(20), default="default", server_default="default")
+    repeat_count: Mapped[int] = mapped_column(default=1, server_default="1")
+    repeat_interval_seconds: Mapped[int] = mapped_column(default=1, server_default="1")
+    priority: Mapped[int] = mapped_column(default=5, server_default="5")
+    condition_entity_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL")
+    )
+    condition_state: Mapped[str | None] = mapped_column(String(64))
+    condition_start: Mapped[str | None] = mapped_column(String(5))
+    condition_end: Mapped[str | None] = mapped_column(String(5))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class AlexaRoutineExecution(Base):
+    """Detailed execution history for an Alexa voice routine."""
+
+    __tablename__ = "alexa_routine_executions"
+    __table_args__ = (
+        Index("ix_alexa_routine_executions_tenant_created", "tenant_id", "created_at"),
+        Index("ix_alexa_routine_executions_routine", "routine_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    routine_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("alexa_voice_routines.id", ondelete="SET NULL")
+    )
+    destination: Mapped[str] = mapped_column(String(100))
+    mode: Mapped[str] = mapped_column(String(16))
+    volume_percent: Mapped[int | None] = mapped_column()
+    message_preview: Mapped[str] = mapped_column(String(120))
+    attempted: Mapped[int] = mapped_column(default=0, server_default="0")
+    succeeded: Mapped[int] = mapped_column(default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(20))
+    detail: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
 
 
 class AlexaVoiceAlert(TimestampMixin, Base):
@@ -336,9 +380,7 @@ class AlexaVoiceAlert(TimestampMixin, Base):
     installation_id: Mapped[UUID] = mapped_column(
         ForeignKey("installations.id", ondelete="CASCADE")
     )
-    target_entity_id: Mapped[UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE")
-    )
+    target_entity_id: Mapped[UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
     expected_state: Mapped[str] = mapped_column(String(64))
     source_device_id: Mapped[str | None] = mapped_column(String(64))
     message: Mapped[str] = mapped_column(String(500))
