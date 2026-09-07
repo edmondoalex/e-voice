@@ -207,11 +207,12 @@ async def _compiled_model(
     session: AsyncSession, tenant: Tenant
 ) -> tuple[dict[str, object], list[str]]:
     records = await _store().list_for_tenant(tenant.id)
-    model_path = (
-        Path(__file__).resolve().parents[3]
-        / "config"
-        / "alexa_laboratory_interaction_model_it_IT.json"
+    filename = "alexa_laboratory_interaction_model_it_IT.json"
+    candidates = (
+        Path.cwd() / "config" / filename,
+        Path(__file__).resolve().parents[3] / "config" / filename,
     )
+    model_path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
     base_model = json.loads(model_path.read_text(encoding="utf-8"))
     categories = list(
         (
