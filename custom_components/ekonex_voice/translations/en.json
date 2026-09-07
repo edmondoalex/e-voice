@@ -2,6 +2,13 @@
   "title": "Ekonex Voice",
   "config": {
     "step": {
+      "user": {
+        "title": "Choose the Ekonex Voice environment",
+        "description": "Production keeps the current service. Laboratory creates a separate connection for safely testing beta features such as Echo groups and volume.",
+        "data": {
+          "environment": "Environment"
+        }
+      },
       "pairing": {
         "title": "Connect Ekonex Voice",
         "description": "Open **{pairing_url}**, sign in to the Ekonex portal and enter code **{code}**. Then return here and select Submit. The code expires at {expires_at}."

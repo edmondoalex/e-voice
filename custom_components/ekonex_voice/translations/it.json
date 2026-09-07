@@ -2,6 +2,13 @@
   "title": "Ekonex Voice",
   "config": {
     "step": {
+      "user": {
+        "title": "Scegli l'ambiente Ekonex Voice",
+        "description": "Produzione mantiene il servizio attuale. Laboratorio crea un collegamento separato per provare in sicurezza funzioni beta come gruppi Echo e volume.",
+        "data": {
+          "environment": "Ambiente"
+        }
+      },
       "pairing": {
         "title": "Collega Ekonex Voice",
         "description": "Apri **{pairing_url}**, accedi al portale Ekonex e inserisci il codice **{code}**. Poi torna qui e seleziona Invia. Il codice scade alle {expires_at}."

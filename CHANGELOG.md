@@ -16,6 +16,8 @@ Status: Local implementation under validation; production untouched
   `media_player` before speech.
 - Added `ekonex_voice.run_voice_routine` so Home Assistant triggers can provide either a fixed
   message or a locally rendered template containing sensor/event values.
+- Added an explicit Production/Laboratory pairing choice so a separate laboratory Connector can
+  run alongside the existing production entry without changing its endpoint.
 - Redacted spoken content from command audit and connector diagnostics.
 - Prepared migrations `0015` and `0016`; no production migration or deployment was performed.
 

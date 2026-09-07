@@ -27,6 +27,7 @@ from custom_components.ekonex_voice.const import (
     CONF_TENANT_NAME,
     DEFAULT_CLOUD_URL,
     DOMAIN,
+    LABORATORY_CLOUD_URL,
 )
 from custom_components.ekonex_voice.models import PairingResult, PairingSession, PairingState
 
@@ -64,9 +65,37 @@ async def start_flow(hass: HomeAssistant, client: AsyncMock) -> data_entry_flow.
         "custom_components.ekonex_voice.config_flow.EkonexVoiceClient",
         return_value=client,
     ):
-        return await hass.config_entries.flow.async_init(
+        result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
+        # The endpoint choice is explicit so a laboratory connection can coexist
+        # with the production entry.
+        return await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"environment": "production"}
+        )
+
+
+async def test_user_can_choose_isolated_laboratory(hass: HomeAssistant) -> None:
+    """A laboratory pairing uses only the fixed laboratory origin."""
+    client = AsyncMock()
+    client.async_create_pairing_session.return_value = pairing_session()
+    with patch(
+        "custom_components.ekonex_voice.config_flow.EkonexVoiceClient",
+        return_value=client,
+    ) as factory:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        assert result["step_id"] == "user"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"environment": "laboratory"}
+        )
+
+    assert result["step_id"] == "pairing"
+    assert result["description_placeholders"]["pairing_url"] == (
+        f"{LABORATORY_CLOUD_URL}/pair"
+    )
+    assert factory.call_args.args[1] == LABORATORY_CLOUD_URL
 
 
 async def test_success_stores_only_durable_claim_material(hass: HomeAssistant) -> None:

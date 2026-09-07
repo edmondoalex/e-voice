@@ -18,13 +18,18 @@ nei log di comando: diagnostica e audit registrano soltanto operazione e lunghez
 ## Configurazione
 
 1. Installare e configurare l'integrazione ufficiale Alexa Devices in Home Assistant.
-2. Nelle opzioni di Ekonex Voice esporre le entità Announce e Speak desiderate.
-3. Attendere la sincronizzazione dell'inventario.
-4. Nel portale aprire **Routine vocali**.
-5. Creare tutti i gruppi Ekonex desiderati scegliendo per ciascuno i relativi Echo.
-6. Creare una routine indicando destinatario, modalità, volume facoltativo e, se utile, un testo
+2. Aggiungere una seconda istanza Ekonex Voice scegliendo **Laboratorio**. La configurazione
+   esistente di produzione resta collegata al suo endpoint.
+3. Aprire il link di associazione mostrato da Home Assistant: per questa istanza deve iniziare con
+   `https://voice-lab.e-control.tech/pair`.
+4. Nelle opzioni dell'istanza laboratorio esporre i dispositivi Echo oppure le singole entità
+   `notify.*_announce`, `notify.*_speak` e i relativi `media_player` desiderati.
+5. Attendere la sincronizzazione dell'inventario.
+6. Nel portale laboratorio aprire **Routine vocali**.
+7. Creare tutti i gruppi Ekonex desiderati scegliendo per ciascuno i relativi Echo.
+8. Creare una routine indicando destinatario, modalità, volume facoltativo e, se utile, un testo
    predefinito.
-7. Copiare lo slug mostrato dal portale nell'automazione Home Assistant.
+9. Copiare lo slug mostrato dal portale nell'automazione Home Assistant.
 
 `Ovunque` usa tutte le entità Announce esposte. Per evitare ripetizioni, non esporre
 contemporaneamente gli Echo singoli e un gruppo Alexa che contiene gli stessi Echo; in alternativa

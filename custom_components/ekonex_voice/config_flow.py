@@ -38,6 +38,7 @@ from .const import (
     CONF_TENANT_NAME,
     DEFAULT_CLOUD_URL,
     DOMAIN,
+    LABORATORY_CLOUD_URL,
 )
 from .models import PairingResult, PairingSession, PairingState
 
@@ -50,6 +51,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._client: EkonexVoiceClient | None = None
         self._pairing: PairingSession | None = None
+        self._cloud_url = DEFAULT_CLOUD_URL
 
     @staticmethod
     def async_get_options_flow(
@@ -58,8 +60,24 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return EkonexVoiceOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Start pairing immediately from Add Integration."""
-        return await self._async_start_pairing()
+        """Choose the isolated endpoint before starting pairing."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required("environment", default="production"): vol.In(
+                            {"production": "Produzione", "laboratory": "Laboratorio"}
+                        )
+                    }
+                ),
+            )
+        self._cloud_url = (
+            LABORATORY_CLOUD_URL
+            if user_input["environment"] == "laboratory"
+            else DEFAULT_CLOUD_URL
+        )
+        return await self._async_start_pairing(self._cloud_url)
 
     async def async_step_pairing(
         self, user_input: dict[str, Any] | None = None
@@ -96,11 +114,13 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Require an explicit user action before showing a new human code."""
         if user_input is not None:
-            return await self._async_start_pairing()
+            cloud_url = str(self._get_reauth_entry().data.get(CONF_CLOUD_URL, DEFAULT_CLOUD_URL))
+            self._cloud_url = cloud_url
+            return await self._async_start_pairing(cloud_url)
         return self.async_show_form(step_id="reauth_confirm", data_schema=vol.Schema({}))
 
-    async def _async_start_pairing(self) -> ConfigFlowResult:
-        self._client = EkonexVoiceClient(async_get_clientsession(self.hass), DEFAULT_CLOUD_URL)
+    async def _async_start_pairing(self, cloud_url: str) -> ConfigFlowResult:
+        self._client = EkonexVoiceClient(async_get_clientsession(self.hass), cloud_url)
         try:
             self._pairing = await self._client.async_create_pairing_session(
                 f"haos_{secrets.token_urlsafe(24)}"
@@ -116,7 +136,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="unknown")
         await self.async_set_unique_id(result.installation_id)
         data = {
-            CONF_CLOUD_URL: DEFAULT_CLOUD_URL,
+            CONF_CLOUD_URL: self._cloud_url,
             CONF_INSTALLATION_ID: result.installation_id,
             CONF_CONNECTOR_CREDENTIAL: result.connector_credential,
             CONF_INSTALLATION_NAME: result.installation_name or "Ekonex Voice",
@@ -147,7 +167,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "code": self._pairing.code,
                 "expires_at": self._pairing.expires_at.isoformat(timespec="minutes"),
-                "pairing_url": "https://voice.e-control.tech/pair",
+                "pairing_url": f"{self._cloud_url}/pair",
             },
         )
 
