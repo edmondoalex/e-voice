@@ -23,7 +23,8 @@ nei log di comando: diagnostica e audit registrano soltanto operazione e lunghez
 3. Aprire il link di associazione mostrato da Home Assistant: per questa istanza deve iniziare con
    `https://voice-lab.e-control.tech/pair`.
 4. Nelle opzioni dell'istanza laboratorio esporre i dispositivi Echo oppure le singole entità
-   `notify.*_announce`, `notify.*_speak` e i relativi `media_player` desiderati.
+   `notify.*_announce`/`notify.*_annuncio`, `notify.*_speak`/`notify.*_parla` e i relativi
+   `media_player` desiderati.
 5. Attendere la sincronizzazione dell'inventario.
 6. Nel portale laboratorio aprire **Routine vocali**.
 7. Creare tutti i gruppi Ekonex desiderati scegliendo per ciascuno i relativi Echo.

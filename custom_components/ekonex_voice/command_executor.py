@@ -397,10 +397,14 @@ def _map_command(
 
 def _is_alexa_notify(entry: er.RegistryEntry, operation: str) -> bool:
     """Allow speech only through Alexa Devices notify entities of the requested kind."""
+    suffixes = {
+        "announce": ("_announce", "_annuncio"),
+        "speak": ("_speak", "_parla"),
+    }.get(operation, ())
     return (
         entry.domain == "notify"
         and entry.platform == "alexa_devices"
-        and entry.entity_id.endswith(f"_{operation}")
+        and entry.entity_id.endswith(suffixes)
     )
 
 

@@ -559,6 +559,8 @@ async def reconcile_discovery_safely(
     session: AsyncSession, installation: Installation, *, force: bool = False
 ) -> int | None:
     """Run bounded proactive discovery without failing the authoritative sync."""
+    if get_settings().environment == "laboratory":
+        return None
     installation_id = installation.id
     gateway = AlexaEventGateway(session)
     try:

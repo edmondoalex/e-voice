@@ -160,15 +160,23 @@ async def test_arbitrary_service_injection_and_unexposed_target_are_rejected(
     ).status == "target_not_exposed"
 
 
-@pytest.mark.parametrize("operation", ["announce", "speak"])
+@pytest.mark.parametrize(
+    ("operation", "entity_suffix"),
+    [
+        ("announce", "announce"),
+        ("announce", "annuncio"),
+        ("speak", "speak"),
+        ("speak", "parla"),
+    ],
+)
 async def test_alexa_devices_notify_operations_are_explicit_and_bounded(
-    hass: HomeAssistant, operation: str
+    hass: HomeAssistant, operation: str, entity_suffix: str
 ) -> None:
     entry = er.async_get(hass).async_get_or_create(
         "notify",
         "alexa_devices",
-        f"echo-kitchen-{operation}",
-        suggested_object_id=f"echo_kitchen_{operation}",
+        f"echo-kitchen-{entity_suffix}",
+        suggested_object_id=f"echo_kitchen_{entity_suffix}",
     )
     hass.states.async_set(entry.entity_id, "unknown")
     inventory = EntityInventorySynchronizer(hass, set(), {entry.id}, None)

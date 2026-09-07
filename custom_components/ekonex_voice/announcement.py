@@ -148,10 +148,14 @@ async def async_announce(
 
 
 def _is_authorized_alexa_target(hass: HomeAssistant, entry: er.RegistryEntry, mode: str) -> bool:
+    suffixes = {
+        MODE_ANNOUNCE: ("_announce", "_annuncio"),
+        MODE_SPEAK: ("_speak", "_parla"),
+    }.get(mode, ())
     if not (
         entry.domain == "notify"
         and entry.platform == "alexa_devices"
-        and entry.entity_id.endswith(f"_{mode}")
+        and entry.entity_id.endswith(suffixes)
         and not entry.disabled
     ):
         return False

@@ -803,6 +803,8 @@ async def connector_websocket(
     await websocket.accept()
     session_id = uuid4()
     installation_id = credential.installation_id
+    installation = credential.installation
+    tenant_id = installation.tenant_id
     registered = False
     session_handle: SessionHandle | None = None
     try:
@@ -810,7 +812,6 @@ async def connector_websocket(
         if not isinstance(hello, Hello) or hello.payload.installation_id != installation_id:
             await _safe_close(websocket, 4004, "INSTALLATION_MISMATCH")
             return
-        installation = credential.installation
         installation.connector_version = hello.payload.connector_version
         installation.ha_version = hello.payload.ha_version
         installation.last_seen_at = datetime.now(UTC)
@@ -874,14 +875,14 @@ async def connector_websocket(
         registered = True
         _add_session_activity(
             database,
-            tenant_id=installation.tenant_id,
+            tenant_id=tenant_id,
             installation_id=installation_id,
             diagnostic=registration_diagnostic,
             result="registered",
         )
         database.add(
             OperationalEvent(
-                tenant_id=installation.tenant_id,
+                tenant_id=tenant_id,
                 installation_id=installation_id,
                 event_type="connector_session",
                 source="connector",
@@ -922,7 +923,7 @@ async def connector_websocket(
                 heartbeat_received["message_id"] = str(message.id)
                 _add_session_activity(
                     database,
-                    tenant_id=installation.tenant_id,
+                    tenant_id=tenant_id,
                     installation_id=installation_id,
                     diagnostic=heartbeat_received,
                     request_id=message.id,
@@ -943,7 +944,7 @@ async def connector_websocket(
                 heartbeat_ack["message_id"] = str(message.id)
                 _add_session_activity(
                     database,
-                    tenant_id=installation.tenant_id,
+                    tenant_id=tenant_id,
                     installation_id=installation_id,
                     diagnostic=heartbeat_ack,
                     request_id=message.id,
@@ -958,7 +959,7 @@ async def connector_websocket(
                 if not matched:
                     _add_session_activity(
                         database,
-                        tenant_id=installation.tenant_id,
+                        tenant_id=tenant_id,
                         installation_id=installation_id,
                         diagnostic=resolution_diagnostic,
                         request_id=message.payload.command_id,
@@ -970,7 +971,7 @@ async def connector_websocket(
                         ):
                             _add_session_activity(
                                 database,
-                                tenant_id=installation.tenant_id,
+                                tenant_id=tenant_id,
                                 installation_id=installation_id,
                                 diagnostic=connector_diagnostic,
                                 request_id=message.payload.command_id,
@@ -1005,7 +1006,7 @@ async def connector_websocket(
             timeout_diagnostic["timeout_seconds"] = LIVENESS_TIMEOUT_SECONDS
             _add_session_activity(
                 database,
-                tenant_id=credential.installation.tenant_id,
+                tenant_id=tenant_id,
                 installation_id=installation_id,
                 diagnostic=timeout_diagnostic,
                 result="timeout",
@@ -1024,14 +1025,14 @@ async def connector_websocket(
             removal_diagnostic = await sessions.remove(installation_id, session_id)
             _add_session_activity(
                 database,
-                tenant_id=credential.installation.tenant_id,
+                tenant_id=tenant_id,
                 installation_id=installation_id,
                 diagnostic=removal_diagnostic,
                 result="removed" if removal_diagnostic["removed"] else "preserved",
             )
             database.add(
                 OperationalEvent(
-                    tenant_id=credential.installation.tenant_id,
+                    tenant_id=tenant_id,
                     installation_id=installation_id,
                     event_type="connector_session",
                     source="connector",

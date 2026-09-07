@@ -74,6 +74,34 @@ async def test_discovers_one_canonical_entry_per_echo_and_resolves_speak_sibling
     assert await _volume_entity(session, installation_id, announce) == media
 
 
+async def test_discovers_localized_italian_alexa_speech_entities(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    announce = Entity(
+        installation_id=installation_id,
+        ha_entity_id="notify.echo_cucina_annuncio",
+        ha_registry_id="registry-echo-cucina-annuncio",
+        ha_domain="notify",
+        friendly_name="Echo Cucina Annuncio",
+        device_id="device-cucina",
+    )
+    speak = Entity(
+        installation_id=installation_id,
+        ha_entity_id="notify.echo_cucina_parla",
+        ha_registry_id="registry-echo-cucina-parla",
+        ha_domain="notify",
+        friendly_name="Echo Cucina Parla",
+        device_id="device-cucina",
+    )
+    session.add_all([announce, speak])
+    await session.commit()
+
+    assert [item.id for item in await _speakers(session, installation_id)] == [announce.id]
+    assert await _mode_entity(session, installation_id, announce, "announce") == announce
+    assert await _mode_entity(session, installation_id, announce, "speak") == speak
+
+
 async def test_custom_group_and_all_are_installation_and_tenant_scoped(
     session: AsyncSession, seeded_domain: object
 ) -> None:

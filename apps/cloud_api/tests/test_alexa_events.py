@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import httpx
@@ -9,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud_api.app.alexa_events import AlexaEventGateway
+from apps.cloud_api.app.alexa_events import AlexaEventGateway, reconcile_discovery_safely
 from apps.cloud_api.app.config import Settings
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -19,6 +20,24 @@ from apps.cloud_api.app.domain.models import (
     Entity,
     Installation,
 )
+
+
+async def test_laboratory_never_attempts_proactive_alexa_discovery(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(
+        Installation, seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    )
+    assert installation is not None
+    factory = MagicMock()
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa_events.get_settings",
+        lambda: Settings(environment="laboratory"),
+    )
+    monkeypatch.setattr("apps.cloud_api.app.alexa_events.AlexaEventGateway", factory)
+
+    assert await reconcile_discovery_safely(session, installation) is None
+    factory.assert_not_called()
 
 
 async def test_change_report_refresh_retry_and_idempotency(

@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,6 +45,8 @@ router = APIRouter(prefix="/alexa-routines", tags=["alexa-routines"])
 connector_router = APIRouter(prefix="/connector/v1/routines", tags=["connector-routines"])
 session_dependency = Depends(get_database_session)
 MAX_FORM_BYTES = 64_000
+ANNOUNCE_SUFFIXES = ("_announce", "_annuncio")
+SPEAK_SUFFIXES = ("_speak", "_parla")
 
 
 class RoutineTriggerRequest(BaseModel):
@@ -102,7 +104,9 @@ async def _speakers(session: AsyncSession, installation_id: UUID) -> list[Entity
                 .where(
                     Entity.installation_id == installation_id,
                     Entity.ha_domain == "notify",
-                    Entity.ha_entity_id.endswith("_announce"),
+                    or_(
+                        *(Entity.ha_entity_id.endswith(suffix) for suffix in ANNOUNCE_SUFFIXES)
+                    ),
                     Entity.deleted_at.is_(None),
                 )
                 .order_by(Entity.display_name, Entity.friendly_name, Entity.ha_entity_id)
@@ -425,16 +429,20 @@ async def _mode_entity(
                 Entity.installation_id == installation_id,
                 Entity.device_id == canonical.device_id,
                 Entity.ha_domain == "notify",
-                Entity.ha_entity_id.endswith("_speak"),
+                or_(*(Entity.ha_entity_id.endswith(suffix) for suffix in SPEAK_SUFFIXES)),
                 Entity.deleted_at.is_(None),
             )
         )
         return result
-    expected = canonical.ha_entity_id.removesuffix("_announce") + "_speak"
+    stem = canonical.ha_entity_id
+    for suffix in ANNOUNCE_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem.removesuffix(suffix)
+            break
     result = await session.scalar(
         select(Entity).where(
             Entity.installation_id == installation_id,
-            Entity.ha_entity_id == expected,
+            or_(*(Entity.ha_entity_id == stem + suffix for suffix in SPEAK_SUFFIXES)),
             Entity.deleted_at.is_(None),
         )
     )

@@ -2,7 +2,7 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.alexa import discovery_endpoint
+from apps.cloud_api.app.config import Settings
 from apps.cloud_api.app.domain.models import Entity, Installation
 from apps.cloud_api.app.entity_sync import EntitySyncService, StaleSyncError
 from apps.cloud_api.app.evcp import (
@@ -100,6 +101,29 @@ async def test_inventory_commit_triggers_proactive_discovery_reconciliation(
     monkeypatch.setattr("apps.cloud_api.app.alexa_events.reconcile_discovery_safely", reconcile)
     await EntitySyncService(session, installation).apply_full(1, [item()])
     reconcile.assert_awaited_once_with(session, installation)
+
+
+async def test_laboratory_state_sync_never_reports_to_alexa(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(
+        Installation, seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    )
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    gateway = MagicMock()
+    monkeypatch.setattr(
+        "apps.cloud_api.app.entity_sync.get_settings", lambda: Settings(environment="laboratory")
+    )
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa_events.get_settings", lambda: Settings(environment="laboratory")
+    )
+    monkeypatch.setattr("apps.cloud_api.app.alexa_events.AlexaEventGateway", gateway)
+
+    await service.apply_full(1, [item()])
+    await service.apply_state(2, [item(state="off")])
+
+    gateway.assert_not_called()
 
 
 async def test_name_change_updates_metadata_without_duplicate_identity(

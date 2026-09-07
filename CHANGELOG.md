@@ -20,6 +20,10 @@ Status: Local implementation under validation; production untouched
   run alongside the existing production entry without changing its endpoint.
 - Made `run_voice_routine` automatically choose the single laboratory connection when production
   and laboratory entries coexist.
+- Recognized both English (`_announce`, `_speak`) and Italian (`_annuncio`, `_parla`) Alexa
+  Devices entity IDs, and disabled every proactive Alexa delivery path in laboratory mode.
+- Cached Connector tenant identity before database commits to keep WebSocket cleanup independent
+  from expired ORM relationships.
 - Redacted spoken content from command audit and connector diagnostics.
 - Prepared migrations `0015` and `0016`; no production migration or deployment was performed.
 

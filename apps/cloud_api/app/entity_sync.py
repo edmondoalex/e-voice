@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import get_settings
 from .domain.models import Entity, Installation
 from .history import StateHistoryService
 
@@ -105,6 +106,8 @@ class EntitySyncService:
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
+        if get_settings().environment == "laboratory":
+            return
         from .alexa import SUPPORTED_DOMAINS
         from .alexa_events import AlexaEventGateway
 
