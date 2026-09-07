@@ -238,6 +238,7 @@ async def routines_page(
 <label class="field"><b>Nome routine</b><input name="name" maxlength="120" required></label>
 <label class="field"><b>Destinatario</b><select name="destination">{destination_options}</select></label>
 <label class="field"><b>Modalità</b><select name="mode"><option value="announce">Annuncio con suono</option><option value="speak">Parla senza suono</option></select></label>
+<label class="field"><b>Volume (facoltativo)</b><input name="volume_percent" type="number" min="0" max="100" step="1" placeholder="Lascia invariato"></label>
 <label class="field"><b>Messaggio predefinito (facoltativo)</b><textarea name="default_message" maxlength="500"></textarea></label>
 <button{" disabled" if not speakers else ""}>Crea routine</button></form></div>
 <table><thead><tr><th>Routine / slug</th><th>Destinatario</th><th>Modalità</th><th>Messaggio</th><th>Azioni</th></tr></thead><tbody>{routine_rows or '<tr><td colspan="5">Nessuna routine configurata</td></tr>'}</tbody></table>"""
