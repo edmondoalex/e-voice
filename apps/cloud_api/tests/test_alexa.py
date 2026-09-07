@@ -179,6 +179,49 @@ def test_state_properties_omit_other_invalid_numeric_attributes() -> None:
             assert _property_value(entity, namespace, name) is None
 
 
+def test_media_player_discovery_state_and_commands() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="media_player.sala",
+        ha_domain="media_player",
+        friendly_name="TV Sala",
+        available=True,
+        state="playing",
+        supported_features=128 | 256 | 4 | 8 | 1 | 4096 | 16384,
+        attributes_json={"volume_level": 0.21, "is_volume_muted": False},
+    )
+
+    endpoint = discovery_endpoint(entity)
+    interfaces = {item["interface"]: item for item in endpoint["capabilities"]}
+    assert endpoint["displayCategories"] == ["TV"]
+    assert interfaces["Alexa.Speaker"]["properties"]["supported"] == [
+        {"name": "volume"},
+        {"name": "muted"},
+    ]
+    assert interfaces["Alexa.PlaybackController"]["supportedOperations"] == [
+        "Play",
+        "Pause",
+        "Stop",
+    ]
+    assert _property_value(entity, "Alexa.PowerController", "powerState") == "ON"
+    assert _property_value(entity, "Alexa.Speaker", "volume") == 21
+    assert _property_value(entity, "Alexa.Speaker", "muted") is False
+    assert _command("Alexa.PowerController", "TurnOff", {}, entity) == {
+        "operation": "power_off"
+    }
+    assert _command("Alexa.PlaybackController", "Play", {}, entity) == {
+        "operation": "media_play"
+    }
+    assert _command("Alexa.Speaker", "SetVolume", {"volume": 35}, entity) == {
+        "operation": "set_volume",
+        "volume_percent": 35,
+    }
+    assert _command("Alexa.Speaker", "SetMute", {"mute": True}, entity) == {
+        "operation": "volume_mute"
+    }
+
+
 def _climate(
     hvac_modes: list[object],
     *,

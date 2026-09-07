@@ -42,7 +42,27 @@ router = APIRouter()
 database_dependency = Depends(get_database_session)
 user_header = Header(default=None)
 MAX_DIRECTIVE_BYTES = 65_536
-SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene"}
+SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene", "media_player"}
+MEDIA_PLAYER_FEATURE_PAUSE = 1
+MEDIA_PLAYER_FEATURE_VOLUME_SET = 4
+MEDIA_PLAYER_FEATURE_VOLUME_MUTE = 8
+MEDIA_PLAYER_FEATURE_PREVIOUS_TRACK = 16
+MEDIA_PLAYER_FEATURE_NEXT_TRACK = 32
+MEDIA_PLAYER_FEATURE_TURN_ON = 128
+MEDIA_PLAYER_FEATURE_TURN_OFF = 256
+MEDIA_PLAYER_FEATURE_STOP = 4096
+MEDIA_PLAYER_FEATURE_PLAY = 16384
+MEDIA_PLAYER_ALEXA_FEATURES = (
+    MEDIA_PLAYER_FEATURE_PAUSE
+    | MEDIA_PLAYER_FEATURE_VOLUME_SET
+    | MEDIA_PLAYER_FEATURE_VOLUME_MUTE
+    | MEDIA_PLAYER_FEATURE_PREVIOUS_TRACK
+    | MEDIA_PLAYER_FEATURE_NEXT_TRACK
+    | MEDIA_PLAYER_FEATURE_TURN_ON
+    | MEDIA_PLAYER_FEATURE_TURN_OFF
+    | MEDIA_PLAYER_FEATURE_STOP
+    | MEDIA_PLAYER_FEATURE_PLAY
+)
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 HA_TO_ALEXA_THERMOSTAT_MODE = {
@@ -66,6 +86,8 @@ def alexa_entity_eligible(entity: Entity) -> bool:
         return _climate_target_temperature(entity) is not None and bool(
             _climate_supported_modes(entity)
         )
+    if entity.ha_domain == "media_player":
+        return bool(entity.supported_features & MEDIA_PLAYER_ALEXA_FEATURES)
     return True
 
 
@@ -545,6 +567,33 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 "proactivelyReported": False,
             }
         )
+    elif entity.ha_domain == "media_player":
+        features = entity.supported_features
+        if features & (MEDIA_PLAYER_FEATURE_TURN_ON | MEDIA_PLAYER_FEATURE_TURN_OFF):
+            result.append(_capability("Alexa.PowerController", ["powerState"]))
+        speaker_properties: list[str] = []
+        if features & MEDIA_PLAYER_FEATURE_VOLUME_SET:
+            speaker_properties.append("volume")
+        if features & MEDIA_PLAYER_FEATURE_VOLUME_MUTE:
+            speaker_properties.append("muted")
+        if speaker_properties:
+            result.append(_capability("Alexa.Speaker", speaker_properties))
+        playback_operations = [
+            alexa_name
+            for feature, alexa_name in (
+                (MEDIA_PLAYER_FEATURE_PLAY, "Play"),
+                (MEDIA_PLAYER_FEATURE_PAUSE, "Pause"),
+                (MEDIA_PLAYER_FEATURE_STOP, "Stop"),
+                (MEDIA_PLAYER_FEATURE_NEXT_TRACK, "Next"),
+                (MEDIA_PLAYER_FEATURE_PREVIOUS_TRACK, "Previous"),
+            )
+            if features & feature
+        ]
+        if playback_operations:
+            result.append(
+                _capability("Alexa.PlaybackController")
+                | {"supportedOperations": playback_operations}
+            )
     return result
 
 
@@ -579,6 +628,7 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
             "climate": "THERMOSTAT",
             "fan": "FAN",
             "scene": "SCENE_TRIGGER",
+            "media_player": "TV",
         }[entity.ha_domain]
     )
     return {
@@ -691,6 +741,16 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                 "Alexa.PowerController",
                 "powerState",
                 "OFF" if entity.state == "off" else "ON",
+            )
+        )
+    elif entity.ha_domain == "media_player" and entity.supported_features & (
+        MEDIA_PLAYER_FEATURE_TURN_ON | MEDIA_PLAYER_FEATURE_TURN_OFF
+    ):
+        props.append(
+            _property(
+                "Alexa.PowerController",
+                "powerState",
+                "OFF" if entity.state in {"off", "standby"} else "ON",
             )
         )
     brightness = _numeric_attribute(attributes, "brightness")
@@ -819,7 +879,14 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "temperature",
                     {"value": current_temperature, "scale": scale},
                 )
-            )
+                )
+    if entity.ha_domain == "media_player":
+        volume = _numeric_attribute(attributes, "volume_level")
+        if volume is not None and entity.supported_features & MEDIA_PLAYER_FEATURE_VOLUME_SET:
+            props.append(_property("Alexa.Speaker", "volume", round(volume * 100)))
+        muted = attributes.get("is_volume_muted")
+        if isinstance(muted, bool) and entity.supported_features & MEDIA_PLAYER_FEATURE_VOLUME_MUTE:
+            props.append(_property("Alexa.Speaker", "muted", muted))
     return props
 
 
@@ -913,9 +980,38 @@ def _command(
             return {"operation": "power_off"}
         return None
     if namespace == "Alexa.PlaybackController" and name in {"Pause", "Stop"}:
-        if entity is None or entity.ha_domain != "cover":
-            return None
-        return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
+        if entity is not None and entity.ha_domain == "media_player":
+            return {"operation": "media_pause" if name == "Pause" else "media_stop"}
+        if entity is not None and entity.ha_domain == "cover":
+            return {"operation": "stop"} if entity.supported_features & COVER_STOP else None
+        return None
+    if namespace == "Alexa.PlaybackController" and entity is not None:
+        operation = {
+            "Play": "media_play",
+            "Next": "media_next",
+            "Previous": "media_previous",
+        }.get(name)
+        return (
+            {"operation": operation}
+            if entity.ha_domain == "media_player" and operation
+            else None
+        )
+    if namespace == "Alexa.Speaker" and entity is not None and entity.ha_domain == "media_player":
+        if name == "SetVolume":
+            volume = payload.get("volume")
+            if type(volume) is int and 0 <= volume <= 100:
+                return {"operation": "set_volume", "volume_percent": volume}
+        if name == "AdjustVolume":
+            delta = payload.get("volume")
+            current = _numeric_attribute(entity.attributes_json or {}, "volume_level")
+            if type(delta) is int and current is not None:
+                return {
+                    "operation": "set_volume",
+                    "volume_percent": min(100, max(0, round(current * 100) + delta)),
+                }
+        if name == "SetMute" and isinstance(payload.get("mute"), bool):
+            return {"operation": "volume_mute" if payload["mute"] else "volume_unmute"}
+        return None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}
     if namespace == "Alexa.ThermostatController" and name == "SetTargetTemperature":
@@ -988,6 +1084,17 @@ def _command_response_properties(
                 replacements[("Alexa.PowerController", "powerState")] = (
                     "OFF" if ha_mode == "off" else "ON"
                 )
+    elif entity.ha_domain == "media_player" and operation in {"power_on", "power_off"}:
+        replacements[("Alexa.PowerController", "powerState")] = (
+            "ON" if operation == "power_on" else "OFF"
+        )
+    elif entity.ha_domain == "media_player" and operation == "set_volume":
+        replacements[("Alexa.Speaker", "volume")] = command["volume_percent"]
+    elif entity.ha_domain == "media_player" and operation in {
+        "volume_mute",
+        "volume_unmute",
+    }:
+        replacements[("Alexa.Speaker", "muted")] = operation == "volume_mute"
     for key, value in replacements.items():
         namespace, name = key
         properties = [
