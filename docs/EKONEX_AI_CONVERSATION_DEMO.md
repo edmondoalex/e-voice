@@ -1,5 +1,8 @@
 # Demo conversazionale Ekonex AI
 
+Le credenziali di laboratorio e la chiave OpenAI devono essere configurate esclusivamente nel
+secret manager o nei file `.env` protetti e non devono essere inserite in questo documento.
+
 Stato: documento di progettazione. Le funzioni descritte non sono ancora tutte implementate.
 
 Ekonex deve diventare il maggiordomo digitale della casa: comprende il linguaggio naturale, legge sensori autorizzati, esegue soltanto comandi convalidati e spiega sempre che cosa ha osservato davvero. Il primo canale consigliato è Wear OS; in seguito la stessa intelligenza potrà servire Alexa, applicazioni mobili, web, Google e Siri.
