@@ -1,5 +1,6 @@
 """Alexa routine speaker discovery, triggering and group isolation tests."""
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -132,6 +133,44 @@ async def test_custom_group_and_all_are_installation_and_tenant_scoped(
     )
     assert {item.id for item in all_speakers} == {first.id, second.id}
     assert [item.id for item in grouped] == [first.id]
+
+
+async def test_last_destination_selects_most_recent_voice_event_echo(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    tenant_id = seeded_domain.tenant_a_id  # type: ignore[attr-defined]
+    first, _ = await _echo_pair(session, installation_id, "echo_cucina", "device-1")
+    second, _ = await _echo_pair(session, installation_id, "echo_ufficio", "device-2")
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            Entity(
+                installation_id=installation_id,
+                ha_entity_id="event.echo_cucina_voce",
+                ha_registry_id="event-echo-cucina",
+                ha_domain="event",
+                device_id="device-1",
+                last_changed_at=now - timedelta(minutes=1),
+            ),
+            Entity(
+                installation_id=installation_id,
+                ha_entity_id="event.echo_ufficio_voce",
+                ha_registry_id="event-echo-ufficio",
+                ha_domain="event",
+                device_id="device-2",
+                last_changed_at=now,
+            ),
+        ]
+    )
+    await session.commit()
+    installation = await session.get(Installation, installation_id)
+    assert installation is not None
+
+    selected = await _destination_speakers(session, tenant_id, installation, "last")
+
+    assert [item.id for item in selected] == [second.id]
+    assert first.id != second.id
 
 
 async def test_connector_trigger_uses_default_or_ha_rendered_message(

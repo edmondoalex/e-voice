@@ -203,7 +203,10 @@ async def routines_page(
         )
 
         def destination_options_for(selected: str | None = None) -> str:
-            choices = [("all", "Ovunque (automatico)")]
+            choices = [
+                ("all", "Ovunque (automatico)"),
+                ("last", "Ultimo Echo utilizzato (automatico)"),
+            ]
             choices.extend((f"entity:{item.id}", _speaker_name(item)) for item in speakers)
             choices.extend((f"group:{group.id}", f"Gruppo: {group.name}") for group in groups)
             return "".join(
@@ -227,6 +230,7 @@ async def routines_page(
         )
         destination_names = {
             "all:": "Ovunque",
+            "last:": "Ultimo Echo utilizzato",
             **{f"entity:{item.id}": _speaker_name(item) for item in speakers},
             **{f"group:{item.id}": f"Gruppo: {item.name}" for item in groups},
         }
@@ -424,6 +428,28 @@ async def _destination_speakers(
     available = await _speakers(session, installation.id)
     if destination == "all":
         return available
+    if destination == "last":
+        speaker_by_device = {
+            item.device_id: item for item in available if item.device_id is not None
+        }
+        if not speaker_by_device:
+            return []
+        last_voice_event = await session.scalar(
+            select(Entity)
+            .where(
+                Entity.installation_id == installation.id,
+                Entity.ha_domain == "event",
+                Entity.device_id.in_(speaker_by_device),
+                Entity.last_changed_at.is_not(None),
+                Entity.deleted_at.is_(None),
+            )
+            .order_by(Entity.last_changed_at.desc())
+            .limit(1)
+        )
+        if last_voice_event is None or last_voice_event.device_id is None:
+            return []
+        speaker = speaker_by_device.get(last_voice_event.device_id)
+        return [speaker] if speaker is not None else []
     if destination.startswith("entity:"):
         requested = UUID(destination.removeprefix("entity:"))
         return [item for item in available if item.id == requested]
@@ -503,6 +529,8 @@ async def _all_have_volume_entity(
 def _split_destination(destination: str) -> tuple[str, UUID | None]:
     if destination == "all":
         return "all", None
+    if destination == "last":
+        return "last", None
     kind, separator, raw_id = destination.partition(":")
     if separator and kind in {"entity", "group"}:
         return kind, UUID(raw_id)
@@ -511,8 +539,8 @@ def _split_destination(destination: str) -> tuple[str, UUID | None]:
 
 def _routine_destination(routine: AlexaVoiceRoutine) -> str:
     return (
-        "all"
-        if routine.destination_type == "all"
+        routine.destination_type
+        if routine.destination_type in {"all", "last"}
         else f"{routine.destination_type}:{routine.destination_id}"
     )
 
