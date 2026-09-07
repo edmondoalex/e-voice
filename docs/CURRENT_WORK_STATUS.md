@@ -1,5 +1,77 @@
 # Current work status
 
+## Checkpoint pre-blackout — 7 settembre 2026
+
+Questo checkpoint prevale sulle sezioni storiche sottostanti quando descrivono funzioni ormai
+completate. È stato preparato prima dell'interruzione di corrente prevista per la mattina dell'8
+settembre 2026.
+
+### Versioni e distribuzioni attive
+
+- Branch di sviluppo: `agent/conversation-core-demo`.
+- Ultimo commit: `78687d2` (`feat: expose media players to Alexa laboratory`).
+- Backend Laboratorio attivo: immagine Docker `e-voice-lab:78687d2`, container
+  `e-voice-lab-api`, porta VPS `127.0.0.1:8001`.
+- Componente Home Assistant pubblicato su HACS: `0.1.8-beta.21`.
+- La produzione e la Smart Home Skill in certificazione non sono state modificate.
+
+### Funzioni completate e verificate
+
+- Inventario portale senza il precedente limite nascosto di 50 entità.
+- `TV Sala` visibile nella sezione Media Player anche senza ricerca.
+- Controlli Media Player dal portale: accensione/spegnimento, volume, muto, play, pausa, stop e
+  traccia precedente/successiva, mostrati soltanto quando supportati dall'entità Home Assistant.
+- Catena Portale Lab → VPS → Connector Home Assistant verificata con più comandi HTTP `200 OK`.
+- Routine vocali con Echo singolo, gruppi configurabili e gruppo automatico Ovunque.
+- Annunci e modalità parla, volume percentuale con ripristino ritardato, condizioni, messaggi con
+  variabili Home Assistant, storico e destinatario ultimo Echo utilizzato.
+- Categorie vocali dinamiche, distinzione temperature ambiente/centrale termica e generazione,
+  validazione, pubblicazione e Build del modello Custom Alexa dal portale.
+
+### Diagnosi Alexa Media Player
+
+- Il codice Lab è pronto a pubblicare `media_player` nella Discovery Smart Home con categoria TV,
+  PowerController, Speaker e PlaybackController in base alle capacità reali.
+- I 105 test Alexa del modulo `test_alexa.py` passano.
+- `TV Sala` non compare ancora nell'app Alexa perché la Smart Home Skill attuale usa la Lambda
+  `ekonex-voice`, che inoltra le Discovery alla produzione (`voice.e-control.tech`).
+- La prova del 7 settembre è arrivata nei log del container produzione `e-voice-api-1`, non nel
+  container Laboratorio. Non cambiare temporaneamente quella Lambda: è usata dalla Skill in
+  certificazione.
+- Prossimo requisito: Smart Home Skill privata di laboratorio e Lambda separata
+  `ekonex-voice-lab`, indirizzata a `https://voice-lab.e-control.tech`.
+
+### Priorità concordate
+
+1. Aggiornare e mantenere allineata la documentazione (questo checkpoint).
+2. Fonti audio/video personalizzabili per singolo Media Player e quindi stanza per stanza:
+   leggere `source_list` da Home Assistant, consentire selezione/esclusione, nome vocale e alias
+   per ogni fonte, comando portale e successiva esposizione Alexa InputController.
+3. Rafforzare la comprensione di richieste per piano, stanza, categoria e singola entità.
+4. Creare la Smart Home Skill/Lambda Lab separata e collaudare TV e fonti con la voce.
+5. Funzioni evolute, iniziando da riepilogo intelligente della casa, Energy Copilot e diagnostica
+   installatore; seguono anomalie, notifiche multicanale, modalità casa, conferme vocali, scene,
+   diario evoluto e Wear OS.
+
+### Ripartenza dopo interruzione di corrente
+
+1. Verificare Home Assistant e attendere che tutte le integrazioni siano caricate.
+2. Controllare in HACS/manifest che Ekonex Voice sia `0.1.8-beta.21` e che la ConfigEntry Lab sia
+   connessa.
+3. Sulla VPS controllare `docker ps`, `docker inspect e-voice-lab-api` e
+   `curl http://127.0.0.1:8001/health`; l'immagine attesa è `e-voice-lab:78687d2`.
+4. Nel portale Lab verificare che l'impianto sia online e provare un comando non critico su
+   `TV Sala`.
+5. Controllare che la produzione sia ancora sull'immagine precedente e non distribuire in
+   produzione alcuna modifica Lab.
+6. Riprendere dalla progettazione/persistenza delle fonti personalizzate per Media Player.
+
+### Stato locale da preservare
+
+Il worktree contiene modifiche e archivi non correlati ancora non tracciati o non committati. Non
+usare pulizie distruttive, non cancellare gli ZIP e aggiungere ai commit soltanto i file pertinenti.
+Le modifiche conversazionali locali devono essere riesaminate prima di includerle in altri commit.
+
 Last updated: 2026-08-31 (Europe/Rome)
 
 ## Conversational AI local test (2026-09-01)
