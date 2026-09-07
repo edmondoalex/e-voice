@@ -83,20 +83,25 @@ def _matches_state(entity: Entity, expected: str) -> bool:
 
 
 async def _latest_echo_device_id(
-    session: AsyncSession, installation_id: UUID
+    session: AsyncSession, tenant_id: UUID
 ) -> str | None:
     """Return the last used Echo that also exposes an announcement entity."""
-    speaker_devices = select(Entity.device_id).where(
-        Entity.installation_id == installation_id,
-        Entity.ha_domain == "notify",
-        Entity.ha_entity_id.endswith("_annuncio"),
-        Entity.device_id.is_not(None),
-        Entity.deleted_at.is_(None),
+    speaker_devices = (
+        select(Entity.device_id)
+        .join(Installation, Installation.id == Entity.installation_id)
+        .where(
+            Installation.tenant_id == tenant_id,
+            Entity.ha_domain == "notify",
+            Entity.ha_entity_id.endswith("_annuncio"),
+            Entity.device_id.is_not(None),
+            Entity.deleted_at.is_(None),
+        )
     )
     latest_event = await session.scalar(
         select(Entity)
+        .join(Installation, Installation.id == Entity.installation_id)
         .where(
-            Entity.installation_id == installation_id,
+            Installation.tenant_id == tenant_id,
             Entity.ha_domain == "event",
             Entity.device_id.in_(speaker_devices),
             Entity.available.is_(True),
@@ -154,7 +159,7 @@ async def create_voice_alert(
         return False, f"{spoken_name} è già nello stato richiesto."
 
     now = datetime.now(UTC)
-    source_device_id = await _latest_echo_device_id(session, installation.id)
+    source_device_id = await _latest_echo_device_id(session, tenant_id)
     expected_it = {
         "open": "aperto",
         "closed": "chiuso",
@@ -203,6 +208,9 @@ async def evaluate_voice_alerts(
     use_live_states: bool = False,
 ) -> None:
     now = datetime.now(UTC)
+    installation = await session.get(Installation, installation_id)
+    if installation is None:
+        return
     changed = list(
         (
             await session.scalars(
@@ -221,7 +229,7 @@ async def evaluate_voice_alerts(
             key=lambda item: item.last_changed_at or datetime.min.replace(tzinfo=UTC),
         ).device_id
     if source_device_id is None:
-        source_device_id = await _latest_echo_device_id(session, installation_id)
+        source_device_id = await _latest_echo_device_id(session, installation.tenant_id)
     if source_device_id is not None:
         await session.execute(
             update(AlexaVoiceAlert)
@@ -249,9 +257,6 @@ async def evaluate_voice_alerts(
             )
         ).all()
     )
-    installation = await session.get(Installation, installation_id)
-    if installation is None:
-        return
     live_states = await load_live_states(installation.public_id) if use_live_states else {}
     from .alexa_routines import _dispatch_announcement
 
@@ -262,8 +267,10 @@ async def evaluate_voice_alerts(
         if target is None or not _matches_state(target, alert.expected_state):
             continue
         speaker = await session.scalar(
-            select(Entity).where(
-                Entity.installation_id == installation_id,
+            select(Entity)
+            .join(Installation, Installation.id == Entity.installation_id)
+            .where(
+                Installation.tenant_id == alert.tenant_id,
                 Entity.device_id == alert.source_device_id,
                 Entity.ha_domain == "notify",
                 Entity.ha_entity_id.endswith("_annuncio"),
@@ -272,13 +279,16 @@ async def evaluate_voice_alerts(
         )
         if speaker is None:
             continue
+        speaker_installation = await session.get(Installation, speaker.installation_id)
+        if speaker_installation is None:
+            continue
         alert.status = "dispatching"
         await session.commit()
         try:
             outcomes = await _dispatch_announcement(
                 session,
                 alert.tenant_id,
-                installation,
+                speaker_installation,
                 f"entity:{speaker.id}",
                 "announce",
                 alert.message,
