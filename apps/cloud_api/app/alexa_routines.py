@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode
 from uuid import UUID
@@ -642,6 +643,9 @@ async def _dispatch_announcement(
             if volume_outcome.status != "success":
                 outcomes.append(volume_outcome)
                 continue
+            # Home Assistant confirms the service call before some Echo devices have
+            # applied the new level. Avoid announcing with the previous volume.
+            await asyncio.sleep(0.75)
         if speech_target.ha_registry_id is not None:
             outcomes.append(
                 await dispatcher.dispatch(installation.id, speech_target.ha_registry_id, command)
@@ -865,7 +869,11 @@ async def send_test(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     installation = await _installation(session, context, UUID(_one(values, "installation_id")))
     mode, message = _one(values, "mode"), _one(values, "message")
+    raw_volume = _one(values, "volume_percent")
     try:
+        volume_percent = int(raw_volume) if raw_volume else None
+        if volume_percent is not None and not 0 <= volume_percent <= 100:
+            raise ValueError
         outcomes = await _dispatch_announcement(
             session,
             context.tenant_id,
@@ -873,6 +881,7 @@ async def send_test(
             _one(values, "destination"),
             mode,
             message,
+            volume_percent,
         )
     except (ValueError, ValidationError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Annuncio non valido") from error

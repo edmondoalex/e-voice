@@ -240,7 +240,10 @@ async def test_routine_sets_each_echo_volume_before_speech(
             DispatchOutcome(media.id, "success", None),
         ]
     )
-    with patch("apps.cloud_api.app.alexa_routines.CommandDispatchService.dispatch", new=dispatched):
+    with (
+        patch("apps.cloud_api.app.alexa_routines.CommandDispatchService.dispatch", new=dispatched),
+        patch("apps.cloud_api.app.alexa_routines.asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
         outcomes = await _dispatch_announcement(
             session, tenant_id, installation, f"entity:{announce.id}", "announce", "Prova", 40
         )
@@ -252,6 +255,7 @@ async def test_routine_sets_each_echo_volume_before_speech(
     assert dispatched.await_args_list[0].args[2].volume_percent == 40
     assert dispatched.await_args_list[1].args[1] == announce.ha_registry_id
     assert dispatched.await_args_list[1].args[2].operation == "announce"
+    sleep.assert_awaited_once_with(0.75)
 
 
 async def test_create_routine_form_exposes_volume_control(
