@@ -18,6 +18,8 @@ Status: Local implementation under validation; production untouched
   message or a locally rendered template containing sensor/event values.
 - Added an explicit Production/Laboratory pairing choice so a separate laboratory Connector can
   run alongside the existing production entry without changing its endpoint.
+- Made `run_voice_routine` automatically choose the single laboratory connection when production
+  and laboratory entries coexist.
 - Redacted spoken content from command audit and connector diagnostics.
 - Prepared migrations `0015` and `0016`; no production migration or deployment was performed.
 

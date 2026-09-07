@@ -81,8 +81,9 @@ actions:
         {{ now().strftime('%H:%M') }}.
 ```
 
-Se nello stesso Home Assistant sono presenti più ConfigEntry Ekonex Voice, aggiungere
-`installation_id` all'azione. Con una sola installazione viene selezionata automaticamente.
+Quando convivono una connessione Produzione e una Laboratorio, la routine seleziona
+automaticamente l'unica connessione Laboratorio. `installation_id` serve soltanto se sono presenti
+più connessioni dello stesso ambiente.
 
 ## Limiti e sicurezza
 
