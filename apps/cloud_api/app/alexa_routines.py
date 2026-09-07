@@ -46,6 +46,7 @@ from .domain.models import (
 )
 from .evcp import _authenticate_secret as authenticate_connector_secret
 from .evcp import sessions
+from .laboratory_live_state import load_live_states, overlay_entities
 from .pairing_api import CSRF_COOKIE, _csrf, _valid_csrf
 from .voice_categories import category_slug
 
@@ -113,6 +114,13 @@ async def _render_variables(session: AsyncSession, tenant_id: UUID, message: str
             )
         ).all()
     )
+    by_installation: dict[UUID, list[Entity]] = {}
+    for entity in entities:
+        by_installation.setdefault(entity.installation_id, []).append(entity)
+    for source_installation_id, source_entities in by_installation.items():
+        source_installation = await session.get(Installation, source_installation_id)
+        if source_installation is not None:
+            overlay_entities(source_entities, await load_live_states(source_installation.public_id))
     values = {item.ha_entity_id.casefold(): item.state or "non disponibile" for item in entities}
     return VARIABLE_PATTERN.sub(
         lambda match: values.get(match.group(1).casefold(), "non disponibile"), message
@@ -126,6 +134,10 @@ async def _routine_allowed(session: AsyncSession, routine: AlexaVoiceRoutine) ->
         return False
     if routine.condition_entity_id is not None:
         entity = await session.get(Entity, routine.condition_entity_id)
+        if entity is not None:
+            source_installation = await session.get(Installation, entity.installation_id)
+            if source_installation is not None:
+                overlay_entities((entity,), await load_live_states(source_installation.public_id))
         if entity is None or not entity.available:
             return False
         if (
