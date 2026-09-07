@@ -99,7 +99,29 @@ DOMAIN_OPERATIONS = {
     "scene": {"activate"},
     "script": {"activate"},
     "button": {"press"},
+    "media_player": {
+        "power_on",
+        "power_off",
+        "set_volume",
+        "volume_mute",
+        "volume_unmute",
+        "media_play",
+        "media_pause",
+        "media_stop",
+        "media_next",
+        "media_previous",
+    },
 }
+
+MEDIA_PLAYER_FEATURE_PAUSE = 1
+MEDIA_PLAYER_FEATURE_VOLUME_SET = 4
+MEDIA_PLAYER_FEATURE_VOLUME_MUTE = 8
+MEDIA_PLAYER_FEATURE_PREVIOUS_TRACK = 16
+MEDIA_PLAYER_FEATURE_NEXT_TRACK = 32
+MEDIA_PLAYER_FEATURE_TURN_ON = 128
+MEDIA_PLAYER_FEATURE_TURN_OFF = 256
+MEDIA_PLAYER_FEATURE_STOP = 4096
+MEDIA_PLAYER_FEATURE_PLAY = 16384
 
 
 async def _console_context(
@@ -991,6 +1013,59 @@ def _climate_controls(installation: Installation, entity: Entity, csrf: str, ena
     return "".join(controls) or '<span class="muted">Nessun controllo diretto</span>'
 
 
+def _media_player_controls(
+    installation: Installation, entity: Entity, csrf: str, enabled: bool
+) -> str:
+    features = entity.supported_features
+    controls: list[str] = []
+    definitions = (
+        (MEDIA_PLAYER_FEATURE_TURN_ON, "power_on", "ON"),
+        (MEDIA_PLAYER_FEATURE_TURN_OFF, "power_off", "OFF"),
+        (MEDIA_PLAYER_FEATURE_PLAY, "media_play", "PLAY"),
+        (MEDIA_PLAYER_FEATURE_PAUSE, "media_pause", "PAUSA"),
+        (MEDIA_PLAYER_FEATURE_STOP, "media_stop", "STOP"),
+        (MEDIA_PLAYER_FEATURE_PREVIOUS_TRACK, "media_previous", "PRECEDENTE"),
+        (MEDIA_PLAYER_FEATURE_NEXT_TRACK, "media_next", "SUCCESSIVO"),
+    )
+    for feature, operation, label in definitions:
+        if features & feature:
+            controls.append(
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    operation,
+                    label,
+                    power=("on" if operation == "power_on" else "off")
+                    if operation in {"power_on", "power_off"}
+                    else None,
+                    active=(operation == "power_on" and entity.state not in {"off", "unavailable"})
+                    or (operation == "power_off" and entity.state == "off"),
+                    enabled=enabled,
+                )
+            )
+    if features & MEDIA_PLAYER_FEATURE_VOLUME_SET:
+        raw_volume = _finite_number((entity.attributes_json or {}).get("volume_level"))
+        volume = min(100, max(0, round((raw_volume or 0) * 100)))
+        disabled = "" if enabled else " disabled"
+        controls.append(
+            f'<form class="entity-command inline level-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="set_volume"><input type="range" name="value" min="0" max="100" value="{volume}" step="1" aria-label="Volume percentuale"{disabled}><output class="level-value">{volume}%</output><button class="command-button"{disabled}>IMPOSTA VOLUME</button></form>'
+        )
+    if features & MEDIA_PLAYER_FEATURE_VOLUME_MUTE:
+        muted = (entity.attributes_json or {}).get("is_volume_muted") is True
+        controls.append(
+            _control_form(
+                installation,
+                entity,
+                csrf,
+                "volume_unmute" if muted else "volume_mute",
+                "RIATTIVA AUDIO" if muted else "MUTO",
+                enabled=enabled,
+            )
+        )
+    return "".join(controls) or '<span class="muted">Nessun controllo supportato</span>'
+
+
 def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
     if entity.ha_domain == "light":
         return "".join(
@@ -1029,6 +1104,8 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
         )
     if entity.ha_domain == "climate":
         return _climate_controls(installation, entity, csrf, enabled)
+    if entity.ha_domain == "media_player":
+        return _media_player_controls(installation, entity, csrf, enabled)
     simple_labels = {
         "power_on": "ON",
         "power_off": "OFF",
@@ -1336,6 +1413,8 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
         data["hvac_mode"] = value
     elif operation == "set_percentage":
         data["percentage"] = int(value)
+    elif operation == "set_volume":
+        data["volume_percent"] = int(value)
     return data
 
 

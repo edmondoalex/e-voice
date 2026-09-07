@@ -14,6 +14,7 @@ from homeassistant.components.climate.const import ClimateEntityFeature
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.components.fan import FanEntityFeature
 from homeassistant.components.light.const import ColorMode
+from homeassistant.components.media_player import MediaPlayerEntityFeature
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
@@ -171,16 +172,6 @@ class EkonexVoiceCommandExecutor:
                 command_id,
                 "target_not_exposed",
                 "ALEXA_NOTIFY_TARGET_REQUIRED",
-                correlation_id,
-                tuple(diagnostics),
-            )
-        if command.get("operation") == "set_volume" and not (
-            entry.domain == "media_player" and entry.platform == "alexa_devices"
-        ):
-            return CommandResult(
-                command_id,
-                "target_not_exposed",
-                "ALEXA_MEDIA_PLAYER_TARGET_REQUIRED",
                 correlation_id,
                 tuple(diagnostics),
             )
@@ -353,12 +344,8 @@ def _map_command(
         ):
             raise InvalidArgument
         return "notify", "send_message", {"message": " ".join(message.split())}
-    if domain == "media_player" and operation == "set_volume":
-        _require_keys(arguments, {"volume_percent"})
-        volume = command.get("volume_percent")
-        if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
-            raise InvalidArgument
-        return "media_player", "volume_set", {"volume_level": volume / 100}
+    if domain == "media_player":
+        return _map_media_player(state, operation, command, arguments)
     if domain in {"light", "switch"} and operation in {"power_on", "power_off"}:
         _require_keys(arguments, set())
         return domain, "turn_on" if operation == "power_on" else "turn_off", {}
@@ -525,6 +512,40 @@ def _map_fan(
         if not supported & FanEntityFeature.SET_SPEED:
             raise UnsupportedCommand
         return "fan", "set_percentage", {"percentage": percentage}
+    raise UnsupportedCommand
+
+
+def _map_media_player(
+    state: State, operation: str, command: dict[str, object], arguments: set[str]
+) -> tuple[str, str, dict[str, object]]:
+    supported = int(state.attributes.get("supported_features", 0))
+    simple = {
+        "power_on": (MediaPlayerEntityFeature.TURN_ON, "turn_on"),
+        "power_off": (MediaPlayerEntityFeature.TURN_OFF, "turn_off"),
+        "media_play": (MediaPlayerEntityFeature.PLAY, "media_play"),
+        "media_pause": (MediaPlayerEntityFeature.PAUSE, "media_pause"),
+        "media_stop": (MediaPlayerEntityFeature.STOP, "media_stop"),
+        "media_next": (MediaPlayerEntityFeature.NEXT_TRACK, "media_next_track"),
+        "media_previous": (MediaPlayerEntityFeature.PREVIOUS_TRACK, "media_previous_track"),
+        "volume_mute": (MediaPlayerEntityFeature.VOLUME_MUTE, "volume_mute"),
+        "volume_unmute": (MediaPlayerEntityFeature.VOLUME_MUTE, "volume_mute"),
+    }.get(operation)
+    if simple is not None:
+        _require_keys(arguments, set())
+        if not supported & simple[0]:
+            raise UnsupportedCommand
+        data: dict[str, object] = {}
+        if operation in {"volume_mute", "volume_unmute"}:
+            data["is_volume_muted"] = operation == "volume_mute"
+        return "media_player", simple[1], data
+    if operation == "set_volume":
+        _require_keys(arguments, {"volume_percent"})
+        volume = command.get("volume_percent")
+        if type(volume) is not int or not 0 <= volume <= 100:
+            raise InvalidArgument
+        if not supported & MediaPlayerEntityFeature.VOLUME_SET:
+            raise UnsupportedCommand
+        return "media_player", "volume_set", {"volume_level": volume / 100}
     raise UnsupportedCommand
 
 

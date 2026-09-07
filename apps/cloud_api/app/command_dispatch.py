@@ -73,6 +73,18 @@ class VolumeCommand(StrictCommand):
     volume_percent: int = Field(ge=0, le=100)
 
 
+class MediaPlaybackCommand(StrictCommand):
+    operation: Literal[
+        "media_play",
+        "media_pause",
+        "media_stop",
+        "media_next",
+        "media_previous",
+        "volume_mute",
+        "volume_unmute",
+    ]
+
+
 class ActivateCommand(StrictCommand):
     operation: Literal["activate"]
 
@@ -111,6 +123,7 @@ type CommandSpec = Annotated[
     | HvacModeCommand
     | PercentageCommand
     | VolumeCommand
+    | MediaPlaybackCommand
     | ActivateCommand
     | PressCommand
     | NumberCommand

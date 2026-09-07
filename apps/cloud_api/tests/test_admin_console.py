@@ -490,6 +490,59 @@ async def test_installation_inventory_shows_all_entities_without_hidden_paginati
     await client.aclose()
 
 
+async def test_media_player_controls_follow_synchronized_capabilities(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
+) -> None:
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_domain = "media_player"
+    entity.ha_entity_id = "media_player.tv_sala"
+    entity.ha_registry_id = "registry-tv-sala"
+    entity.friendly_name = "TV Sala"
+    entity.state = "playing"
+    entity.available = True
+    entity.supported_features = 128 | 256 | 4 | 8 | 1 | 4096 | 16384
+    entity.attributes_json = {"volume_level": 0.42, "is_volume_muted": False}
+    await session.commit()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(installation_id, command_id, registry_id, command, timeout_seconds):  # type: ignore[no-untyped-def]
+        dispatched.append(command)
+        return CommandResultPayload(session_id=uuid4(), command_id=command_id, status="success")
+
+    monkeypatch.setattr(sessions, "dispatch", dispatch)  # type: ignore[attr-defined]
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    for operation in (
+        "power_on",
+        "power_off",
+        "media_play",
+        "media_pause",
+        "media_stop",
+        "set_volume",
+        "volume_mute",
+    ):
+        assert f'value="{operation}"' in page.text
+    assert 'value="42"' in page.text
+    assert "IMPOSTA VOLUME" in page.text
+
+    result = await client.post(
+        f"/installations/{seeded_domain.installation_a_id}/commands",
+        data={
+            "csrf_token": _csrf(page),
+            "entity_id": str(entity.id),
+            "operation": "set_volume",
+            "value": "65",
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert result.status_code == 200
+    assert dispatched == [{"operation": "set_volume", "volume_percent": 65}]
+    await client.aclose()
+
+
 async def test_climate_controls_render_and_dispatch_closed_commands(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:

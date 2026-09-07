@@ -293,7 +293,7 @@ async def test_alexa_devices_volume_is_bounded_and_mapped_to_media_player(
         "echo-volume",
         suggested_object_id="echo_volume",
     )
-    hass.states.async_set(entry.entity_id, "idle", {"volume_level": 0.2})
+    hass.states.async_set(entry.entity_id, "idle", {"volume_level": 0.2, "supported_features": 4})
     executor = EkonexVoiceCommandExecutor(
         hass, EntityInventorySynchronizer(hass, set(), {entry.id}, None)
     )
@@ -313,15 +313,48 @@ async def test_alexa_devices_volume_is_bounded_and_mapped_to_media_player(
     other = er.async_get(hass).async_get_or_create(
         "media_player", "test", "other-volume", suggested_object_id="other_volume"
     )
-    hass.states.async_set(other.entity_id, "idle", {"volume_level": 0.2})
-    denied = EkonexVoiceCommandExecutor(
+    hass.states.async_set(other.entity_id, "idle", {"volume_level": 0.2, "supported_features": 4})
+    generic = EkonexVoiceCommandExecutor(
         hass, EntityInventorySynchronizer(hass, set(), {other.id}, None)
     )
-    rejected = await denied.async_execute(
-        "other-volume-id", other.id, {"operation": "set_volume", "volume_percent": 35}
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await generic.async_execute(
+            "other-volume-id", other.id, {"operation": "set_volume", "volume_percent": 35}
+        )
+    assert result.status == "success"
+
+
+@pytest.mark.parametrize(
+    ("operation", "feature", "service", "data"),
+    [
+        ("power_on", 128, "turn_on", {}),
+        ("power_off", 256, "turn_off", {}),
+        ("media_play", 16384, "media_play", {}),
+        ("media_pause", 1, "media_pause", {}),
+        ("media_stop", 4096, "media_stop", {}),
+        ("media_next", 32, "media_next_track", {}),
+        ("media_previous", 16, "media_previous_track", {}),
+        ("volume_mute", 8, "volume_mute", {"is_volume_muted": True}),
+        ("volume_unmute", 8, "volume_mute", {"is_volume_muted": False}),
+    ],
+)
+async def test_media_player_capabilities_are_mapped_to_services(
+    hass: HomeAssistant,
+    operation: str,
+    feature: int,
+    service: str,
+    data: dict[str, object],
+) -> None:
+    entry, executor = exposed_entity(hass, "media_player", {"supported_features": feature})
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            f"media-{operation}", entry.id, {"operation": operation}
+        )
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "media_player", service, {"entity_id": entry.entity_id, **data}, blocking=True
     )
-    assert rejected.status == "target_not_exposed"
-    assert rejected.error_code == "ALEXA_MEDIA_PLAYER_TARGET_REQUIRED"
 
 
 async def test_missing_disabled_and_unavailable_entities_never_execute(
