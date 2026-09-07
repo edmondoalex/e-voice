@@ -83,6 +83,23 @@ def _one(values: dict[str, list[str]], key: str) -> str:
     return items[0].strip() if items else ""
 
 
+def _portal_redirect(
+    installation_id: UUID,
+    *,
+    notice: str | None = None,
+    message: str | None = None,
+) -> RedirectResponse:
+    params = {"installation": str(installation_id)}
+    if notice:
+        params["notice"] = notice
+    if message:
+        params["message"] = message
+    return RedirectResponse(
+        f"/alexa-routines?{urlencode(params)}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 async def _installations(session: AsyncSession, context: TenantContext) -> list[Installation]:
     return list(
         (
@@ -142,6 +159,17 @@ async def _routines(session: AsyncSession, installation_id: UUID) -> list[AlexaV
 
 def _speaker_name(entity: Entity) -> str:
     return entity.display_name or entity.friendly_name or entity.ha_entity_id
+
+
+def _updated_group_members(
+    group: AlexaSpeakerGroup, selected: dict[UUID, Entity]
+) -> list[AlexaSpeakerGroupMember]:
+    """Keep existing membership rows so an edit cannot violate their unique key."""
+    existing = {member.entity_id: member for member in group.members}
+    return [
+        existing.get(entity_id) or AlexaSpeakerGroupMember(entity_id=entity_id)
+        for entity_id in selected
+    ]
 
 
 @router.get("", response_class=HTMLResponse)
@@ -292,15 +320,14 @@ async def create_group(
     session.add(group)
     try:
         await session.commit()
-    except IntegrityError as error:
+    except IntegrityError:
         await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Esiste già un gruppo con questo nome"
-        ) from error
-    return RedirectResponse(
-        f"/alexa-routines?{urlencode({'installation': str(installation.id)})}",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+        return _portal_redirect(
+            installation.id,
+            notice="error",
+            message="Esiste già un gruppo con questo nome. Scegli un nome diverso.",
+        )
+    return _portal_redirect(installation.id)
 
 
 @router.post("/groups/{group_id}/delete")
@@ -374,19 +401,18 @@ async def update_group(
             raise ValueError
         group.name = name
         group.slug = category_slug(name)
-        group.members = [AlexaSpeakerGroupMember(entity_id=item.id) for item in valid.values()]
+        group.members = _updated_group_members(group, valid)
         await session.commit()
-    except IntegrityError as error:
+    except IntegrityError:
         await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Esiste già un gruppo con questo nome"
-        ) from error
+        return _portal_redirect(
+            installation.id,
+            notice="error",
+            message="Esiste già un gruppo con questo nome. Scegli un nome diverso.",
+        )
     except ValueError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Gruppo non valido") from error
-    return RedirectResponse(
-        f"/alexa-routines?{urlencode({'installation': str(installation.id)})}",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+    return _portal_redirect(installation.id)
 
 
 async def _destination_speakers(

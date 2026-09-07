@@ -14,6 +14,7 @@ from apps.cloud_api.app.alexa_routines import (
     _mode_entity,
     _speakers,
     _test_outcome_summary,
+    _updated_group_members,
     _volume_entity,
     routines_page,
     trigger_routine,
@@ -253,3 +254,27 @@ def test_manual_test_summary_distinguishes_partial_delivery() -> None:
         "Annuncio inviato a 1 di 2 Echo.",
     )
     assert _test_outcome_summary([unavailable])[0] == "failed"
+
+
+def test_group_edit_reuses_unchanged_membership_rows() -> None:
+    kept_id = uuid4()
+    added_id = uuid4()
+    kept = AlexaSpeakerGroupMember(entity_id=kept_id)
+    group = AlexaSpeakerGroup(
+        tenant_id=uuid4(),
+        installation_id=uuid4(),
+        name="Giorno",
+        slug="giorno",
+        members=[kept],
+    )
+
+    members = _updated_group_members(
+        group,
+        {
+            kept_id: SimpleNamespace(id=kept_id),
+            added_id: SimpleNamespace(id=added_id),
+        },
+    )
+
+    assert members[0] is kept
+    assert members[1].entity_id == added_id
