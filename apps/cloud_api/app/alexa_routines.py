@@ -887,7 +887,9 @@ async def _dispatch_announcement_now(
                     await asyncio.sleep(repeat_interval_seconds)
         if restore_volume and previous_volume is not None:
             assert volume_target is not None and volume_target.ha_registry_id is not None
-            await asyncio.sleep(1)
+            # The notify service acknowledges before Alexa finishes speaking.
+            # Estimate a bounded speaking window before restoring the prior level.
+            await asyncio.sleep(max(2.0, min(20.0, len(message.split()) / 2.5 + 1.0)))
             restore_command = command_adapter.validate_python(
                 {"operation": "set_volume", "volume_percent": previous_volume}
             )
