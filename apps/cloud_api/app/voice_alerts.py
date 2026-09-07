@@ -82,6 +82,32 @@ def _matches_state(entity: Entity, expected: str) -> bool:
     return state == expected
 
 
+async def _latest_echo_device_id(
+    session: AsyncSession, installation_id: UUID
+) -> str | None:
+    """Return the last used Echo that also exposes an announcement entity."""
+    speaker_devices = select(Entity.device_id).where(
+        Entity.installation_id == installation_id,
+        Entity.ha_domain == "notify",
+        Entity.ha_entity_id.endswith("_annuncio"),
+        Entity.device_id.is_not(None),
+        Entity.deleted_at.is_(None),
+    )
+    latest_event = await session.scalar(
+        select(Entity)
+        .where(
+            Entity.installation_id == installation_id,
+            Entity.ha_domain == "event",
+            Entity.device_id.in_(speaker_devices),
+            Entity.available.is_(True),
+            Entity.deleted_at.is_(None),
+        )
+        .order_by(Entity.last_changed_at.desc())
+        .limit(1)
+    )
+    return latest_event.device_id if latest_event else None
+
+
 async def create_voice_alert(
     session: AsyncSession,
     tenant_id: UUID,
@@ -128,19 +154,7 @@ async def create_voice_alert(
         return False, f"{spoken_name} è già nello stato richiesto."
 
     now = datetime.now(UTC)
-    recent_event = await session.scalar(
-        select(Entity)
-        .where(
-            Entity.installation_id == installation.id,
-            Entity.ha_domain == "event",
-            Entity.device_id.is_not(None),
-            Entity.available.is_(True),
-            Entity.last_changed_at >= now - timedelta(seconds=20),
-            Entity.deleted_at.is_(None),
-        )
-        .order_by(Entity.last_changed_at.desc())
-        .limit(1)
-    )
+    source_device_id = await _latest_echo_device_id(session, installation.id)
     expected_it = {
         "open": "aperto",
         "closed": "chiuso",
@@ -154,7 +168,7 @@ async def create_voice_alert(
         installation_id=installation.id,
         target_entity_id=target.id,
         expected_state=expected,
-        source_device_id=recent_event.device_id if recent_event else None,
+        source_device_id=source_device_id,
         message=f"{spoken_name} adesso è {expected_it}.",
         status="pending",
         expires_at=now + timedelta(hours=24),
@@ -200,20 +214,23 @@ async def evaluate_voice_alerts(
         ).all()
     )
     voice_events = [item for item in changed if item.ha_domain == "event" and item.device_id]
+    source_device_id = None
     if voice_events:
-        latest = max(
+        source_device_id = max(
             voice_events,
             key=lambda item: item.last_changed_at or datetime.min.replace(tzinfo=UTC),
-        )
+        ).device_id
+    if source_device_id is None:
+        source_device_id = await _latest_echo_device_id(session, installation_id)
+    if source_device_id is not None:
         await session.execute(
             update(AlexaVoiceAlert)
             .where(
                 AlexaVoiceAlert.installation_id == installation_id,
                 AlexaVoiceAlert.status == "pending",
                 AlexaVoiceAlert.source_device_id.is_(None),
-                AlexaVoiceAlert.created_at >= now - timedelta(seconds=30),
             )
-            .values(source_device_id=latest.device_id)
+            .values(source_device_id=source_device_id)
         )
         await session.commit()
 

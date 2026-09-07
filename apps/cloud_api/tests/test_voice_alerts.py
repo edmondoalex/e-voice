@@ -1,6 +1,6 @@
 """Alexa one-shot voice alert tests."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -58,7 +58,9 @@ async def test_voice_alert_binds_echo_and_dispatches_once(
         ha_domain="event",
         device_id="echo-device",
         state=datetime.now(UTC).isoformat(),
-        last_changed_at=datetime.now(UTC),
+        # Alexa Devices may not emit a fresh voice event for a Custom Skill.
+        # Its Last Called event is still the best available source Echo.
+        last_changed_at=datetime.now(UTC) - timedelta(hours=1),
     )
     speaker = Entity(
         installation_id=installation_id,
