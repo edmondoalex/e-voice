@@ -367,11 +367,16 @@
         },
         {
           "name": "AlertIntent",
-          "slots": [{"name": "request", "type": "AMAZON.SearchQuery"}],
+          "slots": [
+            {"name": "target", "type": "EKONEX_ALERT_TARGET"},
+            {"name": "desired_state", "type": "EKONEX_ALERT_STATE"}
+          ],
           "samples": [
-            "avvisami {request}",
-            "avvertimi {request}",
-            "imposta un avviso {request}"
+            "avvisami quando {target} è {desired_state}",
+            "avvertimi quando {target} è {desired_state}",
+            "dimmi quando {target} è {desired_state}",
+            "fammi sapere quando {target} è {desired_state}",
+            "imposta un avviso quando {target} è {desired_state}"
           ]
         },
         {
@@ -392,6 +397,21 @@
         {"name": "AMAZON.FallbackIntent", "samples": []}
       ],
       "types": [
+        {
+          "name": "EKONEX_ALERT_TARGET",
+          "values": []
+        },
+        {
+          "name": "EKONEX_ALERT_STATE",
+          "values": [
+            {"id": "open", "name": {"value": "aperto", "synonyms": ["aperta", "aperti", "aperte"]}},
+            {"id": "closed", "name": {"value": "chiuso", "synonyms": ["chiusa", "chiusi", "chiuse"]}},
+            {"id": "on", "name": {"value": "acceso", "synonyms": ["accesa", "accesi", "accese"]}},
+            {"id": "off", "name": {"value": "spento", "synonyms": ["spenta", "spenti", "spente"]}},
+            {"id": "locked", "name": {"value": "bloccato", "synonyms": ["bloccata"]}},
+            {"id": "unlocked", "name": {"value": "sbloccato", "synonyms": ["sbloccata"]}}
+          ]
+        },
         {
           "name": "EKONEX_CATEGORY",
           "values": []

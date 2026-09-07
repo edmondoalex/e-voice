@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.cloud_api.app.alexa_laboratory import _utterance
 from apps.cloud_api.app.domain.models import AlexaVoiceAlert, Entity, Installation
 from apps.cloud_api.app.voice_alerts import (
     create_voice_alert,
@@ -21,6 +22,18 @@ def test_parses_supported_state_condition() -> None:
         "luce garage",
         "on",
     )
+
+
+def test_alert_intent_builds_deterministic_condition() -> None:
+    assert _utterance(
+        {
+            "name": "AlertIntent",
+            "slots": {
+                "target": {"value": "lampadario cucina"},
+                "desired_state": {"value": "spento"},
+            },
+        }
+    ) == "quando lampadario cucina è spento"
 
 
 async def test_voice_alert_binds_echo_and_dispatches_once(

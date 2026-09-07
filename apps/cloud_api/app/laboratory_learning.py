@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .conversation_learning import ConversationLearningStore, LearnedPhrase
 from .database import get_database_session
-from .domain.models import Installation, Tenant, VoiceCategory
+from .domain.models import Entity, Installation, Tenant, VoiceCategory
 
 router = APIRouter(prefix="/laboratory/learning", tags=["laboratory-learning"])
 security = HTTPBasic()
@@ -145,6 +145,7 @@ def _compile_model(
     base_model: dict[str, object],
     categories: list[VoiceCategory],
     records: tuple[LearnedPhrase, ...],
+    entities: list[Entity] | None = None,
 ) -> dict[str, object]:
     model = copy.deepcopy(base_model)
     language_model = model["interactionModel"]["languageModel"]  # type: ignore[index]
@@ -161,6 +162,34 @@ def _compile_model(
         }
         for category in categories
     ]
+    alert_target_type = next(
+        (
+            item
+            for item in language_model["types"]
+            if item["name"] == "EKONEX_ALERT_TARGET"
+        ),
+        None,
+    )
+    if alert_target_type is not None:
+        alert_target_type["values"] = [
+            {
+                "id": str(entity.id),
+                "name": {
+                    "value": entity.voice_name,
+                    "synonyms": list(
+                        dict.fromkeys(
+                            alias
+                            for alias in entity.voice_aliases
+                            if isinstance(alias, str)
+                            and alias.strip()
+                            and alias.casefold() != entity.voice_name.casefold()
+                        )
+                    ),
+                },
+            }
+            for entity in entities or []
+            if entity.voice_name
+        ]
     intents = {item["name"]: item for item in language_model["intents"]}
     for record in records:
         intent_name = _alexa_intent(record.intent, record.canonical)
@@ -223,7 +252,23 @@ async def _compiled_model(
             )
         ).all()
     )
-    model = _compile_model(base_model, categories, records)
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .join(Installation, Installation.id == Entity.installation_id)
+                .where(
+                    Installation.tenant_id == tenant.id,
+                    Installation.public_id
+                    == get_settings().alexa_laboratory_installation_public_id,
+                    Entity.voice_name.is_not(None),
+                    Entity.deleted_at.is_(None),
+                )
+                .order_by(Entity.voice_name)
+            )
+        ).all()
+    )
+    model = _compile_model(base_model, categories, records, entities)
     return model, _model_errors(model)
 
 

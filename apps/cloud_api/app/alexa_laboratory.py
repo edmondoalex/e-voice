@@ -131,7 +131,13 @@ def _slot_id(intent: dict[str, Any], name: str) -> str | None:
 def _utterance(intent: dict[str, Any]) -> str | None:
     intent_name = intent.get("name")
     if intent_name == "AlertIntent":
-        return _slot_value(intent, "request")
+        target = _slot_value(intent, "target")
+        desired_state = _slot_value(intent, "desired_state")
+        return (
+            f"quando {target} è {desired_state}"
+            if target is not None and desired_state is not None
+            else None
+        )
     if intent_name == "CategorySummaryIntent":
         category = _slot_value(intent, "category")
         return f"tutti i valori {category}" if category else None
@@ -220,7 +226,7 @@ async def laboratory(
     if intent_name == "AlertIntent" and isinstance(intent, dict):
         from .voice_alerts import create_voice_alert
 
-        alert_request = _slot_value(intent, "request")
+        alert_request = _utterance(intent)
         if alert_request is None:
             return _speech("Prova, avvisami quando il cancello è chiuso.", end=False)
         _, alert_reply = await create_voice_alert(
