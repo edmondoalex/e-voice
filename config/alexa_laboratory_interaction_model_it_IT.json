@@ -366,6 +366,15 @@
           ]
         },
         {
+          "name": "AlertIntent",
+          "slots": [{"name": "request", "type": "AMAZON.SearchQuery"}],
+          "samples": [
+            "avvisami {request}",
+            "avvertimi {request}",
+            "imposta un avviso {request}"
+          ]
+        },
+        {
           "name": "EkonexQueryIntent",
           "slots": [{"name": "query", "type": "AMAZON.SearchQuery"}],
           "samples": [

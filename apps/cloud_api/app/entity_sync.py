@@ -96,6 +96,12 @@ class EntitySyncService:
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+            changed = item.get("last_changed_at")
+            entity.last_changed_at = (
+                datetime.fromisoformat(str(changed).replace("Z", "+00:00"))
+                if changed
+                else entity.last_changed_at
+            )
             entity.last_seen_at = datetime.now(UTC)
             await StateHistoryService(self._session).record_change(
                 entity,
@@ -107,6 +113,11 @@ class EntitySyncService:
         self._installation.sync_revision = revision
         await self._session.commit()
         if get_settings().environment == "laboratory":
+            from .voice_alerts import schedule_alert_evaluation
+
+            schedule_alert_evaluation(
+                self._installation.id, [entity.id for entity in changed_entities]
+            )
             return
         from .alexa import SUPPORTED_DOMAINS
         from .alexa_events import AlexaEventGateway

@@ -322,6 +322,33 @@ class AlexaVoiceRoutine(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
+class AlexaVoiceAlert(TimestampMixin, Base):
+    """One-shot condition requested by voice in the Alexa laboratory."""
+
+    __tablename__ = "alexa_voice_alerts"
+    __table_args__ = (
+        Index("ix_alexa_voice_alerts_installation_status", "installation_id", "status"),
+        Index("ix_alexa_voice_alerts_target", "target_entity_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    target_entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE")
+    )
+    expected_state: Mapped[str] = mapped_column(String(64))
+    source_device_id: Mapped[str | None] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    target_entity: Mapped[Entity] = relationship()
+
+
 class EntityStateHistory(Base):
     __tablename__ = "entity_state_history"
     __table_args__ = (

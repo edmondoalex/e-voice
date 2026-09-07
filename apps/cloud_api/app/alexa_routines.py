@@ -31,6 +31,7 @@ from .database import get_database_session
 from .domain.models import (
     AlexaSpeakerGroup,
     AlexaSpeakerGroupMember,
+    AlexaVoiceAlert,
     AlexaVoiceRoutine,
     ConnectorCredential,
     Entity,
@@ -157,6 +158,20 @@ async def _routines(session: AsyncSession, installation_id: UUID) -> list[AlexaV
     )
 
 
+async def _alerts(session: AsyncSession, installation_id: UUID) -> list[AlexaVoiceAlert]:
+    return list(
+        (
+            await session.scalars(
+                select(AlexaVoiceAlert)
+                .options(selectinload(AlexaVoiceAlert.target_entity))
+                .where(AlexaVoiceAlert.installation_id == installation_id)
+                .order_by(AlexaVoiceAlert.created_at.desc())
+                .limit(50)
+            )
+        ).all()
+    )
+
+
 def _speaker_name(entity: Entity) -> str:
     return entity.display_name or entity.friendly_name or entity.ha_entity_id
 
@@ -192,6 +207,7 @@ async def routines_page(
         speakers = await _speakers(session, installation.id)
         groups = await _groups(session, installation.id)
         routines = await _routines(session, installation.id)
+        alerts = await _alerts(session, installation.id)
         speaker_by_id = {item.id: item for item in speakers}
         installation_options = "".join(
             f'<option value="{item.id}"{" selected" if item.id == installation.id else ""}>{_e(item.name)}</option>'
@@ -243,6 +259,13 @@ async def routines_page(
             "</tr>"
             for item in routines
         )
+        alert_rows = "".join(
+            "<tr>"
+            f"<td>{_e(item.target_entity.voice_name or item.target_entity.friendly_name or item.target_entity.ha_entity_id)}</td>"
+            f"<td>{_e(item.expected_state)}</td><td>{_e(item.status)}</td><td>{_e(item.message)}</td>"
+            f'<td><form method="post" action="/alexa-routines/alerts/{item.id}/cancel"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="installation_id" value="{installation.id}"><button class="danger"{" disabled" if item.status != "pending" else ""}>Annulla</button></form></td></tr>'
+            for item in alerts
+        )
         notice = request.query_params.get("notice", "")
         notice_html = (
             f'<p class="{"ok" if notice == "sent" else "bad"}">{_e(request.query_params.get("message", ""))}</p>'
@@ -278,6 +301,8 @@ async def routines_page(
 <label class="field"><b>Messaggio predefinito (facoltativo)</b><textarea name="default_message" maxlength="500"></textarea></label>
 <button{" disabled" if not speakers else ""}>Crea routine</button></form></div>
 <table><thead><tr><th>Routine / slug</th><th>Destinatario</th><th>Modalità</th><th>Messaggio</th><th>Azioni</th></tr></thead><tbody>{routine_rows or '<tr><td colspan="5">Nessuna routine configurata</td></tr>'}</tbody></table>"""
+        body += f"""<div class="card"><h2>Avvisi richiesti ad Alexa</h2><p class="muted">Avvisi automatici creati dicendo: avvisami quando...</p></div>
+<table><thead><tr><th>Entità</th><th>Stato atteso</th><th>Stato avviso</th><th>Messaggio</th><th>Azioni</th></tr></thead><tbody>{alert_rows or '<tr><td colspan="5">Nessun avviso vocale</td></tr>'}</tbody></table>"""
     response = HTMLResponse(_layout("Routine vocali", body, context, csrf, "alexa-routines"))
     response.set_cookie(
         CSRF_COOKIE,
@@ -289,6 +314,34 @@ async def routines_page(
         max_age=1800,
     )
     return response
+
+
+@router.post("/alerts/{alert_id}/cancel")
+async def cancel_alert(
+    alert_id: UUID,
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    _laboratory_only()
+    _admin(context)
+    values = await _multi_form(request)
+    if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    installation = await _installation(session, context, UUID(_one(values, "installation_id")))
+    alert = await session.scalar(
+        select(AlexaVoiceAlert).where(
+            AlexaVoiceAlert.id == alert_id,
+            AlexaVoiceAlert.tenant_id == context.tenant_id,
+            AlexaVoiceAlert.installation_id == installation.id,
+        )
+    )
+    if alert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Avviso non trovato")
+    if alert.status == "pending":
+        alert.status = "cancelled"
+        await session.commit()
+    return _portal_redirect(installation.id)
 
 
 @router.post("/groups")
