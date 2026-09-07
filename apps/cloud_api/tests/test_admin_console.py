@@ -454,6 +454,42 @@ async def test_installation_groups_entities_by_collapsed_type(
     await client.aclose()
 
 
+async def test_installation_inventory_shows_all_entities_without_hidden_pagination(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    session.add_all(
+        [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id=f"sensor.inventory_{index:02d}",
+                ha_domain="sensor",
+                friendly_name=f"Sensore inventario {index:02d}",
+                state=str(index),
+            )
+            for index in range(55)
+        ]
+        + [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="media_player.tv_sala",
+                ha_domain="media_player",
+                friendly_name="ZZZ TV Sala",
+                state="off",
+            )
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    assert page.status_code == 200
+    assert "media_player.tv_sala" in page.text
+    assert "ZZZ TV Sala" in page.text
+    await client.aclose()
+
+
 async def test_climate_controls_render_and_dispatch_closed_commands(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:

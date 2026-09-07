@@ -575,7 +575,6 @@ async def installation_detail(
     item = await _installation(session, context, installation_id)
     overlay_installation(item, await load_live_installation(item.public_id))
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
-    page = max(1, int(request.query_params.get("page", "1")))
     query = (
         select(Entity)
         .options(selectinload(Entity.voice_category))
@@ -601,8 +600,6 @@ async def installation_detail(
         (
             await session.scalars(
                 query.order_by(Entity.display_name, Entity.friendly_name, Entity.ha_entity_id)
-                .offset((page - 1) * PAGE_SIZE)
-                .limit(PAGE_SIZE)
             )
         ).all()
     )
