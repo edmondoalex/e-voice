@@ -320,12 +320,12 @@ async def _alerts(session: AsyncSession, installation_id: UUID) -> list[AlexaVoi
     )
 
 
-async def _executions(session: AsyncSession, tenant_id: UUID) -> list[AlexaRoutineExecution]:
+async def _executions(session: AsyncSession, installation_id: UUID) -> list[AlexaRoutineExecution]:
     return list(
         (
             await session.scalars(
                 select(AlexaRoutineExecution)
-                .where(AlexaRoutineExecution.tenant_id == tenant_id)
+                .where(AlexaRoutineExecution.installation_id == installation_id)
                 .order_by(AlexaRoutineExecution.created_at.desc())
                 .limit(50)
             )
@@ -369,7 +369,7 @@ async def routines_page(
         groups = await _groups(session, installation.id)
         routines = await _routines(session, installation.id)
         alerts = await _alerts(session, installation.id)
-        executions = await _executions(session, context.tenant_id)
+        executions = await _executions(session, installation.id)
         condition_entities = list(
             (
                 await session.scalars(
