@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from apps.cloud_api.app.alexa_routines import (
     RoutineTriggerRequest,
@@ -12,6 +13,7 @@ from apps.cloud_api.app.alexa_routines import (
     _mode_entity,
     _speakers,
     _volume_entity,
+    routines_page,
     trigger_routine,
 )
 from apps.cloud_api.app.auth import TenantContext
@@ -180,3 +182,32 @@ async def test_routine_sets_each_echo_volume_before_speech(
     assert dispatched.await_args_list[0].args[2].volume_percent == 40
     assert dispatched.await_args_list[1].args[1] == announce.ha_registry_id
     assert dispatched.await_args_list[1].args[2].operation == "announce"
+
+
+async def test_create_routine_form_exposes_volume_control(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    """Volume must be selectable when creating, not only when editing, a routine."""
+    installation_id = seeded_domain.installation_a_id  # type: ignore[attr-defined]
+    tenant_id = seeded_domain.tenant_a_id  # type: ignore[attr-defined]
+    user_id = seeded_domain.user_a_id  # type: ignore[attr-defined]
+    await _echo_pair(session, installation_id, "echo_cucina", "device-1")
+    session.add(
+        Entity(
+            installation_id=installation_id,
+            ha_entity_id="media_player.echo_cucina",
+            ha_registry_id="registry-echo-cucina-media",
+            ha_domain="media_player",
+            device_id="device-1",
+        )
+    )
+    await session.commit()
+    request = Request({"type": "http", "query_string": b"", "headers": []})
+    context = TenantContext(user_id=user_id, tenant_id=tenant_id, role=TenantRole.OWNER)
+
+    with patch("apps.cloud_api.app.alexa_routines._laboratory_only"):
+        response = await routines_page(request, context, session)
+
+    html = bytes(response.body).decode()
+    assert html.count('name="volume_percent"') == 2
+    assert "Crea routine richiamabile da Home Assistant" in html
