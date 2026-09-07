@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
@@ -12,6 +13,7 @@ from apps.cloud_api.app.alexa_routines import (
     _dispatch_announcement,
     _mode_entity,
     _speakers,
+    _test_outcome_summary,
     _volume_entity,
     routines_page,
     trigger_routine,
@@ -239,3 +241,15 @@ async def test_create_routine_form_exposes_volume_control(
     html = bytes(response.body).decode()
     assert html.count('name="volume_percent"') == 2
     assert "Crea routine richiamabile da Home Assistant" in html
+
+
+def test_manual_test_summary_distinguishes_partial_delivery() -> None:
+    success = DispatchOutcome(uuid4(), "success", None)
+    unavailable = DispatchOutcome(uuid4(), "unavailable", "ENTITY_UNAVAILABLE")
+
+    assert _test_outcome_summary([success]) == ("sent", "Annuncio inviato a 1 Echo.")
+    assert _test_outcome_summary([success, unavailable]) == (
+        "partial",
+        "Annuncio inviato a 1 di 2 Echo.",
+    )
+    assert _test_outcome_summary([unavailable])[0] == "failed"

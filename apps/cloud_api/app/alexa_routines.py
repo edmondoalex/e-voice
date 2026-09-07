@@ -491,6 +491,16 @@ def _routine_destination(routine: AlexaVoiceRoutine) -> str:
     )
 
 
+def _test_outcome_summary(outcomes: list[DispatchOutcome]) -> tuple[str, str]:
+    attempted = len(outcomes)
+    succeeded = sum(item.status == "success" for item in outcomes)
+    if attempted and succeeded == attempted:
+        return "sent", f"Annuncio inviato a {succeeded} Echo."
+    if succeeded:
+        return "partial", f"Annuncio inviato a {succeeded} di {attempted} Echo."
+    return "failed", "Annuncio non eseguito: verifica collegamento e componente beta."
+
+
 async def _dispatch_announcement(
     session: AsyncSession,
     tenant_id: UUID,
@@ -759,16 +769,11 @@ async def send_test(
         )
     except (ValueError, ValidationError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Annuncio non valido") from error
-    succeeded = bool(outcomes) and all(item.status == "success" for item in outcomes)
-    detail = (
-        f"Annuncio inviato a {len(outcomes)} Echo."
-        if succeeded
-        else "Annuncio non eseguito: verifica collegamento e componente beta."
-    )
+    notice, detail = _test_outcome_summary(outcomes)
     query = urlencode(
         {
             "installation": str(installation.id),
-            "notice": "sent" if succeeded else "failed",
+            "notice": notice,
             "message": detail,
         }
     )
