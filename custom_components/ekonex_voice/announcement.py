@@ -11,31 +11,38 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import CONF_INSTALLATION_ID, DOMAIN
 from .models import EkonexVoiceConfigEntry
 
 SERVICE_ANNOUNCE = "announce"
+SERVICE_RUN_ROUTINE = "run_voice_routine"
 ATTR_TARGETS = "targets"
 ATTR_MESSAGE = "message"
 MODE_ANNOUNCE = "announce"
 MODE_SPEAK = "speak"
 MAX_ANNOUNCEMENT_LENGTH = 500
+ATTR_ROUTINE = "routine"
+ATTR_INSTALLATION_ID = "installation_id"
 
 ANNOUNCE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_TARGETS): vol.All(cv.ensure_list, [cv.entity_id]),
         vol.Required(ATTR_MESSAGE): cv.string,
-        vol.Optional(CONF_MODE, default=MODE_ANNOUNCE): vol.In(
-            {MODE_ANNOUNCE, MODE_SPEAK}
-        ),
+        vol.Optional(CONF_MODE, default=MODE_ANNOUNCE): vol.In({MODE_ANNOUNCE, MODE_SPEAK}),
+    }
+)
+
+RUN_ROUTINE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ROUTINE): vol.All(cv.string, vol.Length(min=1, max=64)),
+        vol.Optional(ATTR_MESSAGE): vol.All(cv.string, vol.Length(max=500)),
+        vol.Optional(ATTR_INSTALLATION_ID): cv.string,
     }
 )
 
 
 def register_announcement_service(hass: HomeAssistant) -> None:
     """Register the integration-wide automation action once."""
-    if hass.services.has_service(DOMAIN, SERVICE_ANNOUNCE):
-        return
 
     async def handle(call: ServiceCall) -> None:
         await async_announce(
@@ -45,13 +52,44 @@ def register_announcement_service(hass: HomeAssistant) -> None:
             call.data[CONF_MODE],
         )
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_ANNOUNCE,
-        handle,
-        schema=ANNOUNCE_SCHEMA,
-        supports_response=SupportsResponse.NONE,
-    )
+    if not hass.services.has_service(DOMAIN, SERVICE_ANNOUNCE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ANNOUNCE,
+            handle,
+            schema=ANNOUNCE_SCHEMA,
+            supports_response=SupportsResponse.NONE,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_RUN_ROUTINE):
+
+        async def handle_routine(call: ServiceCall) -> None:
+            requested_installation = call.data.get(ATTR_INSTALLATION_ID)
+            candidates: list[EkonexVoiceConfigEntry] = [
+                entry
+                for entry in hass.config_entries.async_entries(DOMAIN)
+                if entry.state is ConfigEntryState.LOADED
+                and (
+                    not requested_installation
+                    or str(entry.data.get(CONF_INSTALLATION_ID)) == requested_installation
+                )
+            ]
+            if len(candidates) != 1:
+                raise vol.Invalid("installation_required_or_unavailable")
+            message = call.data.get(ATTR_MESSAGE)
+            normalized = " ".join(message.split()) if isinstance(message, str) else None
+            if message is not None and (not normalized or "<" in message or ">" in message):
+                raise vol.Invalid("invalid_announcement")
+            await candidates[0].runtime_data.client.async_trigger_voice_routine(
+                call.data[ATTR_ROUTINE], normalized
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RUN_ROUTINE,
+            handle_routine,
+            schema=RUN_ROUTINE_SCHEMA,
+            supports_response=SupportsResponse.NONE,
+        )
 
 
 async def async_announce(
@@ -91,9 +129,7 @@ async def async_announce(
         )
 
 
-def _is_authorized_alexa_target(
-    hass: HomeAssistant, entry: er.RegistryEntry, mode: str
-) -> bool:
+def _is_authorized_alexa_target(hass: HomeAssistant, entry: er.RegistryEntry, mode: str) -> bool:
     if not (
         entry.domain == "notify"
         and entry.platform == "alexa_devices"

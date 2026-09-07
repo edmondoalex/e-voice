@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-09-07 — Alexa voice routines (laboratory only)
+
+Status: Local implementation under validation; production untouched
+
+### Scope
+
+- Added tenant- and installation-scoped Echo groups and editable portal routines.
+- Added single Echo, custom group and `Ovunque` destinations with announce/speak modes.
+- Added optional per-routine volume (0–100%), applied only through the matching Alexa Devices
+  `media_player` before speech.
+- Added `ekonex_voice.run_voice_routine` so Home Assistant triggers can provide either a fixed
+  message or a locally rendered template containing sensor/event values.
+- Redacted spoken content from command audit and connector diagnostics.
+- Prepared migrations `0015` and `0016`; no production migration or deployment was performed.
+
+### Scope guard
+
+- No Amazon skill, AWS Lambda, Alexa Discovery or production backend changes were deployed.
+- Arbitrary Home Assistant service calls and non-Alexa media players remain denied.
+
 ## 2026-08-24 — 0.1.8-beta.6 clean baseline
 
 Status: Prepared for review; not published

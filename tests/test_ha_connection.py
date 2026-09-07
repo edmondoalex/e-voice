@@ -110,6 +110,8 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
     assert hello["payload"]["connector_version"] == CONNECTOR_VERSION  # type: ignore[index]
     assert hello["payload"]["protocol_versions"] == [1]  # type: ignore[index]
     assert hello["payload"]["capabilities"] == {  # type: ignore[index]
+        "supports_alexa_announcements": True,
+        "supports_alexa_volume": True,
         "supports_correlation_id": True,
         "supports_command_diagnostics": True,
         "supports_heartbeat_diagnostics": True,

@@ -25,6 +25,8 @@ type RandomValue = Callable[[], float]
 type Connect = Callable[[], Coroutine[Any, Any, ClientWebSocketResponse]]
 _LOGGER = logging.getLogger(__name__)
 CONNECTOR_CAPABILITIES = {
+    "supports_alexa_announcements": True,
+    "supports_alexa_volume": True,
     "supports_correlation_id": True,
     "supports_command_diagnostics": True,
     "supports_heartbeat_diagnostics": True,

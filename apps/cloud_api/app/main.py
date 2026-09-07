@@ -10,6 +10,8 @@ from .admin_console import router as admin_console_router
 from .alexa import router as alexa_router
 from .alexa_laboratory import router as alexa_laboratory_router
 from .alexa_portal_oauth import router as alexa_portal_oauth_router
+from .alexa_routines import connector_router as alexa_routine_connector_router
+from .alexa_routines import router as alexa_routines_router
 from .evcp import router as evcp_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
@@ -37,6 +39,8 @@ app.include_router(alexa_portal_oauth_router)
 app.include_router(alexa_router)
 app.include_router(alexa_laboratory_router)
 app.include_router(laboratory_learning_router)
+app.include_router(alexa_routines_router)
+app.include_router(alexa_routine_connector_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

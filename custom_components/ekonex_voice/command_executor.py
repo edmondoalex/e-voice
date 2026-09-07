@@ -114,7 +114,7 @@ class EkonexVoiceCommandExecutor:
                 "correlation_id": correlation_id,
                 "requested_entity_id": registry_id,
                 "operation": command.get("operation"),
-                "payload": command,
+                "payload": _redacted_command(command),
             }
         ]
         registry = er.async_get(self._hass)
@@ -174,6 +174,16 @@ class EkonexVoiceCommandExecutor:
                 correlation_id,
                 tuple(diagnostics),
             )
+        if command.get("operation") == "set_volume" and not (
+            entry.domain == "media_player" and entry.platform == "alexa_devices"
+        ):
+            return CommandResult(
+                command_id,
+                "target_not_exposed",
+                "ALEXA_MEDIA_PLAYER_TARGET_REQUIRED",
+                correlation_id,
+                tuple(diagnostics),
+            )
         try:
             domain, service, data = _map_command(entry.domain, state, command)
         except UnsupportedCommand:
@@ -200,7 +210,9 @@ class EkonexVoiceCommandExecutor:
                 "domain": domain,
                 "service": service,
                 "target": {"entity_id": entry.entity_id},
-                "service_data": data,
+                "service_data": _redacted_service_data(
+                    str(command.get("operation")), data
+                ),
             }
         )
         started = perf_counter()
@@ -289,6 +301,30 @@ def _service_result(
     }
 
 
+def _redacted_command(command: dict[str, object]) -> dict[str, object]:
+    """Do not return announcement contents through cloud diagnostics."""
+    if command.get("operation") not in {"announce", "speak"}:
+        return command
+    message = command.get("message")
+    return {
+        "operation": command.get("operation"),
+        "message": "**REDACTED**",
+        "message_length": len(message) if isinstance(message, str) else None,
+    }
+
+
+def _redacted_service_data(
+    operation: str, data: dict[str, object]
+) -> dict[str, object]:
+    if operation not in {"announce", "speak"}:
+        return data
+    message = data.get("message")
+    return {
+        "message": "**REDACTED**",
+        "message_length": len(message) if isinstance(message, str) else None,
+    }
+
+
 class UnsupportedCommand(Exception):
     """The domain does not implement the requested abstract operation."""
 
@@ -317,6 +353,12 @@ def _map_command(
         ):
             raise InvalidArgument
         return "notify", "send_message", {"message": " ".join(message.split())}
+    if domain == "media_player" and operation == "set_volume":
+        _require_keys(arguments, {"volume_percent"})
+        volume = command.get("volume_percent")
+        if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
+            raise InvalidArgument
+        return "media_player", "volume_set", {"volume_level": volume / 100}
     if domain in {"light", "switch"} and operation in {"power_on", "power_off"}:
         _require_keys(arguments, set())
         return domain, "turn_on" if operation == "power_on" else "turn_off", {}

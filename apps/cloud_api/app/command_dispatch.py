@@ -68,6 +68,11 @@ class PercentageCommand(StrictCommand):
     percentage: int = Field(ge=0, le=100)
 
 
+class VolumeCommand(StrictCommand):
+    operation: Literal["set_volume"]
+    volume_percent: int = Field(ge=0, le=100)
+
+
 class ActivateCommand(StrictCommand):
     operation: Literal["activate"]
 
@@ -105,6 +110,7 @@ type CommandSpec = Annotated[
     | TargetTemperatureCommand
     | HvacModeCommand
     | PercentageCommand
+    | VolumeCommand
     | ActivateCommand
     | PressCommand
     | NumberCommand
@@ -113,6 +119,15 @@ type CommandSpec = Annotated[
     Field(discriminator="operation"),
 ]
 command_adapter: TypeAdapter[CommandSpec] = TypeAdapter(CommandSpec)
+
+
+def redacted_command(command: CommandSpec) -> dict[str, object]:
+    """Return audit-safe command metadata without persisting spoken text."""
+    payload = command.model_dump(mode="json")
+    if isinstance(command, AlexaSpeechCommand):
+        payload["message"] = "**REDACTED**"
+        payload["message_length"] = len(command.message)
+    return payload
 
 
 class CommandRouter(Protocol):
@@ -184,7 +199,7 @@ class CommandDispatchService:
             "ha_entity_id": entity.ha_entity_id,
             "registry_id": registry_id,
             "operation": command.operation,
-            "payload": command.model_dump(mode="json"),
+            "payload": redacted_command(command),
         }
         self._session.add(
             AuditEvent(
@@ -245,7 +260,7 @@ class CommandDispatchService:
                         "command_id": str(request_id),
                         "correlation_id": str(correlation_id) if correlation_id else None,
                         "registry_id": registry_id,
-                        "command": command.model_dump(mode="json"),
+                        "command": redacted_command(command),
                     },
                 },
                 result="sent" if command_sent else "not_sent",

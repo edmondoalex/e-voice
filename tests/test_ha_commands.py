@@ -165,7 +165,9 @@ async def test_alexa_devices_notify_operations_are_explicit_and_bounded(
     hass: HomeAssistant, operation: str
 ) -> None:
     entry = er.async_get(hass).async_get_or_create(
-        "notify", "alexa_devices", f"echo-kitchen-{operation}",
+        "notify",
+        "alexa_devices",
+        f"echo-kitchen-{operation}",
         suggested_object_id=f"echo_kitchen_{operation}",
     )
     hass.states.async_set(entry.entity_id, "unknown")
@@ -179,6 +181,21 @@ async def test_alexa_devices_notify_operations_are_explicit_and_bounded(
             {"operation": operation, "message": "  Porta   garage aperta  "},
         )
     assert result.status == "success"
+    received = next(
+        item for item in result.diagnostics if item["event_type"] == "connector.command_received"
+    )
+    assert received["payload"] == {
+        "operation": operation,
+        "message": "**REDACTED**",
+        "message_length": 25,
+    }
+    service_call = next(
+        item for item in result.diagnostics if item["event_type"] == "homeassistant.service_call"
+    )
+    assert service_call["service_data"] == {
+        "message": "**REDACTED**",
+        "message_length": 19,
+    }
     call.assert_awaited_once_with(
         "notify",
         "send_message",
@@ -257,6 +274,47 @@ async def test_local_announcement_action_rejects_unsafe_text_before_side_effect(
         with pytest.raises(vol.Invalid):
             await async_announce(hass, ["notify.echo_announce"], message, "announce")
     call.assert_not_awaited()
+
+
+async def test_alexa_devices_volume_is_bounded_and_mapped_to_media_player(
+    hass: HomeAssistant,
+) -> None:
+    entry = er.async_get(hass).async_get_or_create(
+        "media_player",
+        "alexa_devices",
+        "echo-volume",
+        suggested_object_id="echo_volume",
+    )
+    hass.states.async_set(entry.entity_id, "idle", {"volume_level": 0.2})
+    executor = EkonexVoiceCommandExecutor(
+        hass, EntityInventorySynchronizer(hass, set(), {entry.id}, None)
+    )
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "volume-id", entry.id, {"operation": "set_volume", "volume_percent": 35}
+        )
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "media_player",
+        "volume_set",
+        {"entity_id": entry.entity_id, "volume_level": 0.35},
+        blocking=True,
+    )
+
+    other = er.async_get(hass).async_get_or_create(
+        "media_player", "test", "other-volume", suggested_object_id="other_volume"
+    )
+    hass.states.async_set(other.entity_id, "idle", {"volume_level": 0.2})
+    denied = EkonexVoiceCommandExecutor(
+        hass, EntityInventorySynchronizer(hass, set(), {other.id}, None)
+    )
+    rejected = await denied.async_execute(
+        "other-volume-id", other.id, {"operation": "set_volume", "volume_percent": 35}
+    )
+    assert rejected.status == "target_not_exposed"
+    assert rejected.error_code == "ALEXA_MEDIA_PLAYER_TARGET_REQUIRED"
+
 
 async def test_missing_disabled_and_unavailable_entities_never_execute(
     hass: HomeAssistant,

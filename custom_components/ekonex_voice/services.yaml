@@ -29,3 +29,26 @@ announce:
               value: announce
             - label: Parla senza suono
               value: speak
+
+run_voice_routine:
+  name: Esegui routine vocale
+  description: Esegue una routine Alexa configurata nel portale e-Voice. I template Home Assistant vengono risolti prima dell'invio.
+  fields:
+    routine:
+      name: Routine
+      description: Slug mostrato nel portale Routine vocali.
+      required: true
+      selector:
+        text:
+    message:
+      name: Messaggio
+      description: Messaggio facoltativo; se presente sostituisce quello predefinito della routine.
+      required: false
+      selector:
+        template:
+    installation_id:
+      name: ID impianto
+      description: Necessario soltanto quando sono configurati più impianti e-Voice nello stesso Home Assistant.
+      required: false
+      selector:
+        text:

@@ -295,6 +295,33 @@ class AlexaSpeakerGroupMember(Base):
     entity: Mapped[Entity] = relationship()
 
 
+class AlexaVoiceRoutine(TimestampMixin, Base):
+    """Portal-defined announcement destination callable by Home Assistant."""
+
+    __tablename__ = "alexa_voice_routines"
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id", "slug", name="uq_alexa_voice_routines_installation_slug"
+        ),
+        Index("ix_alexa_voice_routines_tenant", "tenant_id"),
+        Index("ix_alexa_voice_routines_installation", "installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(16), default="announce", server_default="announce")
+    destination_type: Mapped[str] = mapped_column(String(16))
+    destination_id: Mapped[UUID | None] = mapped_column(Uuid)
+    default_message: Mapped[str | None] = mapped_column(String(500))
+    volume_percent: Mapped[int | None] = mapped_column()
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
 class EntityStateHistory(Base):
     __tablename__ = "entity_state_history"
     __table_args__ = (

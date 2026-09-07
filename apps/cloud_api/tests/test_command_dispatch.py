@@ -15,6 +15,7 @@ from apps.cloud_api.app.command_dispatch import (
     CommandDispatchService,
     PowerCommand,
     command_adapter,
+    redacted_command,
 )
 from apps.cloud_api.app.domain.models import AuditEvent, Entity
 from apps.cloud_api.app.evcp import (
@@ -361,6 +362,9 @@ def test_typed_cloud_schema_rejects_malformed_values_and_service_injection() -> 
         {"operation": "announce", "message": ""},
         {"operation": "announce", "message": "x" * 501},
         {"operation": "announce", "message": "<audio>non ammesso</audio>"},
+        {"operation": "set_volume", "volume_percent": -1},
+        {"operation": "set_volume", "volume_percent": 101},
+        {"operation": "set_volume", "volume_percent": "50"},
     ):
         with pytest.raises(ValidationError):
             command_adapter.validate_python(value)
@@ -372,3 +376,11 @@ def test_typed_cloud_schema_accepts_bounded_plain_alexa_speech() -> None:
     )
     assert command.operation == "announce"
     assert command.message == "La porta del garage è aperta"
+    assert redacted_command(command) == {
+        "operation": "announce",
+        "message": "**REDACTED**",
+        "message_length": 28,
+    }
+    volume = command_adapter.validate_python({"operation": "set_volume", "volume_percent": 35})
+    assert volume.operation == "set_volume"
+    assert volume.volume_percent == 35

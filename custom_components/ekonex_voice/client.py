@@ -115,6 +115,27 @@ class EkonexVoiceClient:
             raise EkonexVoiceProtocolError("invalid_auth_response")
         return installation_id
 
+    async def async_trigger_voice_routine(
+        self, routine: str, message: str | None = None
+    ) -> dict[str, Any]:
+        """Trigger one portal-defined routine with an optional HA-rendered message."""
+        if not self._connector_credential:
+            raise EkonexVoiceAuthError("missing_connector_credential")
+        payload = await self._request_json(
+            "POST",
+            f"/connector/v1/routines/{quote(routine, safe='')}/trigger",
+            headers={"Authorization": f"Bearer {self._connector_credential}"},
+            json={"message": message},
+        )
+        required = {"routine", "attempted", "succeeded", "status"}
+        if not required.issubset(payload) or payload.get("status") not in {
+            "success",
+            "partial",
+            "failed",
+        }:
+            raise EkonexVoiceProtocolError("invalid_routine_response")
+        return payload
+
     async def async_connect_websocket(self) -> ClientWebSocketResponse:
         """Open the authenticated outbound EVCP transport."""
         if not self._connector_credential:
