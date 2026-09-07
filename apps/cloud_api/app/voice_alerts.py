@@ -83,7 +83,10 @@ def _matches_state(entity: Entity, expected: str) -> bool:
 
 
 async def _latest_echo_device_id(
-    session: AsyncSession, tenant_id: UUID
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    changed_after: datetime | None = None,
 ) -> str | None:
     """Return the last used Echo that also exposes an announcement entity."""
     speaker_devices = (
@@ -97,7 +100,7 @@ async def _latest_echo_device_id(
             Entity.deleted_at.is_(None),
         )
     )
-    latest_event = await session.scalar(
+    event_query = (
         select(Entity)
         .join(Installation, Installation.id == Entity.installation_id)
         .where(
@@ -107,8 +110,11 @@ async def _latest_echo_device_id(
             Entity.available.is_(True),
             Entity.deleted_at.is_(None),
         )
-        .order_by(Entity.last_changed_at.desc())
-        .limit(1)
+    )
+    if changed_after is not None:
+        event_query = event_query.where(Entity.last_changed_at >= changed_after)
+    latest_event = await session.scalar(
+        event_query.order_by(Entity.last_changed_at.desc()).limit(1)
     )
     return latest_event.device_id if latest_event else None
 
@@ -159,7 +165,9 @@ async def create_voice_alert(
         return False, f"{spoken_name} è già nello stato richiesto."
 
     now = datetime.now(UTC)
-    source_device_id = await _latest_echo_device_id(session, tenant_id)
+    source_device_id = await _latest_echo_device_id(
+        session, tenant_id, changed_after=now - timedelta(seconds=5)
+    )
     expected_it = {
         "open": "aperto",
         "closed": "chiuso",
@@ -231,14 +239,25 @@ async def evaluate_voice_alerts(
     if source_device_id is None:
         source_device_id = await _latest_echo_device_id(session, installation.tenant_id)
     if source_device_id is not None:
+        binding_filters = [
+            AlexaVoiceAlert.tenant_id == installation.tenant_id,
+            AlexaVoiceAlert.status == "pending",
+            AlexaVoiceAlert.source_device_id.is_(None),
+        ]
+        if voice_events:
+            binding_filters.append(
+                AlexaVoiceAlert.created_at >= now - timedelta(seconds=30)
+            )
+        else:
+            # Give Alexa Devices time to publish the exact originating Echo first.
+            binding_filters.append(
+                AlexaVoiceAlert.created_at <= now - timedelta(seconds=10)
+            )
         await session.execute(
             update(AlexaVoiceAlert)
-            .where(
-                AlexaVoiceAlert.installation_id == installation_id,
-                AlexaVoiceAlert.status == "pending",
-                AlexaVoiceAlert.source_device_id.is_(None),
-            )
+            .where(*binding_filters)
             .values(source_device_id=source_device_id)
+            .execution_options(synchronize_session=False)
         )
         await session.commit()
 
@@ -293,15 +312,20 @@ async def evaluate_voice_alerts(
                 "announce",
                 alert.message,
             )
-            alert.status = (
-                "triggered"
-                if any(item.status == "success" for item in outcomes)
-                else "failed"
-            )
+            if any(item.status == "success" for item in outcomes):
+                alert.status = "triggered"
+            elif any(
+                item.error_code == "INSTALLATION_OFFLINE"
+                or item.status == "unavailable"
+                for item in outcomes
+            ):
+                alert.status = "pending"
+            else:
+                alert.status = "failed"
         except Exception:
             alert.status = "failed"
             logger.exception("voice_alert_dispatch_failed alert_id=%s", alert.id)
-        alert.triggered_at = datetime.now(UTC)
+        alert.triggered_at = datetime.now(UTC) if alert.status != "pending" else None
         await session.commit()
 
 

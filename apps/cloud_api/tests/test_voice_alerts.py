@@ -78,7 +78,14 @@ async def test_voice_alert_binds_echo_and_dispatches_once(
     assert created is True
     assert "avviserò" in reply
     alert = await session.scalar(select(AlexaVoiceAlert))
-    assert alert is not None and alert.source_device_id == "echo-device"
+    assert alert is not None and alert.source_device_id is None
+
+    # Alexa Devices publishes the originating Echo shortly after the Custom Skill reply.
+    voice_event.last_changed_at = datetime.now(UTC)
+    await session.commit()
+    await evaluate_voice_alerts(session, installation_id, [voice_event.id])
+    await session.refresh(alert)
+    assert alert.source_device_id == "echo-device"
 
     target.state = "off"
     await session.commit()
