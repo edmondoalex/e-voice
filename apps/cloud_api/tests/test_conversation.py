@@ -55,9 +55,7 @@ def test_answers_photovoltaic_power_with_evidence() -> None:
 def test_power_reply_infers_watts_when_unit_is_missing() -> None:
     pv = entity("sensor.pv_power", "Fotovoltaico SAS", "5600", None, "power")
 
-    reply = ConversationEngine().ask(
-        "Quanto produce il fotovoltaico s. a. s.?", [pv], now=NOW
-    )
+    reply = ConversationEngine().ask("Quanto produce il fotovoltaico s. a. s.?", [pv], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.speech == "In questo momento il fotovoltaico sta producendo 5600 W."
@@ -109,9 +107,7 @@ def test_summarizes_all_battery_percentages() -> None:
 
 
 def test_sas_and_private_exported_energy_returns_both_sites() -> None:
-    sas = entity(
-        "sensor.export_sas", "Energia oggi SAS esportata", "4.2", "kWh", "energy"
-    )
+    sas = entity("sensor.export_sas", "Energia oggi SAS esportata", "4.2", "kWh", "energy")
     private = entity(
         "sensor.export_private", "Energia oggi privato esportata", "2.1", "kWh", "energy"
     )
@@ -164,9 +160,7 @@ def test_summarizes_all_authorized_locks() -> None:
 
 def test_plural_lock_status_never_treats_textual_states_as_unavailable() -> None:
     locks = (
-        EntitySnapshot(
-            "lock.sala", "Porta Sala", "lock", "unlocked", category="lock_status"
-        ),
+        EntitySnapshot("lock.sala", "Porta Sala", "lock", "unlocked", category="lock_status"),
         EntitySnapshot(
             "lock.ufficio", "Serratura Ufficio", "lock", "locked", category="lock_status"
         ),
@@ -341,9 +335,7 @@ def test_area_disambiguates_temperature() -> None:
         "sensor.bedroom", "Temperatura camera", "21", "°C", "temperature", area="camera"
     )
 
-    reply = ConversationEngine().ask(
-        "Quanti gradi ci sono in cucina?", [bedroom, kitchen], now=NOW
-    )
+    reply = ConversationEngine().ask("Quanti gradi ci sono in cucina?", [bedroom, kitchen], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.evidence[0].entity_id == "sensor.kitchen"
@@ -439,9 +431,7 @@ def test_exact_exported_energy_name_is_not_mistaken_for_pv_power() -> None:
         "energy",
     )
 
-    reply = ConversationEngine().ask(
-        "Energia oggi fotovoltaico SAS esportata", [exported], now=NOW
-    )
+    reply = ConversationEngine().ask("Energia oggi fotovoltaico SAS esportata", [exported], now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
     assert reply.intent == "exported_energy_today"
@@ -457,9 +447,7 @@ def test_small_energy_value_is_spoken_in_watt_hours() -> None:
         "energy",
     )
 
-    reply = ConversationEngine().ask(
-        "Energia oggi fotovoltaico SAS esportata", [exported], now=NOW
-    )
+    reply = ConversationEngine().ask("Energia oggi fotovoltaico SAS esportata", [exported], now=NOW)
 
     assert reply.speech == "Oggi l'impianto SAS ha esportato 80 wattora."
 
@@ -535,9 +523,7 @@ def test_stale_reading_is_disclosed() -> None:
 
 
 def test_does_not_answer_from_wrong_device_class() -> None:
-    energy = entity(
-        "sensor.pv_energy_today", "Produzione fotovoltaico oggi", "18", "kWh", "energy"
-    )
+    energy = entity("sensor.pv_energy_today", "Produzione fotovoltaico oggi", "18", "kWh", "energy")
 
     reply = ConversationEngine().ask("Quanto produce il fotovoltaico?", [energy], now=NOW)
 
@@ -612,3 +598,45 @@ def test_category_routed_light_summary_reports_only_lights_on() -> None:
     assert reply.status is ReplyStatus.ANSWERED
     assert "Scrivania" in reply.speech
     assert "Corridoio" not in reply.speech
+
+
+def test_light_summary_is_strictly_scoped_to_requested_area() -> None:
+    lights = (
+        EntitySnapshot("light.cucina", "Tavolo", "light", "on", area="Cucina"),
+        EntitySnapshot("light.sala", "Lampadario", "light", "on", area="Sala"),
+        EntitySnapshot("light.piano", "Scala", "light", "off", area="Cucina"),
+    )
+
+    reply = ConversationEngine().ask("quali luci sono accese in cucina", lights, now=NOW)
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert {item.entity_id for item in reply.evidence} == {"light.cucina", "light.piano"}
+    assert "Lampadario" not in reply.speech
+
+
+def test_temperature_summary_is_strictly_scoped_to_requested_area() -> None:
+    temperatures = (
+        entity(
+            "sensor.cucina",
+            "Temperatura cucina",
+            "22",
+            "°C",
+            "temperature",
+            area="Cucina",
+        ),
+        entity(
+            "sensor.sala",
+            "Temperatura sala",
+            "20",
+            "°C",
+            "temperature",
+            area="Sala",
+        ),
+    )
+
+    reply = ConversationEngine().ask(
+        "dimmi tutte le temperature in cucina", temperatures, now=NOW
+    )
+
+    assert reply.status is ReplyStatus.ANSWERED
+    assert {item.entity_id for item in reply.evidence} == {"sensor.cucina"}

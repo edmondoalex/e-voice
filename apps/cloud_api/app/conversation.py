@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import StrEnum
 
+from .house_summary import summarize_house
+
 
 class ReplyStatus(StrEnum):
     ANSWERED = "answered"
@@ -313,6 +315,27 @@ class ConversationEngine:
             )
 
         snapshots = tuple(entities)
+        if any(
+            _contains_phrase(text, phrase)
+            for phrase in (
+                "come va la casa",
+                "riepilogo della casa",
+                "riepilogo casa",
+                "cosa devo controllare",
+                "qualcosa da controllare",
+            )
+        ):
+            summary = summarize_house(snapshots)
+            return ConversationReply(
+                ReplyStatus.ANSWERED,
+                summary.speech,
+                intent="house_summary",
+                evidence=tuple(
+                    Evidence(item.entity_id, item.name, item.state, item.unit, item.observed_at)
+                    for item in summary.entities
+                ),
+                diagnostics={"scope": "authorized_entities"},
+            )
         intent = self._detect_intent(text)
         if intent is None:
             intent = self._detect_named_entity_intent(text, snapshots)
@@ -332,9 +355,9 @@ class ConversationEngine:
             ranking_category = intent.name
             if intent.name == "temperature" and _contains_phrase(text, "centrale termica"):
                 ranking_category = "thermal_temperature"
-            snapshots = tuple(
-                replace(entity, category=ranking_category) for entity in snapshots
-            )
+            snapshots = tuple(replace(entity, category=ranking_category) for entity in snapshots)
+
+        snapshots, requested_area = self._scope_to_requested_area(text, snapshots)
 
         if intent.name == "light_status" and (
             category_routed or self._requests_all(text) or "accese" in text
@@ -419,7 +442,32 @@ class ConversationEngine:
             speech,
             intent=intent.name,
             evidence=(evidence,),
-            diagnostics={"freshness": "stale" if stale else "current"},
+            diagnostics={
+                "freshness": "stale" if stale else "current",
+                **({"area_scope": requested_area} if requested_area else {}),
+            },
+        )
+
+    @staticmethod
+    def _scope_to_requested_area(
+        text: str, entities: tuple[EntitySnapshot, ...]
+    ) -> tuple[tuple[EntitySnapshot, ...], str | None]:
+        """Apply an explicit HA area as a hard boundary, including summaries."""
+        mentioned = {
+            _normalize(entity.area): entity.area
+            for entity in entities
+            if entity.area and _contains_phrase(text, entity.area)
+        }
+        if len(mentioned) != 1:
+            return entities, None
+        normalized_area, display_area = next(iter(mentioned.items()))
+        return (
+            tuple(
+                entity
+                for entity in entities
+                if entity.area and _normalize(entity.area) == normalized_area
+            ),
+            display_area,
         )
 
     @classmethod
@@ -528,6 +576,7 @@ class ConversationEngine:
             Evidence(entity.entity_id, entity.name, entity.state, entity.unit, entity.observed_at)
             for entity in matching
         )
+
         def summarized_value(entity: EntitySnapshot) -> str | None:
             if not entity.available or entity.state in {None, "unknown", "unavailable"}:
                 return None
@@ -643,9 +692,7 @@ class ConversationEngine:
                 intent="light_status",
             )
         active = tuple(
-            entity
-            for entity in lights
-            if entity.available and str(entity.state).casefold() == "on"
+            entity for entity in lights if entity.available and str(entity.state).casefold() == "on"
         )
         speech = (
             "Nessuna luce della categoria risulta accesa."
