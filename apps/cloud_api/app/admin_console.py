@@ -700,7 +700,6 @@ async def installation_detail(
                     ),
                 )
                 .order_by(AuditEvent.created_at.desc())
-                .limit(100)
             )
         ).all()
     )
@@ -951,7 +950,7 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
         rows = "".join(_entity_row(installation, entity, csrf) for entity in domain_entities)
         label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
         sections.append(
-            f'<details class="entity-group" data-domain="{_e(domain)}">'
+            f'<details class="entity-group" data-domain="{_e(domain)}" open>'
             f"<summary><span>{_e(label)}</span>"
             f'<span class="entity-group-count">{len(domain_entities)}</span></summary>'
             "<table><thead><tr><th>Entità</th><th>Categoria vocale</th><th>Dominio/area</th><th>Stato</th>"

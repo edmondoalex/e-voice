@@ -461,13 +461,12 @@ async def test_installation_groups_entities_by_collapsed_type(
     page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
 
     assert page.status_code == 200
-    assert '<details class="entity-group" data-domain="sensor">' in page.text
-    assert '<details class="entity-group" data-domain="light">' in page.text
-    assert '<details class="entity-group" data-domain="cover">' in page.text
+    assert '<details class="entity-group" data-domain="sensor" open>' in page.text
+    assert '<details class="entity-group" data-domain="light" open>' in page.text
+    assert '<details class="entity-group" data-domain="cover" open>' in page.text
     assert "<summary><span>Sensori</span>" in page.text
     assert "<summary><span>Luci</span>" in page.text
     assert "<summary><span>Tapparelle e tende</span>" in page.text
-    assert '<details class="entity-group" data-domain="sensor" open>' not in page.text
     await client.aclose()
 
 
