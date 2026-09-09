@@ -1,5 +1,8 @@
 # Current work status
 
+> Le verifiche da eseguire dopo la certificazione Amazon sono raccolte nel tag operativo
+> [`POST-ALEXA-CERTIFICATION`](POST_CERTIFICATION_TEST_PLAN.md).
+
 ## Ripresa — 9 settembre 2026
 
 - Implementata localmente la prima versione end-to-end delle fonti Media Player: sincronizzazione
