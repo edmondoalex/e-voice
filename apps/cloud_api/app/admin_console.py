@@ -653,6 +653,15 @@ async def installation_detail(
     item = await _installation(session, context, installation_id)
     overlay_installation(item, await load_live_installation(item.public_id))
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
+    total_entity_count = int(
+        await session.scalar(
+            select(func.count(Entity.id)).where(
+                Entity.installation_id == item.id,
+                Entity.deleted_at.is_(None),
+            )
+        )
+        or 0
+    )
     query = (
         select(Entity)
         .options(selectinload(Entity.voice_category))
@@ -749,7 +758,7 @@ async def installation_detail(
         else ""
     )
     entity_content = entity_groups or '<div class="card"><p>Nessuna entità</p></div>'
-    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div></div>{_connector_compatibility_card(item)}{inventory_sync_notice}{inventory_sync_form}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
+    body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div><div class="card"><b>{len(entities)} / {total_entity_count}</b><br>Entità visualizzate / totali</div></div>{_connector_compatibility_card(item)}{inventory_sync_notice}{inventory_sync_form}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
@@ -950,7 +959,7 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
         rows = "".join(_entity_row(installation, entity, csrf) for entity in domain_entities)
         label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
         sections.append(
-            f'<details class="entity-group" data-domain="{_e(domain)}" open>'
+            f'<details class="entity-group" data-domain="{_e(domain)}">'
             f"<summary><span>{_e(label)}</span>"
             f'<span class="entity-group-count">{len(domain_entities)}</span></summary>'
             "<table><thead><tr><th>Entità</th><th>Categoria vocale</th><th>Dominio/area</th><th>Stato</th>"
