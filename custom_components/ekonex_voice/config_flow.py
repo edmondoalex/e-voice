@@ -9,14 +9,16 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     DeviceSelector,
     DeviceSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
-    LabelSelector,
-    LabelSelectorConfig,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
 )
 
 from .client import (
@@ -201,6 +203,13 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
             entry.entity_id for entry in registry.entities.values() if entry.id in selected
         )
         current_label = self.config_entry.options.get(CONF_EXPOSURE_LABEL_ID)
+        label_options = [
+            SelectOptionDict(value=label.label_id, label=label.name)
+            for label in sorted(
+                lr.async_get(self.hass).async_list_labels(),
+                key=lambda item: item.name.casefold(),
+            )
+        ]
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -216,7 +225,12 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
                 ): EntitySelector(EntitySelectorConfig(multiple=True)),
                 vol.Optional(
                     "label", description={"suggested_value": current_label}
-                ): LabelSelector(LabelSelectorConfig(multiple=False)),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=label_options,
+                        multiple=False,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors or {})
