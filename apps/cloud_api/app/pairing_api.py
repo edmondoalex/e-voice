@@ -356,6 +356,9 @@ input[name=code]{{text-transform:uppercase;letter-spacing:.12em;
 font-family:ui-monospace,monospace}}
 button{{width:100%;margin-top:22px;padding:14px;border:0;border-radius:9px;
 background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
+.dashboard-link{{display:block;width:100%;margin-top:14px;padding:13px;border-radius:9px;
+background:#e6f1ed;color:var(--brand);font:700 1rem system-ui;text-align:center;
+text-decoration:none}}
 .notice{{padding:12px;border-radius:9px;margin:16px 0}}.success{{background:#dcf7e9}}
 .error{{background:#fde8e7;color:#85221d}}small{{display:block;margin-top:16px;color:#52655f}}
 </style></head><body><main><img class="brand-logo" src="/static/ekonex-cloud-voice.png"
@@ -372,6 +375,7 @@ background:var(--brand);color:white;font:700 1rem system-ui;cursor:pointer}}
  placeholder="Casa Rossi" required autocomplete="organization">
 <button type="submit">Collega</button></form>
 <small>Il codice è monouso e scade automaticamente.</small>
+<a class="dashboard-link" href="/dashboard">Vai alla dashboard</a>
 <form method="post" action="/logout">
 <input type="hidden" name="csrf_token" value="{escaped_csrf}">
 <button type="submit">Esci</button></form></main></body></html>"""
