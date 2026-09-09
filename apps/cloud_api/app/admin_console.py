@@ -335,6 +335,17 @@ async def voice_categories_page(
     _admin(context)
     csrf = _csrf(context)
     categories = await _voice_categories(session, context)
+    uncategorized_result = await session.execute(
+        select(Entity, Installation.name)
+        .join(Installation)
+        .where(
+            Installation.tenant_id == context.tenant_id,
+            Entity.deleted_at.is_(None),
+            Entity.voice_category_id.is_(None),
+        )
+        .order_by(Installation.name, Entity.ha_domain, Entity.friendly_name, Entity.ha_entity_id)
+    )
+    uncategorized = list(uncategorized_result.all())
     categorized_entities = list(
         (
             await session.scalars(
@@ -396,7 +407,33 @@ async def voice_categories_page(
     category_options = "".join(
         f'<option value="{item.id}">{_e(item.name)}</option>' for item in categories
     )
-    body = f'''{result}<div class="card"><h2>Conteggio ed esempi</h2><p class="muted">Le categorie vuote non producono risultati nelle richieste di gruppo.</p></div>{category_summary}<div class="card"><h2>Classificazione automatica</h2>
+    uq = request.query_params.get("uq", "").strip().casefold()
+    ui = request.query_params.get("uinstallation", "").strip()
+    ud = request.query_params.get("udomain", "").strip()
+    ua = request.query_params.get("uarea", "").strip()
+    visible_uncategorized = [
+        (entity, installation_name)
+        for entity, installation_name in uncategorized
+        if (not uq or uq in " ".join(filter(None, (entity.ha_entity_id, entity.friendly_name, entity.device_class))).casefold())
+        and (not ui or str(entity.installation_id) == ui)
+        and (not ud or entity.ha_domain == ud)
+        and (not ua or (entity.area_name or "") == ua)
+    ]
+    def _options(values: set[str], selected: str) -> str:
+        return "".join(f'<option value="{_e(value)}"{" selected" if value == selected else ""}>{_e(value)}</option>' for value in sorted(values))
+    installation_options = "".join(
+        f'<option value="{entity.installation_id}"{" selected" if str(entity.installation_id) == ui else ""}>{_e(name)}</option>'
+        for entity, name in {entity.installation_id: (entity, name) for entity, name in uncategorized}.values()
+    )
+    unassigned_rows = "".join(
+        f'<label class="field"><input type="checkbox" name="entity_{entity.id}" value="1"> '
+        f'<b>{_e(effective_display_name(entity))}</b> <span class="muted">{_e(entity.ha_entity_id)} · {_e(name)} · {_e(entity.ha_domain)} · {_e(entity.area_name or "—")}</span></label>'
+        for entity, name in visible_uncategorized
+    ) or '<p class="muted">Nessuna entità corrispondente.</p>'
+    unassigned_panel = f'''<details class="card"><summary><b>Entità non assegnate — {len(uncategorized)}</b> (visualizzate {len(visible_uncategorized)})</summary>
+<form method="get"><input name="uq" placeholder="Cerca" value="{_e(request.query_params.get("uq", ""))}"><select name="uinstallation"><option value="">Tutte le installazioni</option>{installation_options}</select><select name="udomain"><option value="">Tutti i domini</option>{_options({e.ha_domain for e, _ in uncategorized}, ud)}</select><select name="uarea"><option value="">Tutte le aree</option>{_options({e.area_name for e, _ in uncategorized if e.area_name}, ua)}</select><button>Filtra non assegnate</button></form>
+<form method="post" action="/voice-categories/assign-selected"><input type="hidden" name="csrf_token" value="{_e(csrf)}">{unassigned_rows}<label class="field"><b>Categoria</b><select name="target_category_id" required><option value="">Seleziona categoria</option>{category_options}</select></label><button>Assegna le entità selezionate</button></form></details>'''
+    body = f'''{result}{unassigned_panel}<div class="card"><h2>Conteggio ed esempi</h2><p class="muted">Le categorie vuote non producono risultati nelle richieste di gruppo.</p></div>{category_summary}<div class="card"><h2>Classificazione automatica</h2>
 <p class="muted">Assegna le categorie standard alle sole entità ancora senza categoria, usando tipo, unità, device class, nome ed entity_id. Le scelte manuali non vengono sovrascritte.</p>
 <form method="post" action="/voice-categories/auto-assign"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Classifica automaticamente le entità non assegnate</button></form></div>
 <div class="card"><h2>Assegnazione in massa</h2>
@@ -418,6 +455,32 @@ async def voice_categories_page(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+@router.post("/voice-categories/assign-selected", response_class=RedirectResponse)
+async def assign_selected_voice_category(
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    _admin(context)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    try:
+        target_id = UUID(values.get("target_category_id", ""))
+        selected_ids = [UUID(key.removeprefix("entity_")) for key in values if key.startswith("entity_")]
+    except ValueError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Selezione non valida") from error
+    if not selected_ids:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nessuna entità selezionata")
+    if not any(item.id == target_id for item in await _voice_categories(session, context)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Categoria non trovata")
+    entities = list((await session.scalars(select(Entity).join(Installation).where(Installation.tenant_id == context.tenant_id, Entity.id.in_(selected_ids), Entity.deleted_at.is_(None), Entity.voice_category_id.is_(None)))).all())
+    for entity in entities:
+        entity.voice_category_id = target_id
+    await session.commit()
+    return RedirectResponse(f"/voice-categories?bulk_assigned={len(entities)}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/voice-categories/bulk-assign", response_class=RedirectResponse)
