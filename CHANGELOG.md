@@ -4,6 +4,27 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-09-09 — Per-device Media Player sources (laboratory only)
+
+Status: Local implementation under validation; production untouched
+
+### Scope
+
+- Added bounded synchronization of the current Media Player source and `source_list` from Home
+  Assistant.
+- Added per-source enablement, voice name and aliases stored independently from live HA state.
+- Added a portal source selector that dispatches only a source currently advertised by Home
+  Assistant and enabled by the installer.
+- Added the closed `select_source` EVCP operation and Home Assistant service mapping.
+- Added Alexa `InputController` discovery, state reporting and directive mapping from configured
+  source names back to the exact Home Assistant source.
+- Added migration `0019` and focused Connector, portal and Alexa tests.
+
+### Scope guard
+
+- No laboratory or production deployment was performed.
+- The production Smart Home skill, Lambda and backend under certification remain unchanged.
+
 ## 2026-09-07 — Alexa voice routines (laboratory only)
 
 Status: Local implementation under validation; production untouched

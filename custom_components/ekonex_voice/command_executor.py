@@ -201,9 +201,7 @@ class EkonexVoiceCommandExecutor:
                 "domain": domain,
                 "service": service,
                 "target": {"entity_id": entry.entity_id},
-                "service_data": _redacted_service_data(
-                    str(command.get("operation")), data
-                ),
+                "service_data": _redacted_service_data(str(command.get("operation")), data),
             }
         )
         started = perf_counter()
@@ -304,9 +302,7 @@ def _redacted_command(command: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _redacted_service_data(
-    operation: str, data: dict[str, object]
-) -> dict[str, object]:
+def _redacted_service_data(operation: str, data: dict[str, object]) -> dict[str, object]:
     if operation not in {"announce", "speak"}:
         return data
     message = data.get("message")
@@ -546,6 +542,18 @@ def _map_media_player(
         if not supported & MediaPlayerEntityFeature.VOLUME_SET:
             raise UnsupportedCommand
         return "media_player", "volume_set", {"volume_level": volume / 100}
+    if operation == "select_source":
+        _require_keys(arguments, {"source"})
+        source = command.get("source")
+        sources = state.attributes.get("source_list")
+        if (
+            not supported & MediaPlayerEntityFeature.SELECT_SOURCE
+            or not isinstance(source, str)
+            or not isinstance(sources, (list, tuple))
+            or source not in sources
+        ):
+            raise UnsupportedCommand
+        return "media_player", "select_source", {"source": source}
     raise UnsupportedCommand
 
 

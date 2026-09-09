@@ -52,6 +52,7 @@ MEDIA_PLAYER_FEATURE_TURN_ON = 128
 MEDIA_PLAYER_FEATURE_TURN_OFF = 256
 MEDIA_PLAYER_FEATURE_STOP = 4096
 MEDIA_PLAYER_FEATURE_PLAY = 16384
+MEDIA_PLAYER_FEATURE_SELECT_SOURCE = 2048
 MEDIA_PLAYER_ALEXA_FEATURES = (
     MEDIA_PLAYER_FEATURE_PAUSE
     | MEDIA_PLAYER_FEATURE_VOLUME_SET
@@ -62,6 +63,7 @@ MEDIA_PLAYER_ALEXA_FEATURES = (
     | MEDIA_PLAYER_FEATURE_TURN_OFF
     | MEDIA_PLAYER_FEATURE_STOP
     | MEDIA_PLAYER_FEATURE_PLAY
+    | MEDIA_PLAYER_FEATURE_SELECT_SOURCE
 )
 _replay: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
@@ -74,6 +76,41 @@ HA_TO_ALEXA_THERMOSTAT_MODE = {
     "eco": "ECO",
     "emergency_heat": "EM_HEAT",
 }
+
+
+def _media_inputs(entity: Entity) -> list[dict[str, object]]:
+    raw_sources = (entity.attributes_json or {}).get("source_list")
+    if not isinstance(raw_sources, list):
+        return []
+    settings = entity.media_source_settings or {}
+    inputs: list[dict[str, object]] = []
+    used_voice_names: set[str] = set()
+    for source in raw_sources[:64]:
+        if not isinstance(source, str) or not source or source.casefold() in used_voice_names:
+            continue
+        setting = settings.get(source)
+        setting = setting if isinstance(setting, dict) else {}
+        if setting.get("enabled", True) is False:
+            continue
+        used_voice_names.add(source.casefold())
+        friendly: list[str] = []
+        aliases = setting.get("aliases")
+        configured = [setting.get("name"), *(aliases if isinstance(aliases, list) else [])]
+        for value in configured:
+            if not isinstance(value, str):
+                continue
+            clean = value.strip()
+            if (
+                clean
+                and clean.casefold() not in used_voice_names
+            ):
+                friendly.append(clean[:120])
+                used_voice_names.add(clean.casefold())
+        item: dict[str, object] = {"name": source[:255]}
+        if friendly:
+            item["friendlyNames"] = friendly[:20]
+        inputs.append(item)
+    return inputs
 
 
 def alexa_entity_eligible(entity: Entity) -> bool:
@@ -594,6 +631,11 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                 _capability("Alexa.PlaybackController")
                 | {"supportedOperations": playback_operations}
             )
+        media_inputs = _media_inputs(entity)
+        if features & MEDIA_PLAYER_FEATURE_SELECT_SOURCE and media_inputs:
+            result.append(
+                _capability("Alexa.InputController", ["input"]) | {"inputs": media_inputs}
+            )
     return result
 
 
@@ -879,7 +921,7 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
                     "temperature",
                     {"value": current_temperature, "scale": scale},
                 )
-                )
+            )
     if entity.ha_domain == "media_player":
         volume = _numeric_attribute(attributes, "volume_level")
         if volume is not None and entity.supported_features & MEDIA_PLAYER_FEATURE_VOLUME_SET:
@@ -887,6 +929,13 @@ def state_properties(entity: Entity) -> list[dict[str, Any]]:
         muted = attributes.get("is_volume_muted")
         if isinstance(muted, bool) and entity.supported_features & MEDIA_PLAYER_FEATURE_VOLUME_MUTE:
             props.append(_property("Alexa.Speaker", "muted", muted))
+        source = attributes.get("source")
+        if (
+            isinstance(source, str)
+            and entity.supported_features & MEDIA_PLAYER_FEATURE_SELECT_SOURCE
+            and any(item["name"] == source for item in _media_inputs(entity))
+        ):
+            props.append(_property("Alexa.InputController", "input", source))
     return props
 
 
@@ -992,9 +1041,7 @@ def _command(
             "Previous": "media_previous",
         }.get(name)
         return (
-            {"operation": operation}
-            if entity.ha_domain == "media_player" and operation
-            else None
+            {"operation": operation} if entity.ha_domain == "media_player" and operation else None
         )
     if namespace == "Alexa.Speaker" and entity is not None and entity.ha_domain == "media_player":
         if name == "SetVolume":
@@ -1003,14 +1050,35 @@ def _command(
                 return {"operation": "set_volume", "volume_percent": volume}
         if name == "AdjustVolume":
             delta = payload.get("volume")
-            current = _numeric_attribute(entity.attributes_json or {}, "volume_level")
-            if type(delta) is int and current is not None:
+            current_volume = _numeric_attribute(entity.attributes_json or {}, "volume_level")
+            if type(delta) is int and current_volume is not None:
                 return {
                     "operation": "set_volume",
-                    "volume_percent": min(100, max(0, round(current * 100) + delta)),
+                    "volume_percent": min(100, max(0, round(current_volume * 100) + delta)),
                 }
         if name == "SetMute" and isinstance(payload.get("mute"), bool):
             return {"operation": "volume_mute" if payload["mute"] else "volume_unmute"}
+        return None
+    if namespace == "Alexa.InputController" and name == "SelectInput" and entity is not None:
+        requested = payload.get("input")
+        if entity.ha_domain != "media_player" or not isinstance(requested, str):
+            return None
+        for item in _media_inputs(entity):
+            raw_name = item.get("name")
+            friendly_names = item.get("friendlyNames")
+            names = [
+                raw_name,
+                *(friendly_names if isinstance(friendly_names, list) else []),
+            ]
+            if any(
+                isinstance(value, str) and value.casefold() == requested.casefold()
+                for value in names
+            ):
+                return (
+                    {"operation": "select_source", "source": raw_name}
+                    if isinstance(raw_name, str)
+                    else None
+                )
         return None
     if namespace == "Alexa.PercentageController" and name == "SetPercentage":
         return {"operation": "set_percentage", "percentage": round(float(payload["percentage"]))}

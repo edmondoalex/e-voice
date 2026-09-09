@@ -357,6 +357,30 @@ async def test_media_player_capabilities_are_mapped_to_services(
     )
 
 
+async def test_media_player_select_source_is_allowlisted(hass: HomeAssistant) -> None:
+    entry, executor = exposed_entity(
+        hass,
+        "media_player",
+        {"supported_features": 2048, "source_list": ["HDMI 1", "Netflix"]},
+    )
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "media-source", entry.id, {"operation": "select_source", "source": "HDMI 1"}
+        )
+        denied = await executor.async_execute(
+            "media-source-denied", entry.id, {"operation": "select_source", "source": "USB"}
+        )
+    assert result.status == "success"
+    assert denied.status == "unsupported_command"
+    call.assert_awaited_once_with(
+        "media_player",
+        "select_source",
+        {"entity_id": entry.entity_id, "source": "HDMI 1"},
+        blocking=True,
+    )
+
+
 async def test_missing_disabled_and_unavailable_entities_never_execute(
     hass: HomeAssistant,
 ) -> None:

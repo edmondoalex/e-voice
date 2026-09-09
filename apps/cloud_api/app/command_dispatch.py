@@ -85,6 +85,11 @@ class MediaPlaybackCommand(StrictCommand):
     ]
 
 
+class MediaSourceCommand(StrictCommand):
+    operation: Literal["select_source"]
+    source: str = Field(min_length=1, max_length=255)
+
+
 class ActivateCommand(StrictCommand):
     operation: Literal["activate"]
 
@@ -124,6 +129,7 @@ type CommandSpec = Annotated[
     | PercentageCommand
     | VolumeCommand
     | MediaPlaybackCommand
+    | MediaSourceCommand
     | ActivateCommand
     | PressCommand
     | NumberCommand

@@ -110,6 +110,7 @@ DOMAIN_OPERATIONS = {
         "media_stop",
         "media_next",
         "media_previous",
+        "select_source",
     },
 }
 
@@ -122,6 +123,20 @@ MEDIA_PLAYER_FEATURE_TURN_ON = 128
 MEDIA_PLAYER_FEATURE_TURN_OFF = 256
 MEDIA_PLAYER_FEATURE_STOP = 4096
 MEDIA_PLAYER_FEATURE_PLAY = 16384
+MEDIA_PLAYER_FEATURE_SELECT_SOURCE = 2048
+
+
+def _media_sources(entity: Entity) -> list[str]:
+    values = (entity.attributes_json or {}).get("source_list")
+    if not isinstance(values, list):
+        return []
+    return list(dict.fromkeys(value for value in values if isinstance(value, str) and value))[:64]
+
+
+def _media_source_setting(entity: Entity, source: str) -> dict[str, object]:
+    settings = entity.media_source_settings or {}
+    value = settings.get(source)
+    return value if isinstance(value, dict) else {}
 
 
 async def _console_context(
@@ -153,11 +168,7 @@ def _layout(title: str, body: str, context: TenantContext, csrf: str, active: st
         if is_laboratory
         else ""
     )
-    logo_filename = (
-        "ekonex-e-voice-laboratorio.png"
-        if is_laboratory
-        else "ekonex-cloud-voice.png"
-    )
+    logo_filename = "ekonex-e-voice-laboratorio.png" if is_laboratory else "ekonex-cloud-voice.png"
     logo_alt = "Ekonex Laboratorio e-Voice" if is_laboratory else "Ekonex Cloud Voice"
     navigation = "".join(
         (
@@ -845,7 +856,9 @@ def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
     controls = _entity_controls(installation, entity, csrf, enabled)
     voice_name = effective_voice_name(entity)
     display_name = effective_display_name(entity)
-    category_name = entity.voice_category.name if entity.voice_category is not None else "Non assegnata"
+    category_name = (
+        entity.voice_category.name if entity.voice_category is not None else "Non assegnata"
+    )
     aliases = " · ".join(_e(alias) for alias in (entity.voice_aliases or [])) or "—"
     lifecycle = "rimossa" if entity.deleted_at else (entity.state or "—")
     edit = f'<a class="button" href="/installations/{installation.id}/entities/{entity.id}/edit">Modifica</a>'
@@ -1063,6 +1076,23 @@ def _media_player_controls(
                 enabled=enabled,
             )
         )
+    sources = _media_sources(entity)
+    if features & MEDIA_PLAYER_FEATURE_SELECT_SOURCE and sources:
+        enabled_sources = [
+            source
+            for source in sources
+            if _media_source_setting(entity, source).get("enabled", True) is not False
+        ]
+        if enabled_sources:
+            current = (entity.attributes_json or {}).get("source")
+            options = "".join(
+                f'<option value="{_e(source)}"{" selected" if source == current else ""}>{_e(str(_media_source_setting(entity, source).get("name") or source))}</option>'
+                for source in enabled_sources
+            )
+            disabled = "" if enabled else " disabled"
+            controls.append(
+                f'<form class="entity-command inline media-source-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="select_source"><label>Fonte <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>SELEZIONA FONTE</button></form>'
+            )
     return "".join(controls) or '<span class="muted">Nessun controllo supportato</span>'
 
 
@@ -1184,6 +1214,25 @@ def _entity_names_form(
             else "Discreto usa i comandi stateless apri e chiudi"
         )
         cover_mode = f"""<label class="field"><b>Modalità Alexa tapparella/tenda</b><select name="alexa_cover_mode">{options}</select><span class="muted">{discrete_help}, senza percentuali; Percentuale usa la posizione 0–100%; Ibrido espone entrambi. Modalità effettiva: {_e(effective)}.</span></label>"""
+    media_sources = ""
+    if entity.ha_domain == "media_player" and _media_sources(entity):
+        rows: list[str] = []
+        for index, source in enumerate(_media_sources(entity)):
+            setting = _media_source_setting(entity, source)
+            checked = " checked" if setting.get("enabled", True) is not False else ""
+            aliases_value = setting.get("aliases", [])
+            source_aliases = (
+                "\n".join(item for item in aliases_value if isinstance(item, str))
+                if isinstance(aliases_value, list)
+                else ""
+            )
+            rows.append(
+                f'<fieldset class="media-source-setting"><legend>{_e(source)}</legend><input type="hidden" name="media_source_{index}" value="{_e(source)}"><label><input type="checkbox" name="media_source_enabled_{index}" value="1"{checked}> Abilitata nel portale e per Alexa</label><label class="field">Nome vocale fonte<input name="media_source_name_{index}" maxlength="120" value="{_e(str(setting.get("name") or ""))}" placeholder="{_e(source)}"></label><label class="field">Alias fonte<textarea name="media_source_aliases_{index}" maxlength="2420" placeholder="Un alias per riga">{_e(source_aliases)}</textarea></label></fieldset>'
+            )
+        media_sources = (
+            '<h3>Fonti Media Player</h3><p class="muted">Le fonti arrivano da Home Assistant. Puoi escluderle o assegnare nomi e alias vocali senza modificare il nome tecnico.</p>'
+            + "".join(rows)
+        )
     return f'''{notice}<div class="card"><p><b>Nome e-Control</b><br>{_e(entity.friendly_name or entity.ha_entity_id)}<br><span class="muted">Sincronizzato automaticamente e non modificabile qui.</span></p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
 <label class="field"><b>Nome visualizzato</b><input name="display_name" maxlength="120" value="{_e(entity.display_name)}" placeholder="Fallback: {_e(entity.friendly_name or entity.ha_entity_id)}"><span class="muted">Se vuoto: Nome e-Control.</span></label>
@@ -1192,6 +1241,7 @@ def _entity_names_form(
 <label class="field"><b>Categoria vocale</b><select name="voice_category_id">{category_options}</select><span class="muted">Indica a Ekonex se il sensore rappresenta produzione, consumo, batteria, temperatura, allarme, serratura o altro.</span></label>
 {device_type}
 {cover_mode}
+{media_sources}
 <p><b>Nome dashboard effettivo:</b> {_e(effective_display_name(entity))}<br><b>Nome vocale effettivo:</b> {_e(effective_voice_name(entity))}<br><b>Tutti i nomi vocali:</b> {_e(", ".join(all_voice_names(entity)))}</p>
 <div class="actions"><button name="action" value="save">Salva</button><a class="button" href="/installations/{installation.id}">Annulla</a><button class="danger" name="action" value="reset">Ripristina nomi personalizzati</button></div></form></div>'''
 
@@ -1267,10 +1317,12 @@ async def update_entity_names(
         entity.alexa_cover_mode,
         entity.alexa_device_type,
         entity.voice_category_id,
+        dict(entity.media_source_settings or {}),
     )
     try:
         if values.get("action") == "reset":
             entity.display_name, entity.voice_name, entity.voice_aliases = None, None, []
+            entity.media_source_settings = {}
         else:
             entity.display_name = clean_optional_name(values.get("display_name", ""))
             entity.voice_name = clean_optional_name(values.get("voice_name", ""))
@@ -1296,6 +1348,20 @@ async def update_entity_names(
                     if requested_mode == "auto"
                     else validate_cover_mode(entity, requested_mode)
                 )
+            if entity.ha_domain == "media_player":
+                source_settings: dict[str, object] = {}
+                for index, source in enumerate(_media_sources(entity)):
+                    source_settings[source] = {
+                        "enabled": values.get(f"media_source_enabled_{index}") == "1",
+                        "name": clean_optional_name(values.get(f"media_source_name_{index}", "")),
+                        "aliases": clean_voice_aliases(
+                            re.split(
+                                r"[\r\n,]+",
+                                values.get(f"media_source_aliases_{index}", ""),
+                            )
+                        ),
+                    }
+                entity.media_source_settings = source_settings
     except ValueError:
         (
             entity.display_name,
@@ -1304,6 +1370,7 @@ async def update_entity_names(
             entity.alexa_cover_mode,
             entity.alexa_device_type,
             entity.voice_category_id,
+            entity.media_source_settings,
         ) = previous
         return _names_page(
             installation,
@@ -1336,6 +1403,7 @@ async def update_entity_names(
             entity.alexa_cover_mode,
             entity.alexa_device_type,
             entity.voice_category_id,
+            entity.media_source_settings,
         ) = previous
         return _names_page(
             installation,
@@ -1354,6 +1422,7 @@ async def update_entity_names(
         entity.alexa_cover_mode,
         entity.alexa_device_type,
         entity.voice_category_id,
+        dict(entity.media_source_settings or {}),
     )
     changed_fields = [
         name
@@ -1365,6 +1434,7 @@ async def update_entity_names(
                 "alexa_cover_mode",
                 "alexa_device_type",
                 "voice_category_id",
+                "media_source_settings",
             ),
             previous,
             current,
@@ -1415,6 +1485,8 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
         data["percentage"] = int(value)
     elif operation == "set_volume":
         data["volume_percent"] = int(value)
+    elif operation == "select_source":
+        data["source"] = value
     return data
 
 
@@ -1469,6 +1541,13 @@ async def send_command(
                 values.get("operation", ""),
                 values.get("value", ""),
             )
+        if values.get("operation") == "select_source":
+            source = values.get("value", "")
+            if (
+                source not in _media_sources(entity)
+                or _media_source_setting(entity, source).get("enabled", True) is False
+            ):
+                raise ValueError("media source is unavailable or disabled")
         command = command_adapter.validate_python(
             _command_data(values.get("operation", ""), values.get("value", ""))
         )

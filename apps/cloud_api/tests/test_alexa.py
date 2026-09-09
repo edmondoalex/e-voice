@@ -188,8 +188,18 @@ def test_media_player_discovery_state_and_commands() -> None:
         friendly_name="TV Sala",
         available=True,
         state="playing",
-        supported_features=128 | 256 | 4 | 8 | 1 | 4096 | 16384,
-        attributes_json={"volume_level": 0.21, "is_volume_muted": False},
+        supported_features=128 | 256 | 4 | 8 | 1 | 2048 | 4096 | 16384,
+        attributes_json={
+            "volume_level": 0.21,
+            "is_volume_muted": False,
+            "source": "HDMI 1",
+            "source_list": ["HDMI 1", "Netflix", "Console"],
+        },
+        media_source_settings={
+            "HDMI 1": {"enabled": True, "name": "Decoder", "aliases": ["Sky"]},
+            "Netflix": {"enabled": False, "name": None, "aliases": []},
+            "Console": {"enabled": True, "name": "PlayStation", "aliases": ["Giochi"]},
+        },
     )
 
     endpoint = discovery_endpoint(entity)
@@ -204,15 +214,16 @@ def test_media_player_discovery_state_and_commands() -> None:
         "Pause",
         "Stop",
     ]
+    assert interfaces["Alexa.InputController"]["inputs"] == [
+        {"name": "HDMI 1", "friendlyNames": ["Decoder", "Sky"]},
+        {"name": "Console", "friendlyNames": ["PlayStation", "Giochi"]},
+    ]
     assert _property_value(entity, "Alexa.PowerController", "powerState") == "ON"
     assert _property_value(entity, "Alexa.Speaker", "volume") == 21
     assert _property_value(entity, "Alexa.Speaker", "muted") is False
-    assert _command("Alexa.PowerController", "TurnOff", {}, entity) == {
-        "operation": "power_off"
-    }
-    assert _command("Alexa.PlaybackController", "Play", {}, entity) == {
-        "operation": "media_play"
-    }
+    assert _property_value(entity, "Alexa.InputController", "input") == "HDMI 1"
+    assert _command("Alexa.PowerController", "TurnOff", {}, entity) == {"operation": "power_off"}
+    assert _command("Alexa.PlaybackController", "Play", {}, entity) == {"operation": "media_play"}
     assert _command("Alexa.Speaker", "SetVolume", {"volume": 35}, entity) == {
         "operation": "set_volume",
         "volume_percent": 35,
@@ -220,6 +231,11 @@ def test_media_player_discovery_state_and_commands() -> None:
     assert _command("Alexa.Speaker", "SetMute", {"mute": True}, entity) == {
         "operation": "volume_mute"
     }
+    assert _command("Alexa.InputController", "SelectInput", {"input": "Sky"}, entity) == {
+        "operation": "select_source",
+        "source": "HDMI 1",
+    }
+    assert _command("Alexa.InputController", "SelectInput", {"input": "Netflix"}, entity) is None
 
 
 def _climate(

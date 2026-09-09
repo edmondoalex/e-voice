@@ -86,7 +86,10 @@ class EntityItem(StrictModel):
             if len(key) > 64:
                 raise ValueError("attribute name too long")
             values = value if isinstance(value, list) else [value]
-            if len(values) > 8 or any(isinstance(item, str) and len(item) > 255 for item in values):
+            limit = 64 if key == "source_list" else 8
+            if len(values) > limit or any(
+                isinstance(item, str) and len(item) > 255 for item in values
+            ):
                 raise ValueError("attribute value exceeds bounds")
         return self
 

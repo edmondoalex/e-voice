@@ -42,6 +42,7 @@ ATTRIBUTE_ALLOWLIST = {
         {"temperature", "current_temperature", "hvac_modes", "min_temp", "max_temp"}
     ),
     "fan": frozenset({"percentage"}),
+    "media_player": frozenset({"volume_level", "is_volume_muted", "source", "source_list"}),
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25
@@ -345,7 +346,7 @@ def _attributes(domain: str, state: State) -> dict[str, object]:
             result[key] = value
         elif (
             isinstance(value, (list, tuple))
-            and len(value) <= 8
+            and len(value) <= (64 if key == "source_list" else 8)
             and all(isinstance(item, (str, int, float, bool)) for item in value)
         ):
             result[key] = [item[:255] if isinstance(item, str) else item for item in value]

@@ -501,8 +501,17 @@ async def test_media_player_controls_follow_synchronized_capabilities(
     entity.friendly_name = "TV Sala"
     entity.state = "playing"
     entity.available = True
-    entity.supported_features = 128 | 256 | 4 | 8 | 1 | 4096 | 16384
-    entity.attributes_json = {"volume_level": 0.42, "is_volume_muted": False}
+    entity.supported_features = 128 | 256 | 4 | 8 | 1 | 2048 | 4096 | 16384
+    entity.attributes_json = {
+        "volume_level": 0.42,
+        "is_volume_muted": False,
+        "source": "HDMI 1",
+        "source_list": ["HDMI 1", "Netflix"],
+    }
+    entity.media_source_settings = {
+        "HDMI 1": {"enabled": True, "name": "Decoder", "aliases": ["Sky"]},
+        "Netflix": {"enabled": False, "name": None, "aliases": []},
+    }
     await session.commit()
     dispatched: list[dict[str, object]] = []
 
@@ -523,23 +532,27 @@ async def test_media_player_controls_follow_synchronized_capabilities(
         "media_stop",
         "set_volume",
         "volume_mute",
+        "select_source",
     ):
         assert f'value="{operation}"' in page.text
     assert 'value="42"' in page.text
     assert "IMPOSTA VOLUME" in page.text
+    assert "SELEZIONA FONTE" in page.text
+    assert "Decoder" in page.text
+    assert ">Netflix<" not in page.text
 
     result = await client.post(
         f"/installations/{seeded_domain.installation_a_id}/commands",
         data={
             "csrf_token": _csrf(page),
             "entity_id": str(entity.id),
-            "operation": "set_volume",
-            "value": "65",
+            "operation": "select_source",
+            "value": "HDMI 1",
         },
         headers={"Accept": "application/json"},
     )
     assert result.status_code == 200
-    assert dispatched == [{"operation": "set_volume", "volume_percent": 65}]
+    assert dispatched == [{"operation": "select_source", "source": "HDMI 1"}]
     await client.aclose()
 
 

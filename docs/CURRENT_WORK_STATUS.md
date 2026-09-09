@@ -1,5 +1,17 @@
 # Current work status
 
+## Ripresa — 9 settembre 2026
+
+- Implementata localmente la prima versione end-to-end delle fonti Media Player: sincronizzazione
+  `source`/`source_list`, configurazione persistente di inclusione, nome e alias, selezione dal
+  portale, comando EVCP chiuso e mapping Home Assistant.
+- Predisposta l'esposizione Alexa `InputController` usando soltanto le fonti abilitate e
+  riconducendo nomi e alias al valore tecnico esatto di Home Assistant.
+- Aggiunta la migrazione `20260909_0019`; produzione e Laboratorio distribuito non sono stati
+  modificati.
+- Prossimo gate: completare la validazione Linux/HAOS, creare una nuova beta del Connector e
+  distribuire il backend esclusivamente nel Laboratorio prima della prova su `TV Sala`.
+
 ## Checkpoint pre-blackout — 7 settembre 2026
 
 Questo checkpoint prevale sulle sezioni storiche sottostanti quando descrivono funzioni ormai

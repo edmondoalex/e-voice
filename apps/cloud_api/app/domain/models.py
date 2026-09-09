@@ -238,6 +238,7 @@ class Entity(TimestampMixin, Base):
     supported_features: Mapped[int] = mapped_column(BigInteger, default=0)
     state: Mapped[str | None] = mapped_column(String(255))
     attributes_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    media_source_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
     last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
