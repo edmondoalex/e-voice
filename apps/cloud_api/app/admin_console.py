@@ -335,17 +335,17 @@ async def voice_categories_page(
     _admin(context)
     csrf = _csrf(context)
     categories = await _voice_categories(session, context)
-    category_counts = dict(
+    categorized_entities = list(
         (
-            await session.execute(
-                select(Entity.voice_category_id, func.count(Entity.id))
+            await session.scalars(
+                select(Entity)
                 .join(Installation)
                 .where(
                     Installation.tenant_id == context.tenant_id,
                     Entity.deleted_at.is_(None),
                     Entity.voice_category_id.is_not(None),
                 )
-                .group_by(Entity.voice_category_id)
+                .order_by(Entity.friendly_name, Entity.ha_entity_id)
             )
         ).all()
     )
@@ -359,12 +359,26 @@ async def voice_categories_page(
         "opening_status": "Quali porte risultano aperte?",
         "lock_status": "Qual è lo stato delle serrature?",
     }
-    category_summary = "".join(
-        f'<div class="card"><b>{_e(item.name)}</b> — {category_counts.get(item.id, 0)} entità'
-        f'{" <span class=\"bad\">Categoria vuota</span>" if not category_counts.get(item.id, 0) else ""}'
-        f'<br><span class="muted">Esempio: {_e(examples.get(item.slug, f"Tutti i valori {item.name}"))}</span></div>'
-        for item in categories
-    )
+    category_cards: list[str] = []
+    for item in categories:
+        members = [entity for entity in categorized_entities if entity.voice_category_id == item.id]
+        member_rows = "".join(
+            f'<li><b>{_e(effective_display_name(entity))}</b> '
+            f'<span class="muted">{_e(entity.ha_entity_id)}</span> '
+            f'<a class="button" href="/installations/{entity.installation_id}/entities/{entity.id}/edit">Modifica</a></li>'
+            for entity in members
+        )
+        detail = (
+            f'<ul class="category-entities">{member_rows}</ul>'
+            if members
+            else '<p class="bad">Categoria vuota</p>'
+        )
+        category_cards.append(
+            f'<details class="card category-card"><summary><b>{_e(item.name)}</b> — '
+            f'{len(members)} entità</summary><p class="muted">Esempio: '
+            f'{_e(examples.get(item.slug, f"Tutti i valori {item.name}"))}</p>{detail}</details>'
+        )
+    category_summary = "".join(category_cards)
     rows = "".join(
         f'<tr><td><b>{_e(item.name)}</b><br><span class="muted">{_e(item.slug)}</span></td>'
         f"<td>{_e(item.description or '—')}</td><td>{'Standard' if item.builtin else 'Personalizzata'}</td></tr>"

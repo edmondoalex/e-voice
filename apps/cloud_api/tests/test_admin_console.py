@@ -123,6 +123,7 @@ async def test_voice_categories_show_counts_empty_warnings_and_examples(
 
     assert page.status_code == 200
     assert "Conteggio ed esempi" in page.text
+    assert '<details class="card category-card">' in page.text
     assert "Categoria vuota" in page.text
     assert "Quanto produce il fotovoltaico?" in page.text
     assert "Le categorie vuote non producono risultati" in page.text
