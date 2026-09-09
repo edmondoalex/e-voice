@@ -73,6 +73,47 @@ def exposed_entity(
             "select_option",
             {"option": "eco"},
         ),
+        ("lock", {}, {"operation": "lock"}, "lock", {}),
+        ("lock", {}, {"operation": "unlock"}, "unlock", {}),
+        (
+            "alarm_control_panel",
+            {},
+            {"operation": "arm_home"},
+            "alarm_arm_home",
+            {},
+        ),
+        ("vacuum", {}, {"operation": "start"}, "start", {}),
+        ("vacuum", {}, {"operation": "return_to_base"}, "return_to_base", {}),
+        ("valve", {}, {"operation": "open"}, "open_valve", {}),
+        ("water_heater", {}, {"operation": "power_on"}, "turn_on", {}),
+        (
+            "water_heater",
+            {"min_temp": 30, "max_temp": 75},
+            {"operation": "set_target_temperature", "temperature": 55},
+            "set_temperature",
+            {"temperature": 55.0},
+        ),
+        (
+            "humidifier",
+            {},
+            {"operation": "set_percentage", "percentage": 45},
+            "set_humidity",
+            {"humidity": 45},
+        ),
+        (
+            "fan",
+            {"supported_features": 8, "preset_modes": ["eco", "boost"]},
+            {"operation": "set_preset_mode", "preset_mode": "eco"},
+            "set_preset_mode",
+            {"preset_mode": "eco"},
+        ),
+        (
+            "fan",
+            {"supported_features": 2},
+            {"operation": "oscillate_on"},
+            "oscillate",
+            {"oscillating": True},
+        ),
     ],
 )
 async def test_explicit_mapper_success(
@@ -117,6 +158,17 @@ async def test_explicit_mapper_success(
         ("fan", {"supported_features": 0}, {"operation": "set_percentage", "percentage": 50}),
         ("number", {"min": 0, "max": 10}, {"operation": "set_value", "value": 11}),
         ("select", {"options": ["eco"]}, {"operation": "select_option", "option": "other"}),
+        ("alarm_control_panel", {"code_format": "number"}, {"operation": "disarm"}),
+        (
+            "water_heater",
+            {"min_temp": 30, "max_temp": 75},
+            {"operation": "set_target_temperature", "temperature": 90},
+        ),
+        (
+            "fan",
+            {"supported_features": 8, "preset_modes": ["eco"]},
+            {"operation": "set_preset_mode", "preset_mode": "boost"},
+        ),
     ],
 )
 async def test_invalid_or_unsupported_capability_has_no_side_effect(

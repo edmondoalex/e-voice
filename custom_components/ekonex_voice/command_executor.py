@@ -375,6 +375,48 @@ def _map_command(
         if not isinstance(option, str) or not isinstance(options, list) or option not in options:
             raise InvalidArgument
         return domain, "select_option", {"option": option}
+    if domain == "lock" and operation in {"lock", "unlock"}:
+        _require_keys(arguments, set())
+        return domain, operation, {}
+    if domain == "alarm_control_panel" and operation in {"arm_home", "arm_away", "disarm"}:
+        _require_keys(arguments, set())
+        if state.attributes.get("code_format"):
+            raise UnsupportedCommand
+        service = {
+            "arm_home": "alarm_arm_home",
+            "arm_away": "alarm_arm_away",
+            "disarm": "alarm_disarm",
+        }[operation]
+        return domain, service, {}
+    if domain == "vacuum" and operation in {"start", "stop", "return_to_base"}:
+        _require_keys(arguments, set())
+        return domain, operation, {}
+    if domain == "valve" and operation in {"open", "close"}:
+        _require_keys(arguments, set())
+        return domain, "open_valve" if operation == "open" else "close_valve", {}
+    if domain in {"water_heater", "humidifier"} and operation in {"power_on", "power_off"}:
+        _require_keys(arguments, set())
+        return domain, "turn_on" if operation == "power_on" else "turn_off", {}
+    if domain == "water_heater" and operation == "set_target_temperature":
+        _require_keys(arguments, {"temperature"})
+        value = _number(command.get("temperature"))
+        minimum = _number(state.attributes.get("min_temp"))
+        maximum = _number(state.attributes.get("max_temp"))
+        if not minimum <= value <= maximum:
+            raise InvalidArgument
+        return domain, "set_temperature", {"temperature": value}
+    if domain == "humidifier" and operation == "set_percentage":
+        _require_keys(arguments, {"percentage"})
+        value = command.get("percentage")
+        if type(value) is not int or not 0 <= value <= 100:
+            raise InvalidArgument
+        return domain, "set_humidity", {"humidity": value}
+    if domain == "humidifier" and operation == "set_mode":
+        _require_keys(arguments, {"mode"})
+        mode = command.get("mode")
+        if not isinstance(mode, str) or mode not in state.attributes.get("available_modes", []):
+            raise InvalidArgument
+        return domain, "set_mode", {"mode": mode}
     raise UnsupportedCommand
 
 
@@ -508,6 +550,26 @@ def _map_fan(
         if not supported & FanEntityFeature.SET_SPEED:
             raise UnsupportedCommand
         return "fan", "set_percentage", {"percentage": percentage}
+    if operation == "set_preset_mode":
+        _require_keys(arguments, {"preset_mode"})
+        mode = command.get("preset_mode")
+        if (
+            not supported & FanEntityFeature.PRESET_MODE
+            or not isinstance(mode, str)
+            or mode not in state.attributes.get("preset_modes", [])
+        ):
+            raise InvalidArgument
+        return "fan", "set_preset_mode", {"preset_mode": mode}
+    if operation in {"oscillate_on", "oscillate_off"}:
+        _require_keys(arguments, set())
+        if not supported & FanEntityFeature.OSCILLATE:
+            raise UnsupportedCommand
+        return "fan", "oscillate", {"oscillating": operation == "oscillate_on"}
+    if operation in {"direction_forward", "direction_reverse"}:
+        _require_keys(arguments, set())
+        if not supported & FanEntityFeature.DIRECTION:
+            raise UnsupportedCommand
+        return "fan", "set_direction", {"direction": operation.removeprefix("direction_")}
     raise UnsupportedCommand
 
 

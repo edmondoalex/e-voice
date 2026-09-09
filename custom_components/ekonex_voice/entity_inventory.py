@@ -41,7 +41,13 @@ ATTRIBUTE_ALLOWLIST = {
     "climate": frozenset(
         {"temperature", "current_temperature", "hvac_modes", "min_temp", "max_temp"}
     ),
-    "fan": frozenset({"percentage"}),
+    "fan": frozenset({"percentage", "preset_mode", "preset_modes", "oscillating", "direction"}),
+    "select": frozenset({"options"}),
+    "water_heater": frozenset({"temperature", "min_temp", "max_temp", "operation_list"}),
+    "humidifier": frozenset(
+        {"humidity", "min_humidity", "max_humidity", "mode", "available_modes"}
+    ),
+    "alarm_control_panel": frozenset({"code_format", "code_arm_required"}),
     "media_player": frozenset({"volume_level", "is_volume_muted", "source", "source_list"}),
 }
 CHUNK_TARGET_BYTES = 48_000

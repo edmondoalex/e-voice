@@ -613,6 +613,81 @@ async def test_media_player_controls_follow_synchronized_capabilities(
     await client.aclose()
 
 
+async def test_extended_domain_controls_render_from_synchronized_capabilities(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    definitions = [
+        ("button", "button.test", {}, 0),
+        ("select", "select.mode", {"options": ["eco", "comfort"]}, 0),
+        ("lock", "lock.door", {}, 0),
+        ("alarm_control_panel", "alarm_control_panel.home", {}, 0),
+        ("vacuum", "vacuum.robot", {}, 0),
+        ("valve", "valve.water", {}, 0),
+        (
+            "water_heater",
+            "water_heater.boiler",
+            {"temperature": 50, "min_temp": 30, "max_temp": 75},
+            0,
+        ),
+        (
+            "humidifier",
+            "humidifier.office",
+            {"humidity": 45, "min_humidity": 30, "max_humidity": 70},
+            0,
+        ),
+        (
+            "fan",
+            "fan.office",
+            {"percentage": 40, "preset_mode": "eco", "preset_modes": ["eco", "boost"]},
+            15,
+        ),
+    ]
+    session.add_all(
+        [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id=entity_id,
+                ha_domain=domain,
+                ha_registry_id=f"registry-{domain}",
+                friendly_name=entity_id,
+                state="on",
+                available=True,
+                attributes_json=attributes,
+                supported_features=features,
+            )
+            for domain, entity_id, attributes, features in definitions
+        ]
+    )
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+
+    for label in (
+        "Pulsanti",
+        "Selettori",
+        "Serrature",
+        "Allarmi",
+        "Aspirapolvere",
+        "Valvole",
+        "Scaldacqua",
+        "Umidificatori",
+        "Ventilazione",
+        "BLOCCA",
+        "INSERISCI CASA",
+        "TORNA ALLA BASE",
+        "Velocità",
+        "Modalità",
+    ):
+        assert label in page.text
+    assert '<option value="eco" selected>eco</option>' in page.text
+    assert 'name="operation" value="select_option"' in page.text
+    assert 'name="operation" value="set_target_temperature"' in page.text
+    assert 'name="operation" value="set_percentage"' in page.text
+    await client.aclose()
+
+
 async def test_climate_controls_render_and_dispatch_closed_commands(
     session: AsyncSession, seeded_domain: SeededDomain, monkeypatch: object
 ) -> None:

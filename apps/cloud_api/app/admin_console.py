@@ -95,10 +95,26 @@ DOMAIN_OPERATIONS = {
     "switch": {"power_on", "power_off"},
     "cover": {"open", "close", "stop", "set_position"},
     "climate": {"set_target_temperature", "set_hvac_mode"},
-    "fan": {"power_on", "power_off", "set_percentage"},
+    "fan": {
+        "power_on",
+        "power_off",
+        "set_percentage",
+        "set_preset_mode",
+        "oscillate_on",
+        "oscillate_off",
+        "direction_forward",
+        "direction_reverse",
+    },
     "scene": {"activate"},
     "script": {"activate"},
     "button": {"press"},
+    "select": {"select_option"},
+    "lock": {"lock", "unlock"},
+    "alarm_control_panel": {"arm_home", "arm_away", "disarm"},
+    "vacuum": {"start", "stop", "return_to_base"},
+    "valve": {"open", "close"},
+    "water_heater": {"power_on", "power_off", "set_target_temperature"},
+    "humidifier": {"power_on", "power_off", "set_percentage", "set_mode"},
     "media_player": {
         "power_on",
         "power_off",
@@ -124,6 +140,10 @@ MEDIA_PLAYER_FEATURE_TURN_OFF = 256
 MEDIA_PLAYER_FEATURE_STOP = 4096
 MEDIA_PLAYER_FEATURE_PLAY = 16384
 MEDIA_PLAYER_FEATURE_SELECT_SOURCE = 2048
+FAN_FEATURE_SET_SPEED = 1
+FAN_FEATURE_OSCILLATE = 2
+FAN_FEATURE_DIRECTION = 4
+FAN_FEATURE_PRESET_MODE = 8
 
 
 def _media_sources(entity: Entity) -> list[str]:
@@ -374,7 +394,7 @@ async def voice_categories_page(
     for item in categories:
         members = [entity for entity in categorized_entities if entity.voice_category_id == item.id]
         member_rows = "".join(
-            f'<li><b>{_e(effective_display_name(entity))}</b> '
+            f"<li><b>{_e(effective_display_name(entity))}</b> "
             f'<span class="muted">{_e(entity.ha_entity_id)}</span> '
             f'<a class="button" href="/installations/{entity.installation_id}/entities/{entity.id}/edit">Modifica</a></li>'
             for entity in members
@@ -387,7 +407,7 @@ async def voice_categories_page(
         category_cards.append(
             f'<details class="card category-card"><summary><b>{_e(item.name)}</b> — '
             f'{len(members)} entità</summary><p class="muted">Esempio: '
-            f'{_e(examples.get(item.slug, f"Tutti i valori {item.name}"))}</p>{detail}</details>'
+            f"{_e(examples.get(item.slug, f'Tutti i valori {item.name}'))}</p>{detail}</details>"
         )
     category_summary = "".join(category_cards)
     rows = "".join(
@@ -414,22 +434,38 @@ async def voice_categories_page(
     visible_uncategorized = [
         (entity, installation_name)
         for entity, installation_name in uncategorized
-        if (not uq or uq in " ".join(filter(None, (entity.ha_entity_id, entity.friendly_name, entity.device_class))).casefold())
+        if (
+            not uq
+            or uq
+            in " ".join(
+                filter(None, (entity.ha_entity_id, entity.friendly_name, entity.device_class))
+            ).casefold()
+        )
         and (not ui or str(entity.installation_id) == ui)
         and (not ud or entity.ha_domain == ud)
         and (not ua or (entity.area_name or "") == ua)
     ]
+
     def _options(values: set[str], selected: str) -> str:
-        return "".join(f'<option value="{_e(value)}"{" selected" if value == selected else ""}>{_e(value)}</option>' for value in sorted(values))
+        return "".join(
+            f'<option value="{_e(value)}"{" selected" if value == selected else ""}>{_e(value)}</option>'
+            for value in sorted(values)
+        )
+
     installation_options = "".join(
         f'<option value="{entity.installation_id}"{" selected" if str(entity.installation_id) == ui else ""}>{_e(name)}</option>'
-        for entity, name in {entity.installation_id: (entity, name) for entity, name in uncategorized}.values()
+        for entity, name in {
+            entity.installation_id: (entity, name) for entity, name in uncategorized
+        }.values()
     )
-    unassigned_rows = "".join(
-        f'<label class="field"><input type="checkbox" name="entity_{entity.id}" value="1"> '
-        f'<b>{_e(effective_display_name(entity))}</b> <span class="muted">{_e(entity.ha_entity_id)} · {_e(name)} · {_e(entity.ha_domain)} · {_e(entity.area_name or "—")}</span></label>'
-        for entity, name in visible_uncategorized
-    ) or '<p class="muted">Nessuna entità corrispondente.</p>'
+    unassigned_rows = (
+        "".join(
+            f'<label class="field"><input type="checkbox" name="entity_{entity.id}" value="1"> '
+            f'<b>{_e(effective_display_name(entity))}</b> <span class="muted">{_e(entity.ha_entity_id)} · {_e(name)} · {_e(entity.ha_domain)} · {_e(entity.area_name or "—")}</span></label>'
+            for entity, name in visible_uncategorized
+        )
+        or '<p class="muted">Nessuna entità corrispondente.</p>'
+    )
     unassigned_panel = f'''<details class="card"><summary><b>Entità non assegnate — {len(uncategorized)}</b> (visualizzate {len(visible_uncategorized)})</summary>
 <form method="get"><input name="uq" placeholder="Cerca" value="{_e(request.query_params.get("uq", ""))}"><select name="uinstallation"><option value="">Tutte le installazioni</option>{installation_options}</select><select name="udomain"><option value="">Tutti i domini</option>{_options({e.ha_domain for e, _ in uncategorized}, ud)}</select><select name="uarea"><option value="">Tutte le aree</option>{_options({e.area_name for e, _ in uncategorized if e.area_name}, ua)}</select><button>Filtra non assegnate</button></form>
 <form method="post" action="/voice-categories/assign-selected"><input type="hidden" name="csrf_token" value="{_e(csrf)}">{unassigned_rows}<label class="field"><b>Categoria</b><select name="target_category_id" required><option value="">Seleziona categoria</option>{category_options}</select></label><button>Assegna le entità selezionate</button></form></details>'''
@@ -469,18 +505,35 @@ async def assign_selected_voice_category(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     try:
         target_id = UUID(values.get("target_category_id", ""))
-        selected_ids = [UUID(key.removeprefix("entity_")) for key in values if key.startswith("entity_")]
+        selected_ids = [
+            UUID(key.removeprefix("entity_")) for key in values if key.startswith("entity_")
+        ]
     except ValueError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Selezione non valida") from error
     if not selected_ids:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nessuna entità selezionata")
     if not any(item.id == target_id for item in await _voice_categories(session, context)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Categoria non trovata")
-    entities = list((await session.scalars(select(Entity).join(Installation).where(Installation.tenant_id == context.tenant_id, Entity.id.in_(selected_ids), Entity.deleted_at.is_(None), Entity.voice_category_id.is_(None)))).all())
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .join(Installation)
+                .where(
+                    Installation.tenant_id == context.tenant_id,
+                    Entity.id.in_(selected_ids),
+                    Entity.deleted_at.is_(None),
+                    Entity.voice_category_id.is_(None),
+                )
+            )
+        ).all()
+    )
     for entity in entities:
         entity.voice_category_id = target_id
     await session.commit()
-    return RedirectResponse(f"/voice-categories?bulk_assigned={len(entities)}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        f"/voice-categories?bulk_assigned={len(entities)}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/voice-categories/bulk-assign", response_class=RedirectResponse)
@@ -1073,6 +1126,11 @@ ENTITY_DOMAIN_LABELS = {
     "button": "Pulsanti",
     "alarm_control_panel": "Allarmi",
     "lock": "Serrature",
+    "select": "Selettori",
+    "vacuum": "Aspirapolvere",
+    "valve": "Valvole",
+    "water_heater": "Scaldacqua",
+    "humidifier": "Umidificatori",
 }
 
 
@@ -1279,6 +1337,44 @@ def _media_player_controls(
     return "".join(controls) or '<span class="muted">Nessun controllo supportato</span>'
 
 
+def _range_command_form(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    operation: str,
+    label: str,
+    value: float,
+    minimum: float,
+    maximum: float,
+    enabled: bool,
+    *,
+    step: str = "1",
+) -> str:
+    disabled = "" if enabled else " disabled"
+    return f'<form class="entity-command inline level-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{_e(operation)}"><label>{_e(label)} <input type="number" name="value" value="{_e(value)}" min="{_e(minimum)}" max="{_e(maximum)}" step="{step}"{disabled}></label><button class="command-button"{disabled}>IMPOSTA</button></form>'
+
+
+def _option_command_form(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    operation: str,
+    label: str,
+    values: list[object],
+    current: object,
+    enabled: bool,
+) -> str:
+    options = "".join(
+        f'<option value="{_e(value)}"{" selected" if value == current else ""}>{_e(value)}</option>'
+        for value in values
+        if isinstance(value, str)
+    )
+    if not options:
+        return '<span class="muted">Nessun controllo diretto</span>'
+    disabled = "" if enabled else " disabled"
+    return f'<form class="entity-command inline" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{_e(operation)}"><label>{_e(label)} <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>SELEZIONA</button></form>'
+
+
 def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
     if entity.ha_domain == "light":
         return "".join(
@@ -1319,6 +1415,141 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
         return _climate_controls(installation, entity, csrf, enabled)
     if entity.ha_domain == "media_player":
         return _media_player_controls(installation, entity, csrf, enabled)
+    if entity.ha_domain == "fan":
+        attributes = entity.attributes_json or {}
+        controls = [
+            _control_form(installation, entity, csrf, "power_on", "ON", enabled=enabled),
+            _control_form(installation, entity, csrf, "power_off", "OFF", enabled=enabled),
+        ]
+        if entity.supported_features & FAN_FEATURE_SET_SPEED:
+            controls.append(
+                _range_command_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "set_percentage",
+                    "Velocità",
+                    _finite_number(attributes.get("percentage")) or 0,
+                    0,
+                    100,
+                    enabled,
+                )
+            )
+        presets = attributes.get("preset_modes")
+        if entity.supported_features & FAN_FEATURE_PRESET_MODE and isinstance(presets, list):
+            controls.append(
+                _option_command_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "set_preset_mode",
+                    "Modalità",
+                    presets,
+                    attributes.get("preset_mode"),
+                    enabled,
+                )
+            )
+        if entity.supported_features & FAN_FEATURE_OSCILLATE:
+            oscillating = attributes.get("oscillating") is True
+            controls.append(
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "oscillate_off" if oscillating else "oscillate_on",
+                    "FERMA OSCILLAZIONE" if oscillating else "OSCILLA",
+                    enabled=enabled,
+                )
+            )
+        if entity.supported_features & FAN_FEATURE_DIRECTION:
+            forward = attributes.get("direction") == "forward"
+            controls.append(
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "direction_reverse" if forward else "direction_forward",
+                    "DIREZIONE INDIETRO" if forward else "DIREZIONE AVANTI",
+                    enabled=enabled,
+                )
+            )
+        return "".join(controls)
+    if entity.ha_domain == "select":
+        options = (entity.attributes_json or {}).get("options", [])
+        if isinstance(options, list) and options:
+            return _option_command_form(
+                installation,
+                entity,
+                csrf,
+                "select_option",
+                "Opzione",
+                options,
+                entity.state,
+                enabled,
+            )
+    if entity.ha_domain == "water_heater":
+        attributes = entity.attributes_json or {}
+        controls = [
+            _control_form(installation, entity, csrf, "power_on", "ON", enabled=enabled),
+            _control_form(installation, entity, csrf, "power_off", "OFF", enabled=enabled),
+        ]
+        current = _finite_number(attributes.get("temperature"))
+        minimum = _finite_number(attributes.get("min_temp"))
+        maximum = _finite_number(attributes.get("max_temp"))
+        if current is not None and minimum is not None and maximum is not None:
+            controls.append(
+                _range_command_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "set_target_temperature",
+                    "Temperatura",
+                    current,
+                    minimum,
+                    maximum,
+                    enabled,
+                    step="0.5",
+                )
+            )
+        return "".join(controls)
+    if entity.ha_domain == "humidifier":
+        attributes = entity.attributes_json or {}
+        controls = [
+            _control_form(installation, entity, csrf, "power_on", "ON", enabled=enabled),
+            _control_form(installation, entity, csrf, "power_off", "OFF", enabled=enabled),
+        ]
+        controls.append(
+            _range_command_form(
+                installation,
+                entity,
+                csrf,
+                "set_percentage",
+                "Umidità",
+                _finite_number(attributes.get("humidity")) or 0,
+                _finite_number(attributes.get("min_humidity")) or 0,
+                _finite_number(attributes.get("max_humidity")) or 100,
+                enabled,
+            )
+        )
+        modes = attributes.get("available_modes")
+        if isinstance(modes, list):
+            controls.append(
+                _option_command_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "set_mode",
+                    "Modalità",
+                    modes,
+                    attributes.get("mode"),
+                    enabled,
+                )
+            )
+        return "".join(controls)
+    if entity.ha_domain == "alarm_control_panel" and (entity.attributes_json or {}).get(
+        "code_format"
+    ):
+        return '<span class="muted">Comandi disabilitati: il pannello richiede un codice.</span>'
     simple_labels = {
         "power_on": "ON",
         "power_off": "OFF",
@@ -1327,6 +1558,17 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
         "stop": "STOP",
         "activate": "ATTIVA",
         "press": "PREMI",
+        "lock": "BLOCCA",
+        "unlock": "SBLOCCA",
+        "arm_home": "INSERISCI CASA",
+        "arm_away": "INSERISCI FUORI CASA",
+        "disarm": "DISINSERISCI",
+        "start": "AVVIA",
+        "return_to_base": "TORNA ALLA BASE",
+        "oscillate_on": "OSCILLA",
+        "oscillate_off": "FERMA OSCILLAZIONE",
+        "direction_forward": "DIREZIONE AVANTI",
+        "direction_reverse": "DIREZIONE INDIETRO",
     }
     return (
         "".join(
@@ -1670,6 +1912,12 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
         data["volume_percent"] = int(value)
     elif operation == "select_source":
         data["source"] = value
+    elif operation == "select_option":
+        data["option"] = value
+    elif operation == "set_preset_mode":
+        data["preset_mode"] = value
+    elif operation == "set_mode":
+        data["mode"] = value
     return data
 
 
@@ -1686,6 +1934,28 @@ def _validate_climate_value(entity: Entity, operation: str, value: str) -> None:
             raise ValueError("target temperature above entity maximum")
     elif operation == "set_hvac_mode" and value not in _climate_hvac_modes(entity):
         raise ValueError("HVAC mode not advertised by entity")
+
+
+def _validate_domain_command_value(entity: Entity, operation: str, value: str) -> None:
+    attributes = entity.attributes_json or {}
+    if operation == "select_option" and value not in attributes.get("options", []):
+        raise ValueError("select option not advertised by entity")
+    if operation == "set_preset_mode" and value not in attributes.get("preset_modes", []):
+        raise ValueError("fan preset mode not advertised by entity")
+    if operation == "set_mode" and value not in attributes.get("available_modes", []):
+        raise ValueError("humidifier mode not advertised by entity")
+    if entity.ha_domain == "water_heater" and operation == "set_target_temperature":
+        requested = float(value)
+        minimum = _finite_number(attributes.get("min_temp"))
+        maximum = _finite_number(attributes.get("max_temp"))
+        if minimum is None or maximum is None or not minimum <= requested <= maximum:
+            raise ValueError("water heater temperature outside bounds")
+    if entity.ha_domain == "humidifier" and operation == "set_percentage":
+        requested = int(value)
+        minimum = int(_finite_number(attributes.get("min_humidity")) or 0)
+        maximum = int(_finite_number(attributes.get("max_humidity")) or 100)
+        if not minimum <= requested <= maximum:
+            raise ValueError("humidifier target outside bounds")
 
 
 @router.post("/installations/{installation_id}/commands", response_model=None)
@@ -1724,6 +1994,11 @@ async def send_command(
                 values.get("operation", ""),
                 values.get("value", ""),
             )
+        _validate_domain_command_value(
+            entity,
+            values.get("operation", ""),
+            values.get("value", ""),
+        )
         if values.get("operation") == "select_source":
             source = values.get("value", "")
             if (

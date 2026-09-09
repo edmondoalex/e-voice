@@ -108,6 +108,32 @@ class SelectCommand(StrictCommand):
     option: str = Field(min_length=1, max_length=255)
 
 
+class DomainActionCommand(StrictCommand):
+    operation: Literal[
+        "lock",
+        "unlock",
+        "arm_home",
+        "arm_away",
+        "disarm",
+        "start",
+        "return_to_base",
+        "oscillate_on",
+        "oscillate_off",
+        "direction_forward",
+        "direction_reverse",
+    ]
+
+
+class PresetModeCommand(StrictCommand):
+    operation: Literal["set_preset_mode"]
+    preset_mode: str = Field(min_length=1, max_length=255)
+
+
+class ModeCommand(StrictCommand):
+    operation: Literal["set_mode"]
+    mode: str = Field(min_length=1, max_length=255)
+
+
 class AlexaSpeechCommand(StrictCommand):
     operation: Literal["announce", "speak"]
     message: str = Field(
@@ -134,6 +160,9 @@ type CommandSpec = Annotated[
     | PressCommand
     | NumberCommand
     | SelectCommand
+    | DomainActionCommand
+    | PresetModeCommand
+    | ModeCommand
     | AlexaSpeechCommand,
     Field(discriminator="operation"),
 ]
