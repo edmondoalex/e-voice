@@ -334,10 +334,41 @@ async def voice_categories_page(
 ) -> HTMLResponse:
     _admin(context)
     csrf = _csrf(context)
+    categories = await _voice_categories(session, context)
+    category_counts = dict(
+        (
+            await session.execute(
+                select(Entity.voice_category_id, func.count(Entity.id))
+                .join(Installation)
+                .where(
+                    Installation.tenant_id == context.tenant_id,
+                    Entity.deleted_at.is_(None),
+                    Entity.voice_category_id.is_not(None),
+                )
+                .group_by(Entity.voice_category_id)
+            )
+        ).all()
+    )
+    examples = {
+        "photovoltaic_power": "Quanto produce il fotovoltaico?",
+        "consumption_power": "Quanto sta consumando la casa?",
+        "battery_level": "Come sono messe tutte le batterie?",
+        "temperature": "Quali sono le temperature ambiente?",
+        "thermal_temperature": "Temperature della centrale termica",
+        "alarm_status": "Qual è lo stato dell'allarme?",
+        "opening_status": "Quali porte risultano aperte?",
+        "lock_status": "Qual è lo stato delle serrature?",
+    }
+    category_summary = "".join(
+        f'<div class="card"><b>{_e(item.name)}</b> — {category_counts.get(item.id, 0)} entità'
+        f'{" <span class=\"bad\">Categoria vuota</span>" if not category_counts.get(item.id, 0) else ""}'
+        f'<br><span class="muted">Esempio: {_e(examples.get(item.slug, f"Tutti i valori {item.name}"))}</span></div>'
+        for item in categories
+    )
     rows = "".join(
         f'<tr><td><b>{_e(item.name)}</b><br><span class="muted">{_e(item.slug)}</span></td>'
         f"<td>{_e(item.description or '—')}</td><td>{'Standard' if item.builtin else 'Personalizzata'}</td></tr>"
-        for item in await _voice_categories(session, context)
+        for item in categories
     )
     assigned = request.query_params.get("assigned", "").strip()
     result = (
@@ -345,7 +376,7 @@ async def voice_categories_page(
         if assigned.isdigit()
         else ""
     )
-    body = f'''{result}<div class="card"><h2>Classificazione automatica</h2>
+    body = f'''{result}<div class="card"><h2>Conteggio ed esempi</h2><p class="muted">Le categorie vuote non producono risultati nelle richieste di gruppo.</p></div>{category_summary}<div class="card"><h2>Classificazione automatica</h2>
 <p class="muted">Assegna le categorie standard alle sole entità ancora senza categoria, usando tipo, unità, device class, nome ed entity_id. Le scelte manuali non vengono sovrascritte.</p>
 <form method="post" action="/voice-categories/auto-assign"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Classifica automaticamente le entità non assegnate</button></form></div>
 <div class="card"><h2>Crea categoria</h2>

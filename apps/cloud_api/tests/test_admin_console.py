@@ -113,6 +113,22 @@ async def test_installations_page_is_real_tenant_scoped_and_links_to_detail(
     await client.aclose()
 
 
+async def test_voice_categories_show_counts_empty_warnings_and_examples(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+
+    page = await client.get("/voice-categories")
+
+    assert page.status_code == 200
+    assert "Conteggio ed esempi" in page.text
+    assert "Categoria vuota" in page.text
+    assert "Quanto produce il fotovoltaico?" in page.text
+    assert "Le categorie vuote non producono risultati" in page.text
+    await client.aclose()
+
+
 async def test_connector_compatibility_is_visible_across_console(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
