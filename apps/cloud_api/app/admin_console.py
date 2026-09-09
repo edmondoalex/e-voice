@@ -390,9 +390,21 @@ async def voice_categories_page(
         if assigned.isdigit()
         else ""
     )
+    bulk_assigned = request.query_params.get("bulk_assigned", "").strip()
+    if bulk_assigned.isdigit():
+        result += f'<div class="card ok"><b>Assegnazione in massa completata:</b> {_e(bulk_assigned)} entità assegnate.</div>'
+    category_options = "".join(
+        f'<option value="{item.id}">{_e(item.name)}</option>' for item in categories
+    )
     body = f'''{result}<div class="card"><h2>Conteggio ed esempi</h2><p class="muted">Le categorie vuote non producono risultati nelle richieste di gruppo.</p></div>{category_summary}<div class="card"><h2>Classificazione automatica</h2>
 <p class="muted">Assegna le categorie standard alle sole entità ancora senza categoria, usando tipo, unità, device class, nome ed entity_id. Le scelte manuali non vengono sovrascritte.</p>
 <form method="post" action="/voice-categories/auto-assign"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><button>Classifica automaticamente le entità non assegnate</button></form></div>
+<div class="card"><h2>Assegnazione in massa</h2>
+<p class="muted">Assegna solo le entità ancora senza categoria che contengono il criterio nel nome, entity_id o device class. Esempio: battery.</p>
+<form method="post" action="/voice-categories/bulk-assign"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
+<label class="field"><b>Criterio</b><input name="match" maxlength="80" placeholder="battery" required></label>
+<label class="field"><b>Categoria di destinazione</b><select name="target_category_id" required><option value="">Seleziona categoria</option>{category_options}</select></label>
+<button>Assegna tutte le corrispondenze non assegnate</button></form></div>
 <div class="card"><h2>Crea categoria</h2>
 <p class="muted">La categoria indica che cosa rappresenta il sensore; il nome vocale identifica il singolo sensore.</p>
 <form method="post"><input type="hidden" name="csrf_token" value="{_e(csrf)}">
@@ -406,6 +418,61 @@ async def voice_categories_page(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+@router.post("/voice-categories/bulk-assign", response_class=RedirectResponse)
+async def bulk_assign_voice_category(
+    request: Request,
+    context: Annotated[TenantContext, console_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> RedirectResponse:
+    """Assign matching uncategorized tenant entities without overwriting choices."""
+    _admin(context)
+    values = await _form(request)
+    if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    match = values.get("match", "").strip().casefold()
+    if not match or len(match) > 80:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Criterio non valido")
+    try:
+        target_id = UUID(values.get("target_category_id", ""))
+    except ValueError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Categoria non valida") from error
+    if not any(item.id == target_id for item in await _voice_categories(session, context)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Categoria non trovata")
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .join(Installation)
+                .where(
+                    Installation.tenant_id == context.tenant_id,
+                    Entity.deleted_at.is_(None),
+                    Entity.voice_category_id.is_(None),
+                )
+            )
+        ).all()
+    )
+    assigned = 0
+    for entity in entities:
+        searchable = " ".join(
+            value
+            for value in (
+                entity.ha_entity_id,
+                entity.friendly_name,
+                entity.display_name,
+                entity.voice_name,
+                entity.device_class,
+            )
+            if value
+        ).casefold()
+        if match in searchable:
+            entity.voice_category_id = target_id
+            assigned += 1
+    await session.commit()
+    return RedirectResponse(
+        f"/voice-categories?bulk_assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/voice-categories", response_class=RedirectResponse)

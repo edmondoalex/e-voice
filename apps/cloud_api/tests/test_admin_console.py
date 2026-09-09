@@ -25,6 +25,7 @@ from apps.cloud_api.app.domain.models import (
     Installation,
     MaintenanceRun,
     OperationalEvent,
+    VoiceCategory,
 )
 from apps.cloud_api.app.evcp import CommandResultPayload, CommandStatus, sessions
 from apps.cloud_api.app.main import app
@@ -127,6 +128,44 @@ async def test_voice_categories_show_counts_empty_warnings_and_examples(
     assert "Categoria vuota" in page.text
     assert "Quanto produce il fotovoltaico?" in page.text
     assert "Le categorie vuote non producono risultati" in page.text
+    await client.aclose()
+
+
+async def test_bulk_assigns_matching_uncategorized_entities(
+    session: AsyncSession, seeded_domain: SeededDomain
+) -> None:
+    target = VoiceCategory(
+        tenant_id=seeded_domain.tenant_a_id,
+        slug="photovoltaic_batteries",
+        name="Batterie Fotovoltaico",
+        builtin=False,
+    )
+    session.add(target)
+    await session.flush()
+    matching = Entity(
+        installation_id=seeded_domain.installation_a_id,
+        ha_entity_id="sensor.inverter_battery",
+        ha_domain="sensor",
+        friendly_name="Batteria inverter",
+        device_class="battery",
+    )
+    session.add(matching)
+    await session.commit()
+    client = await _client(session)
+    await _login(client, "owner@example.test", "owner-password-123")
+    page = await client.get("/voice-categories")
+    response = await client.post(
+        "/voice-categories/bulk-assign",
+        data={
+            "csrf_token": _csrf(page),
+            "match": "battery",
+            "target_category_id": str(target.id),
+        },
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/voice-categories?bulk_assigned=1"
+    await session.refresh(matching)
+    assert matching.voice_category_id == target.id
     await client.aclose()
 
 
