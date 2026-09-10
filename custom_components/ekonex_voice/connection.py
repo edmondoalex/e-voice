@@ -30,6 +30,7 @@ CONNECTOR_CAPABILITIES = {
     "supports_correlation_id": True,
     "supports_command_diagnostics": True,
     "supports_heartbeat_diagnostics": True,
+    "supports_control4_favorites": True,
 }
 
 

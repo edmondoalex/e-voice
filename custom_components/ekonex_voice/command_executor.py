@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,12 +21,14 @@ from homeassistant.components.media_player import MediaPlayerEntityFeature
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .entity_inventory import EntityInventorySynchronizer
 
 COMMAND_TIMEOUT_SECONDS = 8.0
 RESULT_CACHE_SIZE = 256
 MAX_ANNOUNCEMENT_LENGTH = 500
+CONTROL4_COMMAND_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_/-]{0,126}[a-z0-9])?$")
 CommandStatus = Literal[
     "success",
     "target_not_found",
@@ -122,6 +126,8 @@ class EkonexVoiceCommandExecutor:
                 "payload": _redacted_command(command),
             }
         ]
+        if command.get("operation") == "control4_favorite":
+            return await self._control4_favorite(command_id, command, correlation_id, diagnostics)
         registry = er.async_get(self._hass)
         entry = next((item for item in registry.entities.values() if item.id == registry_id), None)
         if entry is None or entry.disabled:
@@ -276,6 +282,74 @@ class EkonexVoiceCommandExecutor:
                         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                     }
                 )
+        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+
+    async def _control4_favorite(
+        self,
+        command_id: str,
+        command: dict[str, object],
+        correlation_id: str | None,
+        diagnostics: list[dict[str, object]],
+    ) -> CommandResult:
+        """Call one strictly bounded Control4 HTTP receiver on the local network."""
+        if set(command) != {"operation", "host", "port", "command"}:
+            return CommandResult(
+                command_id,
+                "invalid_argument",
+                "INVALID_PARAMETER",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        host, port, action = command.get("host"), command.get("port"), command.get("command")
+        try:
+            address = ipaddress.ip_address(str(host))
+        except ValueError:
+            address = None
+        if (
+            address is None
+            or not address.is_private
+            or address.is_loopback
+            or address.is_multicast
+            or type(port) is not int
+            or not 1 <= port <= 65535
+            or not isinstance(action, str)
+            or CONTROL4_COMMAND_PATTERN.fullmatch(action) is None
+            or ".." in action
+            or "//" in action
+        ):
+            return CommandResult(
+                command_id,
+                "invalid_argument",
+                "INVALID_PARAMETER",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        url = f"http://{address}:{port}/{action}"
+        started = perf_counter()
+        try:
+            async with asyncio.timeout(5):
+                response = await async_get_clientsession(self._hass).get(url, allow_redirects=False)
+                async with response:
+                    if not 200 <= response.status < 300:
+                        raise RuntimeError(f"HTTP_{response.status}")
+        except TimeoutError:
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception as error:
+            diagnostics.append(
+                _service_result(
+                    command_id, correlation_id, started, False, type(error).__name__, ""
+                )
+            )
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "CONTROL4_HTTP_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        diagnostics.append(_service_result(command_id, correlation_id, started, True, None, None))
         return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
 
     async def _camera_snapshot(

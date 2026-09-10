@@ -195,6 +195,7 @@ class Installation(TimestampMixin, Base):
     sync_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     inventory_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    control4_favorites_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     tenant: Mapped[Tenant] = relationship(back_populates="installations")
     entities: Mapped[list["Entity"]] = relationship(back_populates="installation")

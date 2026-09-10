@@ -147,6 +147,13 @@ class AlexaSpeechCommand(StrictCommand):
     )
 
 
+class Control4FavoriteCommand(StrictCommand):
+    operation: Literal["control4_favorite"]
+    host: str = Field(pattern=r"^\d{1,3}(?:\.\d{1,3}){3}$", max_length=15)
+    port: int = Field(ge=1, le=65535)
+    command: str = Field(pattern=r"^[a-z0-9][a-z0-9_/-]{0,127}$", max_length=128)
+
+
 type CommandSpec = Annotated[
     PowerCommand
     | BrightnessCommand
@@ -168,7 +175,8 @@ type CommandSpec = Annotated[
     | DomainActionCommand
     | PresetModeCommand
     | ModeCommand
-    | AlexaSpeechCommand,
+    | AlexaSpeechCommand
+    | Control4FavoriteCommand,
     Field(discriminator="operation"),
 ]
 command_adapter: TypeAdapter[CommandSpec] = TypeAdapter(CommandSpec)

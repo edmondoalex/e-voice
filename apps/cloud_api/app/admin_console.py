@@ -198,6 +198,7 @@ def _layout(title: str, body: str, context: TenantContext, csrf: str, active: st
             _nav_link("/voice-categories", "Categorie sensori", "voice-categories", active),
             _nav_link("/alexa-routines", "Routine vocali", "alexa-routines", active),
             _nav_link("/doorbells", "Campanelli", "doorbells", active),
+            _nav_link("/control4-favorites", "Preferiti musicali", "control4-favorites", active),
             _nav_link("/laboratory/learning", "Apprendimento IA", "ai-learning", active),
             _nav_link("/activity", "Attività", "activity", active),
             _nav_link("/system", "Sistema", "system", active),
