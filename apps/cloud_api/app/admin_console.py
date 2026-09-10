@@ -1140,11 +1140,13 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
         grouped.setdefault(entity.ha_domain, []).append(entity)
     sections: list[str] = []
     for domain in sorted(
-        grouped,
+        set(grouped) | set(ENTITY_DOMAIN_LABELS),
         key=lambda value: (ENTITY_DOMAIN_LABELS.get(value, value).casefold(), value),
     ):
-        domain_entities = grouped[domain]
+        domain_entities = grouped.get(domain, [])
         rows = "".join(_entity_row(installation, entity, csrf) for entity in domain_entities)
+        if not rows:
+            rows = '<tr><td colspan="5" class="muted">Nessuna entitÃ  sincronizzata.</td></tr>'
         label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
         sections.append(
             f'<details class="entity-group" data-domain="{_e(domain)}">'

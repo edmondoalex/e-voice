@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app import pairing_api
-from apps.cloud_api.app.admin_console import _database_size_mb
+from apps.cloud_api.app.admin_console import ENTITY_DOMAIN_LABELS, _database_size_mb, _entity_groups
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -686,6 +686,16 @@ async def test_extended_domain_controls_render_from_synchronized_capabilities(
     assert 'name="operation" value="set_target_temperature"' in page.text
     assert 'name="operation" value="set_percentage"' in page.text
     await client.aclose()
+
+
+def test_entity_groups_include_supported_domains_with_zero_entities() -> None:
+    html = _entity_groups(MagicMock(), [], "csrf-token")
+
+    for domain, label in ENTITY_DOMAIN_LABELS.items():
+        assert f'data-domain="{domain}"' in html
+        assert f"<span>{label}</span>" in html
+    assert html.count('<span class="entity-group-count">0</span>') == len(ENTITY_DOMAIN_LABELS)
+    assert html.count("Nessuna entitÃ  sincronizzata.") == len(ENTITY_DOMAIN_LABELS)
 
 
 async def test_climate_controls_render_and_dispatch_closed_commands(
