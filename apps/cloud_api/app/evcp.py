@@ -32,7 +32,7 @@ from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
 
 PROTOCOL_VERSION = 1
-MAX_MESSAGE_BYTES = 65_536
+MAX_MESSAGE_BYTES = 1_048_576
 HANDSHAKE_TIMEOUT_SECONDS = 10.0
 HEARTBEAT_INTERVAL_SECONDS = 30
 LIVENESS_TIMEOUT_SECONDS = 75.0
@@ -169,6 +169,7 @@ class CommandResultPayload(StrictModel):
     error_code: str | None = Field(default=None, max_length=64, pattern=r"^[A-Z0-9_]+$")
     correlation_id: UUID | None = None
     diagnostics: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    response_data: dict[str, str] | None = None
 
 
 class CommandResultMessage(StrictModel):

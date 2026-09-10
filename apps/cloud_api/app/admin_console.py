@@ -115,6 +115,7 @@ DOMAIN_OPERATIONS = {
     "valve": {"open", "close"},
     "water_heater": {"power_on", "power_off", "set_target_temperature"},
     "humidifier": {"power_on", "power_off", "set_percentage", "set_mode"},
+    "camera": {"camera_snapshot"},
     "media_player": {
         "power_on",
         "power_off",
@@ -260,6 +261,12 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
       if (!response.ok || !payload.ok) throw new Error(payload.detail || payload.message || 'Comando non riuscito');
       feedback.className = 'command-feedback ok';
       feedback.textContent = 'Comando eseguito';
+      if (payload.image_data_url) {{
+        const preview = row.querySelector('.camera-preview');
+        preview.src = payload.image_data_url;
+        preview.hidden = false;
+        feedback.textContent = 'Foto aggiornata';
+      }}
       if (Object.hasOwn(payload, 'value')) feedback.textContent = `Comando eseguito: ${{payload.value}}`;
       if (payload.state === 'on' || payload.state === 'off') {{
         row.classList.remove('state-on', 'state-off');
@@ -1131,6 +1138,7 @@ ENTITY_DOMAIN_LABELS = {
     "valve": "Valvole",
     "water_heater": "Scaldacqua",
     "humidifier": "Umidificatori",
+    "camera": "Telecamere",
 }
 
 
@@ -1548,6 +1556,18 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                 )
             )
         return "".join(controls)
+    if entity.ha_domain == "camera":
+        return (
+            _control_form(
+                installation,
+                entity,
+                csrf,
+                "camera_snapshot",
+                "AGGIORNA FOTO",
+                enabled=enabled,
+            )
+            + '<img class="camera-preview" hidden alt="Anteprima telecamera" style="max-width:640px;width:100%;height:auto;border-radius:8px">'
+        )
     simple_labels = {
         "power_on": "ON",
         "power_off": "OFF",
@@ -2063,6 +2083,11 @@ async def send_command(
             "error_code": outcome.error_code,
             "state": target_state,
         }
+        if succeeded and outcome.response_data:
+            content_type = outcome.response_data.get("content_type", "image/jpeg")
+            image_base64 = outcome.response_data.get("image_base64")
+            if image_base64:
+                response_payload["image_data_url"] = f"data:{content_type};base64,{image_base64}"
         if succeeded and command.operation in {"set_target_temperature", "set_hvac_mode"}:
             command_payload = command.model_dump(mode="json")
             response_payload["value"] = command_payload.get(

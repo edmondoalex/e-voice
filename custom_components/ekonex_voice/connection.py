@@ -331,6 +331,7 @@ class EkonexVoiceConnection:
             result.error_code,
             result.correlation_id,
             (session_check, *result.diagnostics[:14]),
+            result.response_data,
         )
         _LOGGER.info(
             "connector_command_result_session %s",

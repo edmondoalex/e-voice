@@ -98,6 +98,10 @@ class PressCommand(StrictCommand):
     operation: Literal["press"]
 
 
+class CameraSnapshotCommand(StrictCommand):
+    operation: Literal["camera_snapshot"]
+
+
 class NumberCommand(StrictCommand):
     operation: Literal["set_value"]
     value: float
@@ -158,6 +162,7 @@ type CommandSpec = Annotated[
     | MediaSourceCommand
     | ActivateCommand
     | PressCommand
+    | CameraSnapshotCommand
     | NumberCommand
     | SelectCommand
     | DomainActionCommand
@@ -195,6 +200,7 @@ class DispatchOutcome:
     command_id: UUID
     status: str
     error_code: str | None
+    response_data: dict[str, str] | None = None
 
 
 class CommandDispatchService:
@@ -370,7 +376,7 @@ class CommandDispatchService:
             installation,
             registry_id,
             command.operation,
-            DispatchOutcome(request_id, result.status, result.error_code),
+            DispatchOutcome(request_id, result.status, result.error_code, result.response_data),
         )
 
     async def _entity(self, installation_id: UUID, registry_id: str) -> Entity | None:

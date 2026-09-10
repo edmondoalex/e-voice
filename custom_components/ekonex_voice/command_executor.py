@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ class CommandResult:
     error_code: str | None = None
     correlation_id: str | None = None
     diagnostics: tuple[dict[str, object], ...] = ()
+    response_data: dict[str, str] | None = None
 
     def payload(self, session_id: str) -> dict[str, object]:
         value: dict[str, object] = {
@@ -58,6 +60,8 @@ class CommandResult:
             value["correlation_id"] = self.correlation_id
         if self.diagnostics:
             value["diagnostics"] = list(self.diagnostics)
+        if self.response_data is not None:
+            value["response_data"] = self.response_data
         return value
 
 
@@ -165,6 +169,10 @@ class EkonexVoiceCommandExecutor:
                 correlation_id,
                 tuple(diagnostics),
             )
+        if entry.domain == "camera" and command.get("operation") == "camera_snapshot":
+            return await self._camera_snapshot(
+                command_id, entry.entity_id, correlation_id, diagnostics
+            )
         if command.get("operation") in {"announce", "speak"} and not _is_alexa_notify(
             entry, str(command.get("operation"))
         ):
@@ -269,6 +277,41 @@ class EkonexVoiceCommandExecutor:
                     }
                 )
         return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+
+    async def _camera_snapshot(
+        self,
+        command_id: str,
+        entity_id: str,
+        correlation_id: str | None,
+        diagnostics: list[dict[str, object]],
+    ) -> CommandResult:
+        try:
+            from homeassistant.components.camera import async_get_image
+
+            image = await async_get_image(self._hass, entity_id, timeout=8, width=640, height=480)
+            if len(image.content) > 700_000:
+                raise ValueError("snapshot too large")
+        except TimeoutError:
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception:
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "CAMERA_SNAPSHOT_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        encoded = base64.b64encode(image.content).decode("ascii")
+        return CommandResult(
+            command_id,
+            "success",
+            None,
+            correlation_id,
+            tuple(diagnostics),
+            {"content_type": image.content_type, "image_base64": encoded},
+        )
 
 
 def _service_result(
