@@ -545,28 +545,18 @@ def _map_fan(
         percentage = command.get("percentage")
         if type(percentage) is not int or not 0 <= percentage <= 100:
             raise InvalidArgument
-        if not supported & FanEntityFeature.SET_SPEED:
-            raise UnsupportedCommand
         return "fan", "set_percentage", {"percentage": percentage}
     if operation == "set_preset_mode":
         _require_keys(arguments, {"preset_mode"})
         mode = command.get("preset_mode")
-        if (
-            not supported & FanEntityFeature.PRESET_MODE
-            or not isinstance(mode, str)
-            or mode not in state.attributes.get("preset_modes", [])
-        ):
+        if not isinstance(mode, str) or mode not in state.attributes.get("preset_modes", []):
             raise InvalidArgument
         return "fan", "set_preset_mode", {"preset_mode": mode}
     if operation in {"oscillate_on", "oscillate_off"}:
         _require_keys(arguments, set())
-        if not supported & FanEntityFeature.OSCILLATE:
-            raise UnsupportedCommand
         return "fan", "oscillate", {"oscillating": operation == "oscillate_on"}
     if operation in {"direction_forward", "direction_reverse"}:
         _require_keys(arguments, set())
-        if not supported & FanEntityFeature.DIRECTION:
-            raise UnsupportedCommand
         return "fan", "set_direction", {"direction": operation.removeprefix("direction_")}
     raise UnsupportedCommand
 

@@ -1905,7 +1905,7 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     elif operation == "set_hvac_mode":
         data["hvac_mode"] = value
     elif operation == "set_percentage":
-        data["percentage"] = int(value)
+        data["percentage"] = _integer_form_value(value)
     elif operation == "set_volume":
         data["volume_percent"] = int(value)
     elif operation == "select_source":
@@ -1917,6 +1917,14 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     elif operation == "set_mode":
         data["mode"] = value
     return data
+
+
+def _integer_form_value(value: str) -> int:
+    """Parse an integer emitted by a localized HTML number input."""
+    number = float(value.strip().replace(",", "."))
+    if not number.is_integer():
+        raise ValueError("integer value required")
+    return int(number)
 
 
 def _validate_climate_value(entity: Entity, operation: str, value: str) -> None:
@@ -1949,7 +1957,7 @@ def _validate_domain_command_value(entity: Entity, operation: str, value: str) -
         if minimum is None or maximum is None or not minimum <= requested <= maximum:
             raise ValueError("water heater temperature outside bounds")
     if entity.ha_domain == "humidifier" and operation == "set_percentage":
-        requested = int(value)
+        requested = _integer_form_value(value)
         minimum = int(_finite_number(attributes.get("min_humidity")) or 0)
         maximum = int(_finite_number(attributes.get("max_humidity")) or 100)
         if not minimum <= requested <= maximum:

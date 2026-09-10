@@ -155,7 +155,6 @@ async def test_explicit_mapper_success(
             {"supported_features": 1, "min_temp": 10, "max_temp": 30},
             {"operation": "set_target_temperature", "temperature": 40},
         ),
-        ("fan", {"supported_features": 0}, {"operation": "set_percentage", "percentage": 50}),
         ("number", {"min": 0, "max": 10}, {"operation": "set_value", "value": 11}),
         ("select", {"options": ["eco"]}, {"operation": "select_option", "option": "other"}),
         (

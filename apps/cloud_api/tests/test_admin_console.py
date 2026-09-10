@@ -14,7 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app import pairing_api
-from apps.cloud_api.app.admin_console import ENTITY_DOMAIN_LABELS, _database_size_mb, _entity_groups
+from apps.cloud_api.app.admin_console import (
+    ENTITY_DOMAIN_LABELS,
+    _command_data,
+    _database_size_mb,
+    _entity_groups,
+)
 from apps.cloud_api.app.database import get_database_session
 from apps.cloud_api.app.domain.models import (
     AlexaAccountLink,
@@ -696,6 +701,13 @@ def test_entity_groups_include_supported_domains_with_zero_entities() -> None:
         assert f"<span>{label}</span>" in html
     assert html.count('<span class="entity-group-count">0</span>') == len(ENTITY_DOMAIN_LABELS)
     assert html.count("Nessuna entitÃ  sincronizzata.") == len(ENTITY_DOMAIN_LABELS)
+
+
+def test_percentage_command_accepts_localized_integer_value() -> None:
+    assert _command_data("set_percentage", "13,0") == {
+        "operation": "set_percentage",
+        "percentage": 13,
+    }
 
 
 async def test_climate_controls_render_and_dispatch_closed_commands(
