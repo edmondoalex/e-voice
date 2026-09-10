@@ -77,7 +77,7 @@ def exposed_entity(
         ("lock", {}, {"operation": "unlock"}, "unlock", {}),
         (
             "alarm_control_panel",
-            {},
+            {"code_format": "number"},
             {"operation": "arm_home"},
             "alarm_arm_home",
             {},
@@ -158,7 +158,6 @@ async def test_explicit_mapper_success(
         ("fan", {"supported_features": 0}, {"operation": "set_percentage", "percentage": 50}),
         ("number", {"min": 0, "max": 10}, {"operation": "set_value", "value": 11}),
         ("select", {"options": ["eco"]}, {"operation": "select_option", "option": "other"}),
-        ("alarm_control_panel", {"code_format": "number"}, {"operation": "disarm"}),
         (
             "water_heater",
             {"min_temp": 30, "max_temp": 75},

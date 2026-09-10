@@ -380,8 +380,6 @@ def _map_command(
         return domain, operation, {}
     if domain == "alarm_control_panel" and operation in {"arm_home", "arm_away", "disarm"}:
         _require_keys(arguments, set())
-        if state.attributes.get("code_format"):
-            raise UnsupportedCommand
         service = {
             "arm_home": "alarm_arm_home",
             "arm_away": "alarm_arm_away",

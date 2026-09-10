@@ -620,7 +620,7 @@ async def test_extended_domain_controls_render_from_synchronized_capabilities(
         ("button", "button.test", {}, 0),
         ("select", "select.mode", {"options": ["eco", "comfort"]}, 0),
         ("lock", "lock.door", {}, 0),
-        ("alarm_control_panel", "alarm_control_panel.home", {}, 0),
+        ("alarm_control_panel", "alarm_control_panel.home", {"code_format": "number"}, 0),
         ("vacuum", "vacuum.robot", {}, 0),
         ("valve", "valve.water", {}, 0),
         (
@@ -953,6 +953,7 @@ async def test_ajax_command_returns_inline_success_and_error_with_html_fallback(
         "ok": True,
         "message": "Comando eseguito",
         "status": "success",
+        "error_code": None,
         "state": "on",
     }
     assert "event.preventDefault()" in page.text
@@ -964,9 +965,10 @@ async def test_ajax_command_returns_inline_success_and_error_with_html_fallback(
         data=payload,
         headers={"Accept": "application/json"},
     )
-    assert failed.status_code == 502
+    assert failed.status_code == 200
     assert failed.json()["ok"] is False
-    assert failed.json()["message"] == "Comando non riuscito"
+    assert failed.json()["message"] == "Comando non riuscito: execution_failed"
+    assert failed.json()["error_code"] is None
 
     fallback_page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
     fallback = await client.post(

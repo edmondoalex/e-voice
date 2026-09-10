@@ -1548,10 +1548,6 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                 )
             )
         return "".join(controls)
-    if entity.ha_domain == "alarm_control_panel" and (entity.attributes_json or {}).get(
-        "code_format"
-    ):
-        return '<span class="muted">Comandi disabilitati: il pannello richiede un codice.</span>'
     simple_labels = {
         "power_on": "ON",
         "power_off": "OFF",
@@ -2050,8 +2046,13 @@ async def send_command(
             target_state = "on" if command.operation == "power_on" else "off"
         response_payload: dict[str, object] = {
             "ok": succeeded,
-            "message": "Comando eseguito" if succeeded else "Comando non riuscito",
+            "message": (
+                "Comando eseguito"
+                if succeeded
+                else f"Comando non riuscito: {outcome.error_code or outcome.status}"
+            ),
             "status": outcome.status,
+            "error_code": outcome.error_code,
             "state": target_state,
         }
         if succeeded and command.operation in {"set_target_temperature", "set_hvac_mode"}:
@@ -2061,7 +2062,9 @@ async def send_command(
             )
         return JSONResponse(
             response_payload,
-            status_code=status.HTTP_200_OK if succeeded else status.HTTP_502_BAD_GATEWAY,
+            # Keep command outcomes as application-level JSON so reverse proxies do not
+            # replace the useful diagnostic with their generic 502 error page.
+            status_code=status.HTTP_200_OK,
         )
     csrf = _csrf(context)
     body = f'<div class="card"><b>Esito: {_e(outcome.status)}</b><p>Il comando è stato completato dal dispatcher EVCP; nessun esito è simulato.</p><a class="button" href="/installations/{installation.id}">Torna all’installazione</a></div>'
