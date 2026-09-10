@@ -367,6 +367,31 @@ class AlexaRoutineExecution(Base):
     )
 
 
+class DoorbellButton(TimestampMixin, Base):
+    """Protected DoorBird input mapped to one laboratory voice routine."""
+
+    __tablename__ = "doorbell_buttons"
+    __table_args__ = (
+        UniqueConstraint("installation_id", "name", name="uq_doorbell_buttons_installation_name"),
+        Index("ix_doorbell_buttons_installation", "installation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    routine_id: Mapped[UUID] = mapped_column(
+        ForeignKey("alexa_voice_routines.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(80))
+    token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    cooldown_seconds: Mapped[int] = mapped_column(default=5, server_default="5")
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    routine: Mapped[AlexaVoiceRoutine] = relationship()
+
+
 class AlexaVoiceAlert(TimestampMixin, Base):
     """One-shot condition requested by voice in the Alexa laboratory."""
 

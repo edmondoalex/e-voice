@@ -16,6 +16,8 @@ from .alexa_portal_oauth import router as alexa_portal_oauth_router
 from .alexa_routines import connector_router as alexa_routine_connector_router
 from .alexa_routines import router as alexa_routines_router
 from .config import get_settings
+from .doorbells import public_router as doorbell_public_router
+from .doorbells import router as doorbell_router
 from .evcp import router as evcp_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
@@ -60,6 +62,8 @@ app.include_router(alexa_laboratory_router)
 app.include_router(laboratory_learning_router)
 app.include_router(alexa_routines_router)
 app.include_router(alexa_routine_connector_router)
+app.include_router(doorbell_router)
+app.include_router(doorbell_public_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

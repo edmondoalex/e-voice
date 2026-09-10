@@ -98,6 +98,17 @@ modifiche immediate alla skill, alla Lambda o al backend di produzione.
 - [ ] Token, password, codici OAuth e variabili d'ambiente redatti.
 - [ ] Il Laboratorio non può scrivere nel database di produzione.
 
+## 8 bis. Parla/ascolta per campanelli
+
+Tag di lavoro: `POST-ALEXA-CERTIFICATION-DOORBELL-TWOWAY`
+
+- [ ] Progettare il canale parla/ascolta WebRTC separato dallo squillo.
+- [ ] Verificare gli Echo compatibili con video e audio bidirezionale.
+- [ ] Definire consenso, indicatore microfono, durata massima e chiusura immediata.
+- [ ] Isolare rigorosamente appartamenti, piani e chiamata globale.
+- [ ] Provare latenza, caduta linea, mancata risposta e dispositivi occupati.
+- [ ] Ottenere l'approvazione Amazon prima di qualunque modifica alla produzione.
+
 ## 9. Promozione controllata
 
 - [ ] Promuovere soltanto commit e immagine che hanno superato tutti i gate.
