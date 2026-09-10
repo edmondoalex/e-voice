@@ -572,7 +572,7 @@ async def test_media_player_controls_follow_synchronized_capabilities(
         "media_title": "You're My Heart",
         "media_artist": "BeatGhosts",
         "media_album_name": "Anthony VL Remix",
-        "group_members": ["media_player.tv_sala"],
+        "group_members": ["media_player.tv_sala", "media_player.cucina"],
     }
     entity.media_source_settings = {
         "HDMI 1": {"enabled": True, "name": "Decoder", "aliases": ["Sky"]},
@@ -587,6 +587,7 @@ async def test_media_player_controls_follow_synchronized_capabilities(
             friendly_name="Cucina",
             state="idle",
             available=True,
+            attributes_json={"volume_level": 0.2},
         )
     )
     await session.commit()
@@ -621,6 +622,8 @@ async def test_media_player_controls_follow_synchronized_capabilities(
     assert "You&#x27;re My Heart" in page.text
     assert "BeatGhosts" in page.text
     assert "AGGIUNGI" in page.text
+    assert "Volume generale" in page.text
+    assert "IMPOSTA GRUPPO" in page.text
 
     result = await client.post(
         f"/installations/{seeded_domain.installation_a_id}/commands",

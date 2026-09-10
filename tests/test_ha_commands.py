@@ -459,6 +459,43 @@ async def test_media_player_join_requires_another_exposed_player(hass: HomeAssis
     )
 
 
+async def test_media_group_volume_preserves_relative_levels(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    first = registry.async_get_or_create(
+        "media_player", "test", "group-first", suggested_object_id="office"
+    )
+    second = registry.async_get_or_create(
+        "media_player", "test", "group-second", suggested_object_id="kitchen"
+    )
+    members = [first.entity_id, second.entity_id]
+    hass.states.async_set(
+        first.entity_id,
+        "playing",
+        {"supported_features": 524288, "volume_level": 0.52, "group_members": members},
+    )
+    hass.states.async_set(second.entity_id, "playing", {"volume_level": 0.40})
+    inventory = EntityInventorySynchronizer(hass, set(), {first.id, second.id}, None)
+    executor = EkonexVoiceCommandExecutor(hass, inventory)
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "media-group-volume",
+            first.id,
+            {"operation": "set_group_volume", "volume_percent": 52},
+        )
+    assert result.status == "success"
+    assert call.await_args_list[0].args == (
+        "media_player",
+        "volume_set",
+        {"entity_id": first.entity_id, "volume_level": 0.58},
+    )
+    assert call.await_args_list[1].args == (
+        "media_player",
+        "volume_set",
+        {"entity_id": second.entity_id, "volume_level": 0.46},
+    )
+
+
 async def test_missing_disabled_and_unavailable_entities_never_execute(
     hass: HomeAssistant,
 ) -> None:

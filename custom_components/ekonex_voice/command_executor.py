@@ -187,6 +187,10 @@ class EkonexVoiceCommandExecutor:
             return await self._media_join(
                 command_id, entry, state, command, correlation_id, diagnostics
             )
+        if entry.domain == "media_player" and command.get("operation") == "set_group_volume":
+            return await self._media_group_volume(
+                command_id, entry, state, command, correlation_id, diagnostics
+            )
         if command.get("operation") in {"announce", "speak"} and not _is_alexa_notify(
             entry, str(command.get("operation"))
         ):
@@ -494,6 +498,88 @@ class EkonexVoiceCommandExecutor:
                     {"entity_id": entry.entity_id, "group_members": [member.entity_id]},
                     blocking=True,
                 )
+        except TimeoutError:
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception:
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "SERVICE_CALL_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+
+    async def _media_group_volume(
+        self,
+        command_id: str,
+        entry: er.RegistryEntry,
+        state: State,
+        command: dict[str, object],
+        correlation_id: str | None,
+        diagnostics: list[dict[str, object]],
+    ) -> CommandResult:
+        """Move every exposed member by the same delta from the group's average volume."""
+        requested = command.get("volume_percent")
+        group_members = state.attributes.get("group_members")
+        if (
+            set(command) != {"operation", "volume_percent"}
+            or type(requested) is not int
+            or not 0 <= requested <= 100
+            or not isinstance(group_members, (list, tuple))
+            or len(group_members) < 2
+        ):
+            return CommandResult(
+                command_id,
+                "invalid_argument",
+                "INVALID_PARAMETER",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        registry = er.async_get(self._hass)
+        by_entity_id = {item.entity_id: item for item in registry.entities.values()}
+        members: list[tuple[str, float]] = []
+        for entity_id in dict.fromkeys(group_members):
+            member = by_entity_id.get(entity_id) if isinstance(entity_id, str) else None
+            member_state = self._hass.states.get(entity_id) if isinstance(entity_id, str) else None
+            volume = member_state.attributes.get("volume_level") if member_state else None
+            if (
+                member is None
+                or member.disabled
+                or member.domain != "media_player"
+                or not self._inventory.is_exposed(member)
+                or member_state is None
+                or member_state.state == STATE_UNAVAILABLE
+                or isinstance(volume, bool)
+                or not isinstance(volume, (int, float))
+                or not 0 <= float(volume) <= 1
+            ):
+                return CommandResult(
+                    command_id,
+                    "target_not_exposed",
+                    "GROUP_MEMBER_NOT_EXPOSED",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
+            members.append((member.entity_id, float(volume)))
+        current_average = sum(volume for _, volume in members) / len(members)
+        delta = requested / 100 - current_average
+        try:
+            async with asyncio.timeout(self._timeout):
+                for entity_id, current in members:
+                    await self._hass.services.async_call(
+                        "media_player",
+                        "volume_set",
+                        {
+                            "entity_id": entity_id,
+                            "volume_level": round(
+                                min(1.0, max(0.0, current + delta)), 4
+                            ),
+                        },
+                        blocking=True,
+                    )
         except TimeoutError:
             return CommandResult(
                 command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)

@@ -131,6 +131,7 @@ DOMAIN_OPERATIONS = {
         "media_artwork",
         "media_join",
         "media_unjoin",
+        "set_group_volume",
     },
 }
 
@@ -1402,6 +1403,23 @@ def _media_player_controls(
             )
         group_members = attributes.get("group_members")
         if isinstance(group_members, list) and len(group_members) > 1:
+            grouped_players = [
+                item
+                for item in media_players
+                if item.ha_entity_id in group_members
+                and (_finite_number((item.attributes_json or {}).get("volume_level")) is not None)
+            ]
+            grouped_volumes = [
+                float((item.attributes_json or {})["volume_level"]) for item in grouped_players
+            ]
+            if grouped_volumes:
+                group_volume = min(
+                    100, max(0, round(sum(grouped_volumes) * 100 / len(grouped_volumes)))
+                )
+                disabled = "" if enabled else " disabled"
+                controls.append(
+                    f'<form class="entity-command inline level-control group-volume-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="set_group_volume"><label>Volume generale <input type="range" name="value" min="0" max="100" value="{group_volume}" step="1" aria-label="Volume generale del gruppo"{disabled}></label><output class="level-value">{group_volume}%</output><button class="command-button"{disabled}>IMPOSTA GRUPPO</button></form>'
+                )
             controls.append(
                 _control_form(
                     installation,
@@ -2001,6 +2019,8 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     elif operation == "set_percentage":
         data["percentage"] = _integer_form_value(value)
     elif operation == "set_volume":
+        data["volume_percent"] = int(value)
+    elif operation == "set_group_volume":
         data["volume_percent"] = int(value)
     elif operation == "select_source":
         data["source"] = value

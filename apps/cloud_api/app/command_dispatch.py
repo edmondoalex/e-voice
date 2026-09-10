@@ -95,6 +95,11 @@ class MediaJoinCommand(StrictCommand):
     member_registry_id: str = Field(min_length=1, max_length=255)
 
 
+class MediaGroupVolumeCommand(StrictCommand):
+    operation: Literal["set_group_volume"]
+    volume_percent: int = Field(ge=0, le=100)
+
+
 class ActivateCommand(StrictCommand):
     operation: Literal["activate"]
 
@@ -174,6 +179,7 @@ type CommandSpec = Annotated[
     | MediaPlaybackCommand
     | MediaSourceCommand
     | MediaJoinCommand
+    | MediaGroupVolumeCommand
     | ActivateCommand
     | PressCommand
     | CameraSnapshotCommand
