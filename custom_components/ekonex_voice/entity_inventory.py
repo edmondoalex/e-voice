@@ -48,7 +48,19 @@ ATTRIBUTE_ALLOWLIST = {
         {"humidity", "min_humidity", "max_humidity", "mode", "available_modes"}
     ),
     "alarm_control_panel": frozenset({"code_format", "code_arm_required"}),
-    "media_player": frozenset({"volume_level", "is_volume_muted", "source", "source_list"}),
+    "media_player": frozenset(
+        {
+            "volume_level",
+            "is_volume_muted",
+            "source",
+            "source_list",
+            "media_title",
+            "media_artist",
+            "media_album_name",
+            "media_duration",
+            "group_members",
+        }
+    ),
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25

@@ -90,6 +90,11 @@ class MediaSourceCommand(StrictCommand):
     source: str = Field(min_length=1, max_length=255)
 
 
+class MediaJoinCommand(StrictCommand):
+    operation: Literal["media_join"]
+    member_registry_id: str = Field(min_length=1, max_length=255)
+
+
 class ActivateCommand(StrictCommand):
     operation: Literal["activate"]
 
@@ -99,7 +104,7 @@ class PressCommand(StrictCommand):
 
 
 class CameraSnapshotCommand(StrictCommand):
-    operation: Literal["camera_snapshot"]
+    operation: Literal["camera_snapshot", "media_artwork"]
 
 
 class NumberCommand(StrictCommand):
@@ -125,6 +130,7 @@ class DomainActionCommand(StrictCommand):
         "oscillate_off",
         "direction_forward",
         "direction_reverse",
+        "media_unjoin",
     ]
 
 
@@ -167,6 +173,7 @@ type CommandSpec = Annotated[
     | VolumeCommand
     | MediaPlaybackCommand
     | MediaSourceCommand
+    | MediaJoinCommand
     | ActivateCommand
     | PressCommand
     | CameraSnapshotCommand

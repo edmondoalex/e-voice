@@ -563,17 +563,32 @@ async def test_media_player_controls_follow_synchronized_capabilities(
     entity.friendly_name = "TV Sala"
     entity.state = "playing"
     entity.available = True
-    entity.supported_features = 128 | 256 | 4 | 8 | 1 | 2048 | 4096 | 16384
+    entity.supported_features = 128 | 256 | 4 | 8 | 1 | 2048 | 4096 | 16384 | 524288
     entity.attributes_json = {
         "volume_level": 0.42,
         "is_volume_muted": False,
         "source": "HDMI 1",
         "source_list": ["HDMI 1", "Netflix"],
+        "media_title": "You're My Heart",
+        "media_artist": "BeatGhosts",
+        "media_album_name": "Anthony VL Remix",
+        "group_members": ["media_player.tv_sala"],
     }
     entity.media_source_settings = {
         "HDMI 1": {"enabled": True, "name": "Decoder", "aliases": ["Sky"]},
         "Netflix": {"enabled": False, "name": None, "aliases": []},
     }
+    session.add(
+        Entity(
+            installation_id=seeded_domain.installation_a_id,
+            ha_entity_id="media_player.cucina",
+            ha_domain="media_player",
+            ha_registry_id="registry-media-cucina",
+            friendly_name="Cucina",
+            state="idle",
+            available=True,
+        )
+    )
     await session.commit()
     dispatched: list[dict[str, object]] = []
 
@@ -602,6 +617,10 @@ async def test_media_player_controls_follow_synchronized_capabilities(
     assert "SELEZIONA FONTE" in page.text
     assert "Decoder" in page.text
     assert ">Netflix<" not in page.text
+    assert "MOSTRA COPERTINA" in page.text
+    assert "You&#x27;re My Heart" in page.text
+    assert "BeatGhosts" in page.text
+    assert "AGGIUNGI" in page.text
 
     result = await client.post(
         f"/installations/{seeded_domain.installation_a_id}/commands",

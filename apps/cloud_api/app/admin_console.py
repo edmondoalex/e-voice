@@ -128,6 +128,9 @@ DOMAIN_OPERATIONS = {
         "media_next",
         "media_previous",
         "select_source",
+        "media_artwork",
+        "media_join",
+        "media_unjoin",
     },
 }
 
@@ -141,6 +144,7 @@ MEDIA_PLAYER_FEATURE_TURN_OFF = 256
 MEDIA_PLAYER_FEATURE_STOP = 4096
 MEDIA_PLAYER_FEATURE_PLAY = 16384
 MEDIA_PLAYER_FEATURE_SELECT_SOURCE = 2048
+MEDIA_PLAYER_FEATURE_GROUPING = 524288
 FAN_FEATURE_SET_SPEED = 1
 FAN_FEATURE_OSCILLATE = 2
 FAN_FEATURE_DIRECTION = 4
@@ -264,10 +268,10 @@ document.querySelectorAll('.entity-command').forEach((form) => {{
       feedback.className = 'command-feedback ok';
       feedback.textContent = 'Comando eseguito';
       if (payload.image_data_url) {{
-        const preview = row.querySelector('.camera-preview');
+        const preview = row.querySelector('.command-image-preview');
         preview.src = payload.image_data_url;
         preview.hidden = false;
-        feedback.textContent = 'Foto aggiornata';
+        feedback.textContent = 'Immagine aggiornata';
       }}
       if (Object.hasOwn(payload, 'value')) feedback.textContent = `Comando eseguito: ${{payload.value}}`;
       if (payload.state === 'on' || payload.state === 'off') {{
@@ -1093,12 +1097,17 @@ def _alexa_discovery_section(
     return f'<section class="card"><h2>Alexa - ultima sincronizzazione</h2>{latest_activity}{snapshot_heading}<p>Ultima Discovery: {_e(discovered_at)}<br>Dispositivi inviati: {_e(snapshot.endpoint_count)}<br>Nuovi rispetto alla Discovery completa precedente: {new_count}</p>{reports}<ul>{items or "<li>Nessun dispositivo inviato</li>"}</ul>{current_inventory}</section>'
 
 
-def _entity_row(installation: Installation, entity: Entity, csrf: str) -> str:
+def _entity_row(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    media_players: list[Entity],
+) -> str:
     operations = sorted(DOMAIN_OPERATIONS.get(entity.ha_domain, ()))
     enabled = bool(
         entity.deleted_at is None and entity.available and entity.ha_registry_id and operations
     )
-    controls = _entity_controls(installation, entity, csrf, enabled)
+    controls = _entity_controls(installation, entity, csrf, enabled, media_players)
     voice_name = effective_voice_name(entity)
     display_name = effective_display_name(entity)
     category_name = (
@@ -1149,12 +1158,15 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
     for entity in entities:
         grouped.setdefault(entity.ha_domain, []).append(entity)
     sections: list[str] = []
+    media_players = [entity for entity in entities if entity.ha_domain == "media_player"]
     for domain in sorted(
         set(grouped) | set(ENTITY_DOMAIN_LABELS),
         key=lambda value: (ENTITY_DOMAIN_LABELS.get(value, value).casefold(), value),
     ):
         domain_entities = grouped.get(domain, [])
-        rows = "".join(_entity_row(installation, entity, csrf) for entity in domain_entities)
+        rows = "".join(
+            _entity_row(installation, entity, csrf, media_players) for entity in domain_entities
+        )
         if not rows:
             rows = '<tr><td colspan="5" class="muted">Nessuna entitÃ  sincronizzata.</td></tr>'
         label = ENTITY_DOMAIN_LABELS.get(domain, domain.replace("_", " ").title())
@@ -1280,7 +1292,11 @@ def _climate_controls(installation: Installation, entity: Entity, csrf: str, ena
 
 
 def _media_player_controls(
-    installation: Installation, entity: Entity, csrf: str, enabled: bool
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    enabled: bool,
+    media_players: list[Entity],
 ) -> str:
     features = entity.supported_features
     controls: list[str] = []
@@ -1346,6 +1362,56 @@ def _media_player_controls(
             controls.append(
                 f'<form class="entity-command inline media-source-control" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="select_source"><label>Fonte <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>SELEZIONA FONTE</button></form>'
             )
+    attributes = entity.attributes_json or {}
+    title = attributes.get("media_title")
+    artist = attributes.get("media_artist")
+    album = attributes.get("media_album_name")
+    if any(isinstance(value, str) and value for value in (title, artist, album)):
+        details = " · ".join(
+            _e(value) for value in (title, artist, album) if isinstance(value, str) and value
+        )
+        controls.append(f'<div class="media-now-playing"><b>In riproduzione:</b> {details}</div>')
+    controls.append(
+        _control_form(
+            installation,
+            entity,
+            csrf,
+            "media_artwork",
+            "MOSTRA COPERTINA",
+            enabled=enabled,
+        )
+        + '<img class="command-image-preview media-artwork-preview" hidden alt="Copertina del contenuto in riproduzione" style="max-width:360px;width:100%;height:auto;border-radius:8px">'
+    )
+    if features & MEDIA_PLAYER_FEATURE_GROUPING:
+        candidates = [
+            item
+            for item in media_players
+            if item.id != entity.id
+            and item.ha_registry_id
+            and item.deleted_at is None
+            and item.available
+        ]
+        if candidates:
+            options = "".join(
+                f'<option value="{_e(item.ha_registry_id)}">{_e(effective_display_name(item))}</option>'
+                for item in candidates
+            )
+            disabled = "" if enabled else " disabled"
+            controls.append(
+                f'<form class="entity-command inline" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="media_join"><label>Aggiungi stanza <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>AGGIUNGI</button></form>'
+            )
+        group_members = attributes.get("group_members")
+        if isinstance(group_members, list) and len(group_members) > 1:
+            controls.append(
+                _control_form(
+                    installation,
+                    entity,
+                    csrf,
+                    "media_unjoin",
+                    "RIMUOVI DAL GRUPPO",
+                    enabled=enabled,
+                )
+            )
     return "".join(controls) or '<span class="muted">Nessun controllo supportato</span>'
 
 
@@ -1387,7 +1453,13 @@ def _option_command_form(
     return f'<form class="entity-command inline" method="post" action="/installations/{installation.id}/commands"><input type="hidden" name="csrf_token" value="{_e(csrf)}"><input type="hidden" name="entity_id" value="{entity.id}"><input type="hidden" name="operation" value="{_e(operation)}"><label>{_e(label)} <select name="value"{disabled}>{options}</select></label><button class="command-button"{disabled}>SELEZIONA</button></form>'
 
 
-def _entity_controls(installation: Installation, entity: Entity, csrf: str, enabled: bool) -> str:
+def _entity_controls(
+    installation: Installation,
+    entity: Entity,
+    csrf: str,
+    enabled: bool,
+    media_players: list[Entity],
+) -> str:
     if entity.ha_domain == "light":
         return "".join(
             (
@@ -1426,7 +1498,7 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
     if entity.ha_domain == "climate":
         return _climate_controls(installation, entity, csrf, enabled)
     if entity.ha_domain == "media_player":
-        return _media_player_controls(installation, entity, csrf, enabled)
+        return _media_player_controls(installation, entity, csrf, enabled, media_players)
     if entity.ha_domain == "fan":
         attributes = entity.attributes_json or {}
         controls = [
@@ -1568,7 +1640,7 @@ def _entity_controls(installation: Installation, entity: Entity, csrf: str, enab
                 "AGGIORNA FOTO",
                 enabled=enabled,
             )
-            + '<img class="camera-preview" hidden alt="Anteprima telecamera" style="max-width:640px;width:100%;height:auto;border-radius:8px">'
+            + '<img class="command-image-preview camera-preview" hidden alt="Anteprima telecamera" style="max-width:640px;width:100%;height:auto;border-radius:8px">'
         )
     simple_labels = {
         "power_on": "ON",
@@ -1932,6 +2004,8 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
         data["volume_percent"] = int(value)
     elif operation == "select_source":
         data["source"] = value
+    elif operation == "media_join":
+        data["member_registry_id"] = value
     elif operation == "select_option":
         data["option"] = value
     elif operation == "set_preset_mode":
@@ -2034,6 +2108,19 @@ async def send_command(
                 or _media_source_setting(entity, source).get("enabled", True) is False
             ):
                 raise ValueError("media source is unavailable or disabled")
+        if values.get("operation") == "media_join":
+            member_registry_id = values.get("value", "")
+            member = await session.scalar(
+                select(Entity).where(
+                    Entity.installation_id == installation.id,
+                    Entity.ha_registry_id == member_registry_id,
+                    Entity.ha_domain == "media_player",
+                    Entity.deleted_at.is_(None),
+                    Entity.available.is_(True),
+                )
+            )
+            if member is None or member.id == entity.id:
+                raise ValueError("media group member is unavailable")
         command = command_adapter.validate_python(
             _command_data(values.get("operation", ""), values.get("value", ""))
         )

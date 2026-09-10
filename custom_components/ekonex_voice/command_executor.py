@@ -179,6 +179,14 @@ class EkonexVoiceCommandExecutor:
             return await self._camera_snapshot(
                 command_id, entry.entity_id, correlation_id, diagnostics
             )
+        if entry.domain == "media_player" and command.get("operation") == "media_artwork":
+            return await self._media_artwork(
+                command_id, entry.entity_id, correlation_id, diagnostics
+            )
+        if entry.domain == "media_player" and command.get("operation") == "media_join":
+            return await self._media_join(
+                command_id, entry, state, command, correlation_id, diagnostics
+            )
         if command.get("operation") in {"announce", "speak"} and not _is_alexa_notify(
             entry, str(command.get("operation"))
         ):
@@ -386,6 +394,119 @@ class EkonexVoiceCommandExecutor:
             tuple(diagnostics),
             {"content_type": image.content_type, "image_base64": encoded},
         )
+
+    async def _media_artwork(
+        self,
+        command_id: str,
+        entity_id: str,
+        correlation_id: str | None,
+        diagnostics: list[dict[str, object]],
+    ) -> CommandResult:
+        """Return current media artwork without exposing the Home Assistant image token."""
+        try:
+            from homeassistant.components.media_player import DATA_COMPONENT, MediaPlayerEntity
+
+            player = self._hass.data[DATA_COMPONENT].get_entity(entity_id)
+            if not isinstance(player, MediaPlayerEntity):
+                raise ValueError("media player not found")
+            async with asyncio.timeout(self._timeout):
+                content, content_type = await player.async_get_media_image()
+            if content is None or not content_type or len(content) > 700_000:
+                raise ValueError("media artwork unavailable")
+        except TimeoutError:
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception:
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "MEDIA_ARTWORK_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        return CommandResult(
+            command_id,
+            "success",
+            None,
+            correlation_id,
+            tuple(diagnostics),
+            {
+                "content_type": content_type,
+                "image_base64": base64.b64encode(content).decode("ascii"),
+            },
+        )
+
+    async def _media_join(
+        self,
+        command_id: str,
+        entry: er.RegistryEntry,
+        state: State,
+        command: dict[str, object],
+        correlation_id: str | None,
+        diagnostics: list[dict[str, object]],
+    ) -> CommandResult:
+        """Join one other exposed media player to the selected coordinator."""
+        member_id = command.get("member_registry_id")
+        if (
+            set(command) != {"operation", "member_registry_id"}
+            or not isinstance(member_id, str)
+            or not int(state.attributes.get("supported_features", 0))
+            & MediaPlayerEntityFeature.GROUPING
+        ):
+            return CommandResult(
+                command_id,
+                "invalid_argument",
+                "INVALID_PARAMETER",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        registry = er.async_get(self._hass)
+        member = next((item for item in registry.entities.values() if item.id == member_id), None)
+        if (
+            member is None
+            or member.disabled
+            or member.domain != "media_player"
+            or member.id == entry.id
+            or not self._inventory.is_exposed(member)
+        ):
+            return CommandResult(
+                command_id,
+                "target_not_exposed",
+                "GROUP_MEMBER_NOT_EXPOSED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        member_state = self._hass.states.get(member.entity_id)
+        if member_state is None or member_state.state == STATE_UNAVAILABLE:
+            return CommandResult(
+                command_id,
+                "unavailable",
+                "GROUP_MEMBER_UNAVAILABLE",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        try:
+            async with asyncio.timeout(self._timeout):
+                await self._hass.services.async_call(
+                    "media_player",
+                    "join",
+                    {"entity_id": entry.entity_id, "group_members": [member.entity_id]},
+                    blocking=True,
+                )
+        except TimeoutError:
+            return CommandResult(
+                command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
+            )
+        except Exception:
+            return CommandResult(
+                command_id,
+                "execution_failed",
+                "SERVICE_CALL_FAILED",
+                correlation_id,
+                tuple(diagnostics),
+            )
+        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
 
 
 def _service_result(
@@ -721,6 +842,11 @@ def _map_media_player(
         ):
             raise UnsupportedCommand
         return "media_player", "select_source", {"source": source}
+    if operation == "media_unjoin":
+        _require_keys(arguments, set())
+        if not supported & MediaPlayerEntityFeature.GROUPING:
+            raise UnsupportedCommand
+        return "media_player", "unjoin", {}
     raise UnsupportedCommand
 
 

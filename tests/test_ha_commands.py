@@ -431,6 +431,34 @@ async def test_media_player_select_source_is_allowlisted(hass: HomeAssistant) ->
     )
 
 
+async def test_media_player_join_requires_another_exposed_player(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    coordinator = registry.async_get_or_create(
+        "media_player", "test", "group-coordinator", suggested_object_id="living_room"
+    )
+    member = registry.async_get_or_create(
+        "media_player", "test", "group-member", suggested_object_id="kitchen"
+    )
+    hass.states.async_set(coordinator.entity_id, "playing", {"supported_features": 524288})
+    hass.states.async_set(member.entity_id, "idle", {})
+    inventory = EntityInventorySynchronizer(hass, set(), {coordinator.id, member.id}, None)
+    executor = EkonexVoiceCommandExecutor(hass, inventory)
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "media-join",
+            coordinator.id,
+            {"operation": "media_join", "member_registry_id": member.id},
+        )
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "media_player",
+        "join",
+        {"entity_id": coordinator.entity_id, "group_members": [member.entity_id]},
+        blocking=True,
+    )
+
+
 async def test_missing_disabled_and_unavailable_entities_never_execute(
     hass: HomeAssistant,
 ) -> None:
