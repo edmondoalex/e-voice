@@ -43,7 +43,18 @@
           "entities": "Singole entità",
           "label": "Etichetta Ekonex Voice creata dall'installatore"
         }
+      },
+      "media_experiences": {
+        "title": "Classifica i lettori multimediali",
+        "description": "Assegna ogni lettore esposto a Guarda, Ascolta o a entrambe. Le proposte iniziali sono modificabili e la tua scelta ha sempre priorità.",
+        "data": {
+          "watch_players": "Guarda (video)",
+          "listen_players": "Ascolta (audio)"
+        }
       }
+    },
+    "error": {
+      "media_experience_required": "Ogni lettore multimediale esposto deve appartenere ad almeno un'esperienza."
     }
   }
 }

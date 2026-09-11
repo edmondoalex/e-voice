@@ -17,6 +17,7 @@ Questo è un contratto interno. Il componente fornisce dati e comandi affidabili
 - In assenza di un coordinatore affidabile si mostra `Player selezionato` o `Gruppo multimediale`.
 - Gli aggiornamenti del componente sono raggruppati in una finestra nominale di 250 ms.
 - e‑Face non riceve token Home Assistant, URL firmati, `access_token` o copertine Base64.
+- I player senza `area_id` restano nel backend ma non sono restituiti a e‑Face.
 
 ## 2. Revisioni
 
@@ -58,6 +59,7 @@ Una revisione non corrente produce `conflict` senza eseguire il comando.
   "entity_id": "media_player.ufficio_alex",
   "name": "Ufficio Alex",
   "area": {"id": "ufficio", "name": "Ufficio"},
+  "experiences": ["listen"],
   "state": "playing",
   "availability": "available",
   "connection_status": "online",
@@ -97,6 +99,24 @@ Una revisione non corrente produce `conflict` senza eseguire il comando.
   "resource_revision": 18
 }
 ```
+
+`experiences` contiene esclusivamente `watch`, `listen` oppure entrambi. Il componente HA
+propone una classificazione iniziale prudente; la scelta manuale salvata dall'utente ha sempre
+priorità. Un player non viene classificato automaticamente in entrambe le esperienze senza un
+segnale affidabile.
+
+Snapshot e lista player includono inoltre:
+
+```json
+{
+  "media_rooms": {
+    "watch": [{"area_id": "sala", "name": "Sala"}],
+    "listen": [{"area_id": "ufficio", "name": "Ufficio"}]
+  }
+}
+```
+
+Una stanza compare soltanto se contiene almeno un player esposto con quell'esperienza.
 
 Condizioni distinte:
 
@@ -428,6 +448,8 @@ Risposte:
 | `installation_id` | produce dalla sessione | verifica | consuma |
 | `tenant_id` | non riceve | produce dall’autenticazione | non sceglie |
 | `registry_id` | produce | verifica e conserva | usa come target |
+| `experiences` | propone e salva la scelta manuale | conserva e restituisce | filtra Watch/Listen |
+| `media_rooms` | alimenta tramite area ed esperienze | calcola | consuma |
 | `entity_id` | produce, informativo | conserva | visualizza soltanto |
 | stato, availability, media | produce | conserva | visualizza |
 | `connection_status` | segnala connessione | normalizza | visualizza |

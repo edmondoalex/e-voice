@@ -21,6 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import label_registry as lr
 
+from .const import MEDIA_EXPERIENCES
 from .evcp import MAX_MESSAGE_BYTES, envelope
 
 ATTRIBUTE_ALLOWLIST = {
@@ -76,10 +77,16 @@ class EntityInventorySynchronizer:
         device_ids: set[str],
         registry_ids: set[str],
         label_id: str | None,
+        media_experiences: dict[str, list[str]] | None = None,
     ) -> None:
         self._hass = hass
         self._device_ids, self._registry_ids = device_ids, registry_ids
         self._label_id = label_id
+        self._media_experiences = {
+            registry_id: [value for value in values if value in MEDIA_EXPERIENCES]
+            for registry_id, values in (media_experiences or {}).items()
+            if isinstance(registry_id, str) and isinstance(values, list)
+        }
         self._websocket: ClientWebSocketResponse | None = None
         self._session_id: str | None = None
         self._revision = 0
@@ -280,7 +287,10 @@ class EntityInventorySynchronizer:
             return None
         if not self.is_exposed(entry):
             return None
-        return _serialize(self._hass, entry)
+        item = _serialize(self._hass, entry)
+        if item is not None and entry.domain == "media_player":
+            item["experiences"] = self._media_experiences.get(entry.id, [])
+        return item
 
 
 def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str, object] | None:

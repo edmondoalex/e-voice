@@ -8,6 +8,8 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -37,10 +39,13 @@ from .const import (
     CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
     CONF_INSTALLATION_NAME,
+    CONF_MEDIA_EXPERIENCES,
     CONF_TENANT_NAME,
     DEFAULT_CLOUD_URL,
     DOMAIN,
     LABORATORY_CLOUD_URL,
+    MEDIA_EXPERIENCE_LISTEN,
+    MEDIA_EXPERIENCE_WATCH,
 )
 from .models import PairingResult, PairingSession, PairingState
 
@@ -151,7 +156,11 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"{data[CONF_TENANT_NAME]} / {data[CONF_INSTALLATION_NAME]}",
             data=data,
-            options={CONF_EXPOSED_DEVICE_IDS: [], CONF_EXPOSED_ENTITY_REGISTRY_IDS: []},
+            options={
+                CONF_EXPOSED_DEVICE_IDS: [],
+                CONF_EXPOSED_ENTITY_REGISTRY_IDS: [],
+                CONF_MEDIA_EXPERIENCES: {},
+            },
         )
 
     def _get_client(self) -> EkonexVoiceClient:
@@ -177,6 +186,9 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
     """Manage the explicit opt-in exposure set and reload immediately."""
 
+    def __init__(self) -> None:
+        self._pending_options: dict[str, Any] | None = None
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         registry = er.async_get(self.hass)
         if user_input is not None:
@@ -192,8 +204,94 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
             }
             if label_id:
                 data[CONF_EXPOSURE_LABEL_ID] = label_id
+            self._pending_options = data
+            if self._exposed_media_entries(data):
+                return await self.async_step_media_experiences()
+            data[CONF_MEDIA_EXPERIENCES] = {}
             return self.async_create_entry(data=data)
         return self._show_form(registry)
+
+    async def async_step_media_experiences(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Classify exposed media players for the Watch and Listen experiences."""
+        if self._pending_options is None:
+            return await self.async_step_init()
+        entries = self._exposed_media_entries(self._pending_options)
+        by_entity_id = {entry.entity_id: entry for entry in entries}
+        if user_input is not None:
+            exposed_ids = set(by_entity_id)
+            watch = set(user_input.get("watch_players", [])) & exposed_ids
+            listen = set(user_input.get("listen_players", [])) & exposed_ids
+            if exposed_ids - watch - listen:
+                return self._show_media_form(entries, {"base": "media_experience_required"})
+            experiences: dict[str, list[str]] = {}
+            for entity_id, entry in by_entity_id.items():
+                values: list[str] = []
+                if entity_id in watch:
+                    values.append(MEDIA_EXPERIENCE_WATCH)
+                if entity_id in listen:
+                    values.append(MEDIA_EXPERIENCE_LISTEN)
+                experiences[entry.id] = values
+            self._pending_options[CONF_MEDIA_EXPERIENCES] = experiences
+            return self.async_create_entry(data=self._pending_options)
+        return self._show_media_form(entries)
+
+    def _exposed_media_entries(self, options: dict[str, Any]) -> list[er.RegistryEntry]:
+        registry = er.async_get(self.hass)
+        devices = dr.async_get(self.hass)
+        selected_entities = set(options.get(CONF_EXPOSED_ENTITY_REGISTRY_IDS, []))
+        selected_devices = set(options.get(CONF_EXPOSED_DEVICE_IDS, []))
+        label_id = options.get(CONF_EXPOSURE_LABEL_ID)
+        result: list[er.RegistryEntry] = []
+        for entry in registry.entities.values():
+            device = devices.async_get(entry.device_id) if entry.device_id else None
+            exposed = (
+                entry.id in selected_entities
+                or entry.device_id in selected_devices
+                or (
+                    label_id is not None
+                    and (
+                        label_id in entry.labels
+                        or (device is not None and label_id in device.labels)
+                    )
+                )
+            )
+            if exposed and entry.domain == "media_player" and not entry.disabled:
+                result.append(entry)
+        return sorted(result, key=lambda item: item.entity_id)
+
+    def _show_media_form(
+        self, entries: list[er.RegistryEntry], errors: dict[str, str] | None = None
+    ) -> ConfigFlowResult:
+        current = self.config_entry.options.get(CONF_MEDIA_EXPERIENCES, {})
+        watch: list[str] = []
+        listen: list[str] = []
+        for entry in entries:
+            configured = current.get(entry.id) if isinstance(current, dict) else None
+            values = (
+                configured
+                if isinstance(configured, list)
+                else _suggest_experiences(self.hass, entry)
+            )
+            if MEDIA_EXPERIENCE_WATCH in values:
+                watch.append(entry.entity_id)
+            if MEDIA_EXPERIENCE_LISTEN in values:
+                listen.append(entry.entity_id)
+        selector = EntitySelectorConfig(domain="media_player", multiple=True)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    "watch_players", description={"suggested_value": watch}
+                ): EntitySelector(selector),
+                vol.Optional(
+                    "listen_players", description={"suggested_value": listen}
+                ): EntitySelector(selector),
+            }
+        )
+        return self.async_show_form(
+            step_id="media_experiences", data_schema=schema, errors=errors or {}
+        )
 
     def _show_form(
         self, registry: er.EntityRegistry, errors: dict[str, str] | None = None
@@ -234,3 +332,22 @@ class EkonexVoiceOptionsFlow(config_entries.OptionsFlowWithReload):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors or {})
+
+
+def _suggest_experiences(hass: HomeAssistant, entry: er.RegistryEntry) -> list[str]:
+    """Suggest a conservative default; a saved manual choice always wins."""
+    state = hass.states.get(entry.entity_id)
+    device_class = str(
+        entry.device_class
+        or entry.original_device_class
+        or (state.attributes.get("device_class") if state else "")
+        or ""
+    ).lower()
+    platform = str(entry.platform or "").lower()
+    if device_class in {"tv", "streaming_stick", "game_console"}:
+        return [MEDIA_EXPERIENCE_WATCH]
+    if device_class == "receiver":
+        return [MEDIA_EXPERIENCE_WATCH, MEDIA_EXPERIENCE_LISTEN]
+    if device_class == "speaker" or platform in {"alexa_media", "sonos", "snapcast"}:
+        return [MEDIA_EXPERIENCE_LISTEN]
+    return [MEDIA_EXPERIENCE_LISTEN]

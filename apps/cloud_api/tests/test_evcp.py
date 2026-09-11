@@ -19,6 +19,7 @@ from apps.cloud_api.app.domain.models import AuditEvent, ConnectorCredential, In
 from apps.cloud_api.app.evcp import (
     CommandResultPayload,
     ConnectorSessionRegistry,
+    EntityItem,
     Heartbeat,
     Hello,
     SessionHandle,
@@ -107,6 +108,23 @@ def test_evcp_accepts_only_the_closed_m4_vocabulary() -> None:
                 "payload": {},
             }
         )
+
+
+def test_entity_schema_accepts_only_unique_media_experiences() -> None:
+    base = {
+        "registry_id": "media-registry",
+        "entity_id": "media_player.sala",
+        "domain": "media_player",
+        "available": True,
+    }
+    validated = EntityItem.model_validate(
+        {**base, "experiences": ["watch", "listen"]}
+    )
+    assert validated.experiences == ["watch", "listen"]
+    with pytest.raises(ValidationError):
+        EntityItem.model_validate({**base, "experiences": ["other"]})
+    with pytest.raises(ValidationError):
+        EntityItem.model_validate({**base, "experiences": ["listen", "listen"]})
 
 
 def test_heartbeat_requires_session_binding() -> None:

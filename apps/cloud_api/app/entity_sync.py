@@ -26,6 +26,17 @@ class EntitySyncService:
     async def apply_full(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision <= self._installation.sync_revision:
             raise StaleSyncError
+        previous_media_ids = set(
+            (
+                await self._session.scalars(
+                    select(Entity.ha_registry_id).where(
+                        Entity.installation_id == self._installation.id,
+                        Entity.ha_domain == "media_player",
+                        Entity.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
         seen: set[str] = set()
         for item in items:
             seen.add(str(item["registry_id"]))
@@ -67,10 +78,22 @@ class EntitySyncService:
             "snapshot.required",
             {"reason": "inventory_replaced", "current_installation_revision": revision},
         )
+        await self._publish_inventory_players(revision, previous_media_ids)
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
             raise StaleSyncError
+        previous_media_ids = set(
+            (
+                await self._session.scalars(
+                    select(Entity.ha_registry_id).where(
+                        Entity.installation_id == self._installation.id,
+                        Entity.ha_domain == "media_player",
+                        Entity.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
         for item in items:
             if bool(item.get("removed")):
                 entity = await self._by_registry(str(item["registry_id"]))
@@ -98,6 +121,43 @@ class EntitySyncService:
             "snapshot.required",
             {"reason": "inventory_changed", "current_installation_revision": revision},
         )
+        await self._publish_inventory_players(revision, previous_media_ids)
+
+    async def _publish_inventory_players(
+        self, revision: int, previous_media_ids: set[str | None]
+    ) -> None:
+        """Publish complete area-bound players after an inventory mutation."""
+        from .media_api import _player
+        from .media_realtime import media_events
+
+        players = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == self._installation.id,
+                        Entity.ha_domain == "media_player",
+                        Entity.deleted_at.is_(None),
+                        Entity.area_id.is_not(None),
+                    )
+                )
+            ).all()
+        )
+        for entity in players:
+            event_type = (
+                "player.updated"
+                if entity.ha_registry_id in previous_media_ids
+                else "player.created"
+            )
+            payload: dict[str, object] = {"player": _player(entity, self._installation)}
+            if event_type == "player.updated":
+                payload.update(
+                    {
+                        "registry_id": entity.ha_registry_id,
+                        "resource_revision": _resource_revision(entity),
+                        "changed_fields": ["inventory", "area", "experiences"],
+                    }
+                )
+            media_events.publish(self._installation.id, revision, event_type, payload)
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
@@ -112,6 +172,8 @@ class EntitySyncService:
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+            if entity.ha_domain == "media_player":
+                entity.attributes_json["_experiences"] = _experiences(item)
             changed = item.get("last_changed_at")
             entity.last_changed_at = (
                 datetime.fromisoformat(str(changed).replace("Z", "+00:00"))
@@ -153,6 +215,8 @@ class EntitySyncService:
         for entity in changed_entities:
             if entity.ha_domain == "media_player":
                 serialized = _player(entity, self._installation)
+                if entity.area_id is None:
+                    continue
                 serialized["group"] = group_by_member.get(entity.ha_registry_id)
                 media_events.publish(
                     self._installation.id,
@@ -161,7 +225,12 @@ class EntitySyncService:
                     {
                         "registry_id": entity.ha_registry_id,
                         "resource_revision": _resource_revision(entity),
-                        "changed_fields": ["state", "attributes", "availability"],
+                        "changed_fields": [
+                            "state",
+                            "attributes",
+                            "availability",
+                            "experiences",
+                        ],
                         "player": serialized,
                     },
                 )
@@ -250,6 +319,8 @@ class EntitySyncService:
         entity.available = bool(item.get("available", True))
         attributes = item.get("attributes", {})
         entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+        if entity.ha_domain == "media_player":
+            entity.attributes_json["_experiences"] = _experiences(item)
         changed = item.get("last_changed_at")
         entity.last_changed_at = (
             datetime.fromisoformat(str(changed).replace("Z", "+00:00")) if changed else None
@@ -272,6 +343,13 @@ class EntitySyncService:
 def _optional(item: dict[str, object], key: str) -> str | None:
     value = item.get(key)
     return str(value)[:255] if value is not None else None
+
+
+def _experiences(item: dict[str, object]) -> list[str]:
+    values = item.get("experiences", [])
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if value in {"watch", "listen"}]
 
 
 def _resource_revision(entity: Entity) -> int:

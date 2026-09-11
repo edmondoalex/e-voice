@@ -146,6 +146,7 @@ async def _entities(session: AsyncSession, installation_id: UUID) -> list[Entity
                     Entity.installation_id == installation_id,
                     Entity.ha_domain == "media_player",
                     Entity.deleted_at.is_(None),
+                    Entity.area_id.is_not(None),
                 )
                 .order_by(Entity.ha_registry_id)
             )
@@ -177,6 +178,7 @@ def _player(entity: Entity, installation: Installation) -> dict[str, Any]:
         "entity_id": entity.ha_entity_id,
         "name": entity.display_name or entity.friendly_name or entity.ha_entity_id,
         "area": {"id": entity.area_id, "name": entity.area_name} if entity.area_id else None,
+        "experiences": _experiences(entity),
         "state": entity.state,
         "availability": "available" if entity.available else "unavailable",
         "connection_status": "online" if installation.last_seen_at else "offline",
@@ -218,6 +220,29 @@ def _player(entity: Entity, installation: Installation) -> dict[str, Any]:
         if entity.last_seen_at
         else None,
         "resource_revision": _resource_revision(entity),
+    }
+
+
+def _experiences(entity: Entity) -> list[str]:
+    values = (entity.attributes_json or {}).get("_experiences", [])
+    if not isinstance(values, list):
+        return []
+    return [value for value in ("watch", "listen") if value in values]
+
+
+def _media_rooms(values: list[Entity]) -> dict[str, list[dict[str, str]]]:
+    rooms: dict[str, dict[str, str]] = {"watch": {}, "listen": {}}
+    for entity in values:
+        if not entity.area_id:
+            continue
+        for experience in _experiences(entity):
+            rooms[experience][entity.area_id] = entity.area_name or entity.area_id
+    return {
+        experience: [
+            {"area_id": area_id, "name": name}
+            for area_id, name in sorted(areas.items(), key=lambda item: item[1].casefold())
+        ]
+        for experience, areas in rooms.items()
     }
 
 
@@ -395,6 +420,7 @@ async def snapshot(
         "connector_capabilities": installation.connector_capabilities_json or {},
         "players": serialized_players,
         "groups": groups,
+        "media_rooms": _media_rooms(values),
     }
 
 
@@ -405,7 +431,10 @@ async def list_players(
     session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, Any]:
     data = await snapshot(installation_id, context, session)
-    return {key: data[key] for key in ("installation_id", "installation_revision", "players")}
+    return {
+        key: data[key]
+        for key in ("installation_id", "installation_revision", "players", "media_rooms")
+    }
 
 
 @router.get("/installations/{installation_id}/groups")

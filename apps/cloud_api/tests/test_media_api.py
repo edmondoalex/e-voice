@@ -17,6 +17,8 @@ from apps.cloud_api.app.media_api import (
     _groups,
     _installation,
     _media_context,
+    _media_rooms,
+    _player,
     _public_status,
     _valid_image,
     media_api_status,
@@ -63,6 +65,43 @@ def test_group_is_inconsistent_when_not_all_members_declare_it() -> None:
     first = player("registry-a", "media_player.a", ["media_player.a", "media_player.b"])
     second = player("registry-b", "media_player.b", [])
     assert _groups([first, second], installation_id)[0]["completeness"] == "inconsistent"
+
+
+def test_player_experiences_and_media_rooms_are_area_bound() -> None:
+    now = datetime.now(UTC)
+    sala = SimpleNamespace(
+        ha_registry_id="registry-tv",
+        ha_entity_id="media_player.tv",
+        display_name=None,
+        friendly_name="TV Sala",
+        area_id="sala",
+        area_name="Sala",
+        state="on",
+        available=True,
+        attributes_json={"_experiences": ["watch"]},
+        supported_features=0,
+        last_changed_at=now,
+        last_seen_at=now,
+        updated_at=now,
+    )
+    office = SimpleNamespace(
+        **{
+            **sala.__dict__,
+            "ha_registry_id": "registry-speaker",
+            "ha_entity_id": "media_player.speaker",
+            "friendly_name": "Speaker Ufficio",
+            "area_id": "office",
+            "area_name": "Ufficio",
+            "attributes_json": {"_experiences": ["listen"]},
+        }
+    )
+    installation = SimpleNamespace(id=uuid4(), last_seen_at=now)
+
+    assert _player(sala, installation)["experiences"] == ["watch"]
+    assert _media_rooms([sala, office]) == {
+        "watch": [{"area_id": "sala", "name": "Sala"}],
+        "listen": [{"area_id": "office", "name": "Ufficio"}],
+    }
 
 
 def test_typed_media_arguments_reject_extra_and_duplicate_members() -> None:

@@ -24,6 +24,7 @@ from .const import (
     CONF_EXPOSED_ENTITY_REGISTRY_IDS,
     CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
+    CONF_MEDIA_EXPERIENCES,
     DOMAIN,
 )
 from .entity_inventory import EntityInventorySynchronizer
@@ -66,6 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EkonexVoiceConfigEntry) 
         set(entry.options.get(CONF_EXPOSED_DEVICE_IDS, [])),
         set(entry.options.get(CONF_EXPOSED_ENTITY_REGISTRY_IDS, [])),
         entry.options.get(CONF_EXPOSURE_LABEL_ID),
+        entry.options.get(CONF_MEDIA_EXPERIENCES, {}),
     )
     command_executor = EkonexVoiceCommandExecutor(hass, inventory)
     connection = EkonexVoiceConnection(

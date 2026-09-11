@@ -75,12 +75,15 @@ class EntityItem(StrictModel):
     state: str | None = Field(default=None, max_length=255)
     available: bool
     attributes: dict[str, JsonScalar | list[JsonScalar]] = Field(default_factory=dict)
+    experiences: list[Literal["watch", "listen"]] = Field(default_factory=list, max_length=2)
     last_changed_at: datetime | None = None
     last_updated_at: datetime | None = None
     removed: bool = False
 
     @model_validator(mode="after")
     def bounded_attributes(self) -> EntityItem:
+        if len(set(self.experiences)) != len(self.experiences):
+            raise ValueError("duplicate media experience")
         if len(self.attributes) > 16:
             raise ValueError("too many attributes")
         for key, value in self.attributes.items():

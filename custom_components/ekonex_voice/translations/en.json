@@ -43,7 +43,18 @@
           "entities": "Individual entities",
           "label": "Installer-created Ekonex Voice label"
         }
+      },
+      "media_experiences": {
+        "title": "Classify media players",
+        "description": "Assign every exposed player to Watch, Listen, or both. Initial suggestions are editable and your manual choice always takes priority.",
+        "data": {
+          "watch_players": "Watch (video)",
+          "listen_players": "Listen (audio)"
+        }
       }
+    },
+    "error": {
+      "media_experience_required": "Every exposed media player must belong to at least one experience."
     }
   }
 }

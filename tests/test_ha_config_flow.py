@@ -24,6 +24,7 @@ from custom_components.ekonex_voice.const import (
     CONF_EXPOSURE_LABEL_ID,
     CONF_INSTALLATION_ID,
     CONF_INSTALLATION_NAME,
+    CONF_MEDIA_EXPERIENCES,
     CONF_TENANT_NAME,
     DEFAULT_CLOUD_URL,
     DOMAIN,
@@ -319,3 +320,28 @@ async def test_options_never_create_or_discover_label_by_name(hass: HomeAssistan
     assert result["type"] is data_entry_flow.FlowResultType.FORM
     assert CONF_EXPOSURE_LABEL_ID not in entry.options
     assert lr.async_get(hass).async_get_label(unrelated.label_id) is unrelated
+
+
+async def test_options_classify_exposed_media_player_with_manual_priority(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    media = er.async_get(hass).async_get_or_create(
+        "media_player", "test", "living-room-tv", original_device_class="tv"
+    )
+    hass.states.async_set(media.entity_id, "off", {"supported_features": 0})
+
+    with patch.object(hass.config_entries, "async_reload", new=AsyncMock()):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"entities": [media.entity_id]}
+        )
+        assert result["step_id"] == "media_experiences"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"watch_players": [], "listen_players": [media.entity_id]},
+        )
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_MEDIA_EXPERIENCES] == {media.id: ["listen"]}
