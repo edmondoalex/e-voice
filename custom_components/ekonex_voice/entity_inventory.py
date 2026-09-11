@@ -308,6 +308,7 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
         "available": state.state != STATE_UNAVAILABLE,
         "attributes": _attributes(entry.domain, state),
         "last_changed_at": state.last_changed.isoformat().replace("+00:00", "Z"),
+        "last_updated_at": state.last_updated.isoformat().replace("+00:00", "Z"),
         "removed": False,
     }
 
@@ -364,7 +365,7 @@ def _attributes(domain: str, state: State) -> dict[str, object]:
             result[key] = value
         elif (
             isinstance(value, (list, tuple))
-            and len(value) <= (64 if key == "source_list" else 8)
+            and len(value) <= (64 if key in {"source_list", "group_members"} else 8)
             and all(isinstance(item, (str, int, float, bool)) for item in value)
         ):
             result[key] = [item[:255] if isinstance(item, str) else item for item in value]

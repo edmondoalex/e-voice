@@ -31,6 +31,10 @@ CONNECTOR_CAPABILITIES = {
     "supports_command_diagnostics": True,
     "supports_heartbeat_diagnostics": True,
     "supports_control4_favorites": True,
+    "supports_multimedia": True,
+    "supports_media_grouping": True,
+    "supports_media_artwork": True,
+    "supports_relative_group_volume": True,
 }
 
 

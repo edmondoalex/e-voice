@@ -448,7 +448,7 @@ async def test_media_player_join_requires_another_exposed_player(hass: HomeAssis
         result = await executor.async_execute(
             "media-join",
             coordinator.id,
-            {"operation": "media_join", "member_registry_id": member.id},
+            {"operation": "media_join", "member_registry_ids": [member.id]},
         )
     assert result.status == "success"
     call.assert_awaited_once_with(

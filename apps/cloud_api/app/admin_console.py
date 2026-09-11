@@ -2025,7 +2025,7 @@ def _command_data(operation: str, value: str) -> dict[str, object]:
     elif operation == "select_source":
         data["source"] = value
     elif operation == "media_join":
-        data["member_registry_id"] = value
+        data["member_registry_ids"] = [value]
     elif operation == "select_option":
         data["option"] = value
     elif operation == "set_preset_mode":

@@ -647,6 +647,26 @@ class ConnectorCredential(Base):
     )
 
 
+class MediaApiCredential(Base):
+    """Hash-only server-to-server credential restricted to one installation."""
+
+    __tablename__ = "media_api_credentials"
+    __table_args__ = (Index("ix_media_api_credentials_installation", "installation_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    secret_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class PairingSession(Base):
     __tablename__ = "pairing_sessions"
     __table_args__ = (

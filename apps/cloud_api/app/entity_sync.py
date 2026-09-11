@@ -59,6 +59,14 @@ class EntitySyncService:
         from .alexa_events import reconcile_discovery_safely
 
         await reconcile_discovery_safely(self._session, self._installation)
+        from .media_realtime import media_events
+
+        media_events.publish(
+            self._installation.id,
+            revision,
+            "snapshot.required",
+            {"reason": "inventory_replaced", "current_installation_revision": revision},
+        )
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
@@ -82,6 +90,14 @@ class EntitySyncService:
         from .alexa_events import reconcile_discovery_safely
 
         await reconcile_discovery_safely(self._session, self._installation)
+        from .media_realtime import media_events
+
+        media_events.publish(
+            self._installation.id,
+            revision,
+            "snapshot.required",
+            {"reason": "inventory_changed", "current_installation_revision": revision},
+        )
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
@@ -102,6 +118,9 @@ class EntitySyncService:
                 if changed
                 else entity.last_changed_at
             )
+            updated = item.get("last_updated_at")
+            if updated:
+                entity.attributes_json["_last_updated_at"] = str(updated)[:64]
             entity.last_seen_at = datetime.now(UTC)
             await StateHistoryService(self._session).record_change(
                 entity,
@@ -112,6 +131,54 @@ class EntitySyncService:
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
+        from .media_api import _groups, _player
+        from .media_realtime import media_events
+
+        media_players = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == self._installation.id,
+                        Entity.ha_domain == "media_player",
+                        Entity.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        current_groups = _groups(media_players, self._installation.id)
+        group_by_member = {
+            member: group for group in current_groups for member in group["member_registry_ids"]
+        }
+        group_changed = False
+        for entity in changed_entities:
+            if entity.ha_domain == "media_player":
+                serialized = _player(entity, self._installation)
+                serialized["group"] = group_by_member.get(entity.ha_registry_id)
+                media_events.publish(
+                    self._installation.id,
+                    revision,
+                    "player.updated",
+                    {
+                        "registry_id": entity.ha_registry_id,
+                        "resource_revision": _resource_revision(entity),
+                        "changed_fields": ["state", "attributes", "availability"],
+                        "player": serialized,
+                    },
+                )
+                group_changed = group_changed or "group_members" in (entity.attributes_json or {})
+        if group_changed:
+            for group in current_groups:
+                media_events.publish(
+                    self._installation.id,
+                    revision,
+                    "group.updated",
+                    {
+                        "group_id": group["group_id"],
+                        "resource_revision": group["resource_revision"],
+                        "changed_fields": ["member_registry_ids", "completeness"],
+                        "group": group,
+                    },
+                )
         if get_settings().environment == "laboratory":
             from .voice_alerts import schedule_alert_evaluation
 
@@ -187,6 +254,9 @@ class EntitySyncService:
         entity.last_changed_at = (
             datetime.fromisoformat(str(changed).replace("Z", "+00:00")) if changed else None
         )
+        updated = item.get("last_updated_at")
+        if updated:
+            entity.attributes_json["_last_updated_at"] = str(updated)[:64]
         entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
         if is_new:
             previous_state, previous_available = None, not entity.available
@@ -202,3 +272,9 @@ class EntitySyncService:
 def _optional(item: dict[str, object], key: str) -> str | None:
     value = item.get(key)
     return str(value)[:255] if value is not None else None
+
+
+def _resource_revision(entity: Entity) -> int:
+    """Return a stable monotonic-enough resource version without exposing DB identifiers."""
+    value = entity.updated_at or entity.last_seen_at or datetime.now(UTC)
+    return int(value.timestamp() * 1_000_000)

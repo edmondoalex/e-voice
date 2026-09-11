@@ -50,7 +50,7 @@ class CommandResult:
     error_code: str | None = None
     correlation_id: str | None = None
     diagnostics: tuple[dict[str, object], ...] = ()
-    response_data: dict[str, str] | None = None
+    response_data: dict[str, object] | None = None
 
     def payload(self, session_id: str) -> dict[str, object]:
         value: dict[str, object] = {
@@ -415,8 +415,31 @@ class EkonexVoiceCommandExecutor:
                 raise ValueError("media player not found")
             async with asyncio.timeout(self._timeout):
                 content, content_type = await player.async_get_media_image()
-            if content is None or not content_type or len(content) > 700_000:
-                raise ValueError("media artwork unavailable")
+            if content is None or not content_type:
+                return CommandResult(
+                    command_id,
+                    "target_not_found",
+                    "MEDIA_ARTWORK_NOT_FOUND",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
+            if len(content) > 700_000:
+                return CommandResult(
+                    command_id,
+                    "invalid_argument",
+                    "MEDIA_ARTWORK_TOO_LARGE",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
+            allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+            if content_type.lower().split(";", 1)[0].strip() not in allowed_types:
+                return CommandResult(
+                    command_id,
+                    "invalid_argument",
+                    "MEDIA_ARTWORK_INVALID_TYPE",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
         except TimeoutError:
             return CommandResult(
                 command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
@@ -450,11 +473,15 @@ class EkonexVoiceCommandExecutor:
         correlation_id: str | None,
         diagnostics: list[dict[str, object]],
     ) -> CommandResult:
-        """Join one other exposed media player to the selected coordinator."""
-        member_id = command.get("member_registry_id")
+        """Join exposed media players to the selected player without inferring a coordinator."""
+        member_ids = command.get("member_registry_ids")
         if (
-            set(command) != {"operation", "member_registry_id"}
-            or not isinstance(member_id, str)
+            set(command) != {"operation", "member_registry_ids"}
+            or not isinstance(member_ids, list)
+            or not 1 <= len(member_ids) <= 63
+            or any(not isinstance(value, str) or not value for value in member_ids)
+            or len(set(member_ids)) != len(member_ids)
+            or entry.id in member_ids
             or not int(state.attributes.get("supported_features", 0))
             & MediaPlayerEntityFeature.GROUPING
         ):
@@ -466,36 +493,39 @@ class EkonexVoiceCommandExecutor:
                 tuple(diagnostics),
             )
         registry = er.async_get(self._hass)
-        member = next((item for item in registry.entities.values() if item.id == member_id), None)
-        if (
-            member is None
-            or member.disabled
-            or member.domain != "media_player"
-            or member.id == entry.id
-            or not self._inventory.is_exposed(member)
-        ):
-            return CommandResult(
-                command_id,
-                "target_not_exposed",
-                "GROUP_MEMBER_NOT_EXPOSED",
-                correlation_id,
-                tuple(diagnostics),
-            )
-        member_state = self._hass.states.get(member.entity_id)
-        if member_state is None or member_state.state == STATE_UNAVAILABLE:
-            return CommandResult(
-                command_id,
-                "unavailable",
-                "GROUP_MEMBER_UNAVAILABLE",
-                correlation_id,
-                tuple(diagnostics),
-            )
+        by_id = {item.id: item for item in registry.entities.values()}
+        members: list[er.RegistryEntry] = []
+        for member_id in member_ids:
+            member = by_id.get(member_id)
+            if (
+                member is None
+                or member.disabled
+                or member.domain != "media_player"
+                or not self._inventory.is_exposed(member)
+            ):
+                return CommandResult(
+                    command_id,
+                    "target_not_exposed",
+                    "GROUP_MEMBER_NOT_EXPOSED",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
+            member_state = self._hass.states.get(member.entity_id)
+            if member_state is None or member_state.state == STATE_UNAVAILABLE:
+                return CommandResult(
+                    command_id,
+                    "unavailable",
+                    "GROUP_MEMBER_UNAVAILABLE",
+                    correlation_id,
+                    tuple(diagnostics),
+                )
+            members.append(member)
         try:
             async with asyncio.timeout(self._timeout):
                 await self._hass.services.async_call(
                     "media_player",
                     "join",
-                    {"entity_id": entry.entity_id, "group_members": [member.entity_id]},
+                    {"entity_id": entry.entity_id, "group_members": [m.entity_id for m in members]},
                     blocking=True,
                 )
         except TimeoutError:
@@ -510,7 +540,14 @@ class EkonexVoiceCommandExecutor:
                 correlation_id,
                 tuple(diagnostics),
             )
-        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+        return CommandResult(
+            command_id,
+            "success",
+            None,
+            correlation_id,
+            tuple(diagnostics),
+            {"members": [{"registry_id": m.id, "status": "success"} for m in members]},
+        )
 
     async def _media_group_volume(
         self,
@@ -540,7 +577,7 @@ class EkonexVoiceCommandExecutor:
             )
         registry = er.async_get(self._hass)
         by_entity_id = {item.entity_id: item for item in registry.entities.values()}
-        members: list[tuple[str, float]] = []
+        members: list[tuple[er.RegistryEntry, float, bool]] = []
         for entity_id in dict.fromkeys(group_members):
             member = by_entity_id.get(entity_id) if isinstance(entity_id, str) else None
             member_state = self._hass.states.get(entity_id) if isinstance(entity_id, str) else None
@@ -555,6 +592,8 @@ class EkonexVoiceCommandExecutor:
                 or isinstance(volume, bool)
                 or not isinstance(volume, (int, float))
                 or not 0 <= float(volume) <= 1
+                or not int(member_state.attributes.get("supported_features", 0))
+                & MediaPlayerEntityFeature.VOLUME_SET
             ):
                 return CommandResult(
                     command_id,
@@ -563,36 +602,56 @@ class EkonexVoiceCommandExecutor:
                     correlation_id,
                     tuple(diagnostics),
                 )
-            members.append((member.entity_id, float(volume)))
-        current_average = sum(volume for _, volume in members) / len(members)
+            members.append(
+                (member, float(volume), bool(member_state.attributes.get("is_volume_muted")))
+            )
+        current_average = sum(volume for _, volume, _ in members) / len(members)
         delta = requested / 100 - current_average
+        results: list[dict[str, object]] = []
         try:
             async with asyncio.timeout(self._timeout):
-                for entity_id, current in members:
-                    await self._hass.services.async_call(
-                        "media_player",
-                        "volume_set",
-                        {
-                            "entity_id": entity_id,
-                            "volume_level": round(
-                                min(1.0, max(0.0, current + delta)), 4
-                            ),
-                        },
-                        blocking=True,
-                    )
+                for member, current, muted in members:
+                    target = round(min(1.0, max(0.0, current + delta)), 4)
+                    try:
+                        await self._hass.services.async_call(
+                            "media_player",
+                            "volume_set",
+                            {"entity_id": member.entity_id, "volume_level": target},
+                            blocking=True,
+                        )
+                        results.append(
+                            {
+                                "registry_id": member.id,
+                                "previous_percent": round(current * 100),
+                                "target_percent": round(target * 100),
+                                "muted": muted,
+                                "status": "success",
+                            }
+                        )
+                    except Exception:
+                        results.append(
+                            {
+                                "registry_id": member.id,
+                                "previous_percent": round(current * 100),
+                                "target_percent": round(target * 100),
+                                "muted": muted,
+                                "status": "failed",
+                                "error_code": "SERVICE_CALL_FAILED",
+                            }
+                        )
         except TimeoutError:
             return CommandResult(
                 command_id, "timeout", "COMMAND_TIMEOUT", correlation_id, tuple(diagnostics)
             )
-        except Exception:
-            return CommandResult(
-                command_id,
-                "execution_failed",
-                "SERVICE_CALL_FAILED",
-                correlation_id,
-                tuple(diagnostics),
-            )
-        return CommandResult(command_id, "success", None, correlation_id, tuple(diagnostics))
+        failed = any(item["status"] == "failed" for item in results)
+        return CommandResult(
+            command_id,
+            "execution_failed" if failed else "success",
+            "GROUP_MEMBER_FAILURE" if failed else None,
+            correlation_id,
+            tuple(diagnostics),
+            {"requested_percent": requested, "members": results},
+        )
 
 
 def _service_result(

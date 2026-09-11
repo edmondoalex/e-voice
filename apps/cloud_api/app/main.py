@@ -22,6 +22,7 @@ from .doorbells import router as doorbell_router
 from .evcp import router as evcp_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
+from .media_api import router as media_router
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
 from .voice_alerts import run_live_alert_monitor
@@ -66,6 +67,7 @@ app.include_router(alexa_routine_connector_router)
 app.include_router(doorbell_router)
 app.include_router(doorbell_public_router)
 app.include_router(control4_favorites_router)
+app.include_router(media_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])

@@ -92,7 +92,7 @@ class MediaSourceCommand(StrictCommand):
 
 class MediaJoinCommand(StrictCommand):
     operation: Literal["media_join"]
-    member_registry_id: str = Field(min_length=1, max_length=255)
+    member_registry_ids: list[str] = Field(min_length=1, max_length=63)
 
 
 class MediaGroupVolumeCommand(StrictCommand):
@@ -221,7 +221,7 @@ class DispatchOutcome:
     command_id: UUID
     status: str
     error_code: str | None
-    response_data: dict[str, str] | None = None
+    response_data: dict[str, object] | None = None
 
 
 class CommandDispatchService:

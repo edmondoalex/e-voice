@@ -169,7 +169,7 @@ class CommandResultPayload(StrictModel):
     error_code: str | None = Field(default=None, max_length=64, pattern=r"^[A-Z0-9_]+$")
     correlation_id: UUID | None = None
     diagnostics: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-    response_data: dict[str, str] | None = None
+    response_data: dict[str, object] | None = None
 
 
 class CommandResultMessage(StrictModel):
