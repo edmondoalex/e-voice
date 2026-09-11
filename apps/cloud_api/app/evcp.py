@@ -76,6 +76,7 @@ class EntityItem(StrictModel):
     available: bool
     attributes: dict[str, JsonScalar | list[JsonScalar]] = Field(default_factory=dict)
     last_changed_at: datetime | None = None
+    last_updated_at: datetime | None = None
     removed: bool = False
 
     @model_validator(mode="after")
@@ -86,7 +87,7 @@ class EntityItem(StrictModel):
             if len(key) > 64:
                 raise ValueError("attribute name too long")
             values = value if isinstance(value, list) else [value]
-            limit = 64 if key == "source_list" else 8
+            limit = 64 if key in {"source_list", "group_members"} else 8
             if len(values) > limit or any(
                 isinstance(item, str) and len(item) > 255 for item in values
             ):
