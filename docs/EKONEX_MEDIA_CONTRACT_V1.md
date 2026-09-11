@@ -17,7 +17,8 @@ Questo è un contratto interno. Il componente fornisce dati e comandi affidabili
 - In assenza di un coordinatore affidabile si mostra `Player selezionato` o `Gruppo multimediale`.
 - Gli aggiornamenti del componente sono raggruppati in una finestra nominale di 250 ms.
 - e‑Face non riceve token Home Assistant, URL firmati, `access_token` o copertine Base64.
-- I player senza `area_id` restano nel backend ma non sono restituiti a e‑Face.
+- Le aree Home Assistant non fanno parte del modello Media e non sono richieste.
+- Sono restituiti soltanto i player esposti e classificati in Ekonex Voice.
 
 ## 2. Revisioni
 
@@ -58,7 +59,8 @@ Una revisione non corrente produce `conflict` senza eseguire il comando.
   "registry_id": "abc123",
   "entity_id": "media_player.ufficio_alex",
   "name": "Ufficio Alex",
-  "area": {"id": "ufficio", "name": "Ufficio"},
+  "room_id": "abc123",
+  "room_name": "Ufficio Alex",
   "experiences": ["listen"],
   "state": "playing",
   "availability": "available",
@@ -110,13 +112,15 @@ Snapshot e lista player includono inoltre:
 ```json
 {
   "media_rooms": {
-    "watch": [{"area_id": "sala", "name": "Sala"}],
-    "listen": [{"area_id": "ufficio", "name": "Ufficio"}]
+    "watch": [{"room_id": "abc123", "room_name": "Ufficio Alex"}],
+    "listen": [{"room_id": "abc123", "room_name": "Ufficio Alex"}]
   }
 }
 ```
 
-Una stanza compare soltanto se contiene almeno un player esposto con quell'esperienza.
+Ogni player rappresenta direttamente una stanza: `room_id` deriva da `registry_id` e
+`room_name` da `friendly_name`. `watch` contiene i player configurati `watch` oppure `listen`;
+`listen` contiene soltanto quelli configurati `listen`.
 
 Condizioni distinte:
 
@@ -449,7 +453,8 @@ Risposte:
 | `tenant_id` | non riceve | produce dall’autenticazione | non sceglie |
 | `registry_id` | produce | verifica e conserva | usa come target |
 | `experiences` | propone e salva la scelta manuale | conserva e restituisce | filtra Watch/Listen |
-| `media_rooms` | alimenta tramite area ed esperienze | calcola | consuma |
+| `room_id`, `room_name` | produce registry ID e nome | normalizza | consuma |
+| `media_rooms` | alimenta tramite player ed esperienze | calcola | consuma |
 | `entity_id` | produce, informativo | conserva | visualizza soltanto |
 | stato, availability, media | produce | conserva | visualizza |
 | `connection_status` | segnala connessione | normalizza | visualizza |

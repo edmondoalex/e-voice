@@ -98,9 +98,16 @@ def test_player_experiences_and_media_rooms_are_area_bound() -> None:
     installation = SimpleNamespace(id=uuid4(), last_seen_at=now)
 
     assert _player(sala, installation)["experiences"] == ["watch"]
+    assert _player(sala, installation)["room_id"] == "registry-tv"
+    assert _player(sala, installation)["room_name"] == "TV Sala"
     assert _media_rooms([sala, office]) == {
-        "watch": [{"area_id": "sala", "name": "Sala"}],
-        "listen": [{"area_id": "office", "name": "Ufficio"}],
+        "watch": [
+            {"room_id": "registry-speaker", "room_name": "Speaker Ufficio"},
+            {"room_id": "registry-tv", "room_name": "TV Sala"},
+        ],
+        "listen": [
+            {"room_id": "registry-speaker", "room_name": "Speaker Ufficio"}
+        ],
     }
 
 

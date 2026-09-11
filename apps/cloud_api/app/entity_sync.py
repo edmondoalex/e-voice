@@ -137,12 +137,13 @@ class EntitySyncService:
                         Entity.installation_id == self._installation.id,
                         Entity.ha_domain == "media_player",
                         Entity.deleted_at.is_(None),
-                        Entity.area_id.is_not(None),
                     )
                 )
             ).all()
         )
         for entity in players:
+            if not (entity.attributes_json or {}).get("_experiences"):
+                continue
             event_type = (
                 "player.updated"
                 if entity.ha_registry_id in previous_media_ids
@@ -154,7 +155,7 @@ class EntitySyncService:
                     {
                         "registry_id": entity.ha_registry_id,
                         "resource_revision": _resource_revision(entity),
-                        "changed_fields": ["inventory", "area", "experiences"],
+                        "changed_fields": ["inventory", "room", "experiences"],
                     }
                 )
             media_events.publish(self._installation.id, revision, event_type, payload)
@@ -215,7 +216,7 @@ class EntitySyncService:
         for entity in changed_entities:
             if entity.ha_domain == "media_player":
                 serialized = _player(entity, self._installation)
-                if entity.area_id is None:
+                if not (entity.attributes_json or {}).get("_experiences"):
                     continue
                 serialized["group"] = group_by_member.get(entity.ha_registry_id)
                 media_events.publish(

@@ -138,7 +138,7 @@ async def _installation(
 
 
 async def _entities(session: AsyncSession, installation_id: UUID) -> list[Entity]:
-    return list(
+    values = list(
         (
             await session.scalars(
                 select(Entity)
@@ -146,12 +146,12 @@ async def _entities(session: AsyncSession, installation_id: UUID) -> list[Entity
                     Entity.installation_id == installation_id,
                     Entity.ha_domain == "media_player",
                     Entity.deleted_at.is_(None),
-                    Entity.area_id.is_not(None),
                 )
                 .order_by(Entity.ha_registry_id)
             )
         ).all()
     )
+    return [entity for entity in values if _experiences(entity)]
 
 
 def _fingerprint(entity: Entity) -> str | None:
@@ -177,7 +177,8 @@ def _player(entity: Entity, installation: Installation) -> dict[str, Any]:
         "registry_id": entity.ha_registry_id,
         "entity_id": entity.ha_entity_id,
         "name": entity.display_name or entity.friendly_name or entity.ha_entity_id,
-        "area": {"id": entity.area_id, "name": entity.area_name} if entity.area_id else None,
+        "room_id": entity.ha_registry_id,
+        "room_name": entity.display_name or entity.friendly_name or entity.ha_entity_id,
         "experiences": _experiences(entity),
         "state": entity.state,
         "availability": "available" if entity.available else "unavailable",
@@ -233,14 +234,18 @@ def _experiences(entity: Entity) -> list[str]:
 def _media_rooms(values: list[Entity]) -> dict[str, list[dict[str, str]]]:
     rooms: dict[str, dict[str, str]] = {"watch": {}, "listen": {}}
     for entity in values:
-        if not entity.area_id:
+        if not entity.ha_registry_id:
             continue
-        for experience in _experiences(entity):
-            rooms[experience][entity.area_id] = entity.area_name or entity.area_id
+        experiences = _experiences(entity)
+        room_name = entity.display_name or entity.friendly_name or entity.ha_entity_id
+        if experiences:
+            rooms["watch"][entity.ha_registry_id] = room_name
+        if "listen" in experiences:
+            rooms["listen"][entity.ha_registry_id] = room_name
     return {
         experience: [
-            {"area_id": area_id, "name": name}
-            for area_id, name in sorted(areas.items(), key=lambda item: item[1].casefold())
+            {"room_id": room_id, "room_name": name}
+            for room_id, name in sorted(areas.items(), key=lambda item: item[1].casefold())
         ]
         for experience, areas in rooms.items()
     }
