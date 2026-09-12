@@ -122,6 +122,25 @@ Ogni player rappresenta direttamente una stanza: `room_id` deriva da `registry_i
 `room_name` da `friendly_name`. `watch` contiene i player configurati `watch` oppure `listen`;
 `listen` contiene soltanto quelli configurati `listen`.
 
+### 3.1 Echo
+
+Un player Echo mantiene nome ed `entity_id` originali di Home Assistant e aggiunge:
+
+```json
+{
+  "device_class": "echo",
+  "manufacturer": "Amazon",
+  "model": "Echo Dot",
+  "capabilities": {"tts": true, "do_not_disturb": true},
+  "dnd": false
+}
+```
+
+Le capacità sono `true` soltanto quando la corrispondente entità Alexa associata, esposta nello
+stesso impianto e sullo stesso dispositivo HA, è disponibile. `tts` accetta testo semplice da 1
+a 500 caratteri. `set_dnd` accetta esclusivamente `{"enabled": true|false}`. Una funzione non
+supportata restituisce un errore esplicito senza tentare servizi arbitrari.
+
 Condizioni distinte:
 
 - `availability`: `available`, `unavailable`, `unknown`;

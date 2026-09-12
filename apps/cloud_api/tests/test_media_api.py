@@ -14,6 +14,7 @@ from apps.cloud_api.app.command_dispatch import command_adapter
 from apps.cloud_api.app.domain.models import MediaApiCredential
 from apps.cloud_api.app.media_api import (
     _arguments,
+    _enrich_echo_players,
     _groups,
     _installation,
     _media_context,
@@ -80,6 +81,7 @@ def test_player_experiences_and_media_rooms_are_area_bound() -> None:
         available=True,
         attributes_json={"_experiences": ["watch"]},
         supported_features=0,
+        device_class=None,
         last_changed_at=now,
         last_seen_at=now,
         updated_at=now,
@@ -109,6 +111,71 @@ def test_player_experiences_and_media_rooms_are_area_bound() -> None:
             {"room_id": "registry-speaker", "room_name": "Speaker Ufficio"}
         ],
     }
+
+
+def test_echo_snapshot_capabilities_follow_exposed_siblings() -> None:
+    now = datetime.now(UTC)
+    common = {
+        "installation_id": uuid4(),
+        "device_id": "echo-device",
+        "deleted_at": None,
+        "available": True,
+    }
+    echo = SimpleNamespace(
+        **common,
+        ha_registry_id="echo-registry",
+        ha_entity_id="media_player.echo_sala",
+        ha_domain="media_player",
+        display_name=None,
+        friendly_name="Echo Sala",
+        device_class=None,
+        state="playing",
+        attributes_json={
+            "_experiences": ["listen"],
+            "_manufacturer": "Amazon",
+            "_model": "Echo Dot",
+            "_platform": "alexa_media",
+        },
+        supported_features=16384 | 1 | 4096 | 4 | 8,
+        last_changed_at=now,
+        last_seen_at=now,
+        updated_at=now,
+    )
+    speech = SimpleNamespace(
+        **common,
+        ha_registry_id="speak-registry",
+        ha_entity_id="notify.echo_sala_speak",
+        ha_domain="notify",
+        state=None,
+    )
+    dnd = SimpleNamespace(
+        **common,
+        ha_registry_id="dnd-registry",
+        ha_entity_id="switch.echo_sala_do_not_disturb",
+        ha_domain="switch",
+        state="off",
+    )
+    payload = _player(echo, SimpleNamespace(id=uuid4(), last_seen_at=now))
+
+    _enrich_echo_players([payload], [echo, speech, dnd])
+
+    assert payload["device_class"] == "echo"
+    assert payload["manufacturer"] == "Amazon"
+    assert payload["model"] == "Echo Dot"
+    assert payload["capabilities"]["tts"] is True
+    assert payload["capabilities"]["do_not_disturb"] is True
+    assert payload["dnd"] is False
+
+
+def test_echo_arguments_are_strict_and_bounded() -> None:
+    assert _arguments("tts", {"text": "Ciao"}) == {"text": "Ciao"}
+    assert _arguments("set_dnd", {"enabled": True}) == {"enabled": True}
+    with pytest.raises(ValueError):
+        _arguments("tts", {"text": ""})
+    with pytest.raises(ValueError):
+        _arguments("tts", {"text": "x" * 501})
+    with pytest.raises(ValueError):
+        _arguments("set_dnd", {"enabled": 1})
 
 
 def test_typed_media_arguments_reject_extra_and_duplicate_members() -> None:

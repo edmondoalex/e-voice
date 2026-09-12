@@ -173,6 +173,7 @@ class EntitySyncService:
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+            _store_device_metadata(entity, item)
             if entity.ha_domain == "media_player":
                 entity.attributes_json["_experiences"] = _experiences(item)
             changed = item.get("last_changed_at")
@@ -194,7 +195,7 @@ class EntitySyncService:
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
-        from .media_api import _groups, _player
+        from .media_api import _enrich_echo_players, _groups, _player
         from .media_realtime import media_events
 
         media_players = list(
@@ -209,6 +210,16 @@ class EntitySyncService:
             ).all()
         )
         current_groups = _groups(media_players, self._installation.id)
+        all_entities = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == self._installation.id,
+                        Entity.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
         group_by_member = {
             member: group for group in current_groups for member in group["member_registry_ids"]
         }
@@ -218,6 +229,7 @@ class EntitySyncService:
                 serialized = _player(entity, self._installation)
                 if not (entity.attributes_json or {}).get("_experiences"):
                     continue
+                _enrich_echo_players([serialized], all_entities)
                 serialized["group"] = group_by_member.get(entity.ha_registry_id)
                 media_events.publish(
                     self._installation.id,
@@ -236,6 +248,27 @@ class EntitySyncService:
                     },
                 )
                 group_changed = group_changed or "group_members" in (entity.attributes_json or {})
+            elif entity.ha_domain == "switch" and entity.ha_entity_id.endswith(
+                ("_do_not_disturb", "_non_disturbare")
+            ):
+                for player in media_players:
+                    if player.device_id != entity.device_id or not (
+                        player.attributes_json or {}
+                    ).get("_experiences"):
+                        continue
+                    serialized = _player(player, self._installation)
+                    _enrich_echo_players([serialized], all_entities)
+                    media_events.publish(
+                        self._installation.id,
+                        revision,
+                        "player.updated",
+                        {
+                            "registry_id": player.ha_registry_id,
+                            "resource_revision": _resource_revision(player),
+                            "changed_fields": ["dnd"],
+                            "player": serialized,
+                        },
+                    )
         if group_changed:
             for group in current_groups:
                 media_events.publish(
@@ -320,6 +353,7 @@ class EntitySyncService:
         entity.available = bool(item.get("available", True))
         attributes = item.get("attributes", {})
         entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+        _store_device_metadata(entity, item)
         if entity.ha_domain == "media_player":
             entity.attributes_json["_experiences"] = _experiences(item)
         changed = item.get("last_changed_at")
@@ -351,6 +385,13 @@ def _experiences(item: dict[str, object]) -> list[str]:
     if not isinstance(values, list):
         return []
     return [value for value in values if value in {"watch", "listen"}]
+
+
+def _store_device_metadata(entity: Entity, item: dict[str, object]) -> None:
+    for key in ("manufacturer", "model", "platform"):
+        value = item.get(key)
+        if value is not None:
+            entity.attributes_json[f"_{key}"] = str(value)[:255]
 
 
 def _resource_revision(entity: Entity) -> int:

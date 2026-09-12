@@ -97,6 +97,8 @@ class PlayerCommandRequest(StrictModel):
         "set_volume",
         "select_source",
         "media_join",
+        "tts",
+        "set_dnd",
     ]
     arguments: dict[str, object]
     expected_resource_revision: int | None = Field(default=None, ge=0)
@@ -180,6 +182,10 @@ def _player(entity: Entity, installation: Installation) -> dict[str, Any]:
         "room_id": entity.ha_registry_id,
         "room_name": entity.display_name or entity.friendly_name or entity.ha_entity_id,
         "experiences": _experiences(entity),
+        "device_class": entity.device_class,
+        "manufacturer": attrs.get("_manufacturer"),
+        "model": attrs.get("_model"),
+        "dnd": None,
         "state": entity.state,
         "availability": "available" if entity.available else "unavailable",
         "connection_status": "online" if installation.last_seen_at else "offline",
@@ -211,6 +217,8 @@ def _player(entity: Entity, installation: Installation) -> dict[str, Any]:
             "select_source": bool(features & 2048),
             "grouping": bool(features & 524288),
             "artwork": True,
+            "tts": False,
+            "do_not_disturb": False,
         },
         "supported_features_raw": features,
         "last_changed_at": entity.last_changed_at.isoformat().replace("+00:00", "Z")
@@ -324,9 +332,68 @@ def _arguments(operation: str, values: dict[str, object]) -> dict[str, object]:
             or not all(isinstance(item, str) and item for item in members)
         ):
             raise ValueError
+    elif operation == "tts":
+        text = values.get("text")
+        if (
+            set(values) != {"text"}
+            or not isinstance(text, str)
+            or not 1 <= len(text.strip()) <= 500
+            or "<" in text
+            or ">" in text
+        ):
+            raise ValueError
+    elif operation == "set_dnd":
+        if set(values) != {"enabled"} or type(values.get("enabled")) is not bool:
+            raise ValueError
     elif values:
         raise ValueError
     return values
+
+
+def _echo_siblings(
+    player: Entity, entities: list[Entity]
+) -> tuple[Entity | None, Entity | None, bool]:
+    attrs = player.attributes_json or {}
+    platform = str(attrs.get("_platform") or "").lower()
+    manufacturer = str(attrs.get("_manufacturer") or "").lower()
+    related = [item for item in entities if player.device_id and item.device_id == player.device_id]
+    speech = next(
+        (
+            item
+            for item in related
+            if item.ha_domain == "notify"
+            and item.ha_entity_id.endswith(("_speak", "_parla"))
+        ),
+        None,
+    )
+    dnd = next(
+        (
+            item
+            for item in related
+            if item.ha_domain == "switch"
+            and item.ha_entity_id.endswith(("_do_not_disturb", "_non_disturbare"))
+        ),
+        None,
+    )
+    is_echo = manufacturer == "amazon" or platform in {"alexa_media", "alexa_devices"}
+    return speech, dnd, is_echo
+
+
+def _enrich_echo_players(players: list[dict[str, Any]], values: list[Entity]) -> None:
+    by_registry = {item.ha_registry_id: item for item in values}
+    for payload in players:
+        entity = by_registry.get(payload["registry_id"])
+        if entity is None:
+            continue
+        speech, dnd, is_echo = _echo_siblings(entity, values)
+        if not is_echo:
+            continue
+        payload["device_class"] = "echo"
+        payload["manufacturer"] = (entity.attributes_json or {}).get("_manufacturer") or "Amazon"
+        payload["model"] = (entity.attributes_json or {}).get("_model")
+        payload["capabilities"]["tts"] = speech is not None and speech.available
+        payload["capabilities"]["do_not_disturb"] = dnd is not None and dnd.available
+        payload["dnd"] = dnd.state == "on" if dnd is not None else None
 
 
 def _public_status(value: str, response: dict[str, object] | None) -> str:
@@ -413,6 +480,17 @@ async def snapshot(
     groups = _groups(values, installation_id)
     group_by_member = {member: group for group in groups for member in group["member_registry_ids"]}
     serialized_players = [_player(item, installation) for item in values]
+    all_entities = list(
+        (
+            await session.scalars(
+                select(Entity).where(
+                    Entity.installation_id == installation_id,
+                    Entity.deleted_at.is_(None),
+                )
+            )
+        ).all()
+    )
+    _enrich_echo_players(serialized_players, all_entities)
     for item in serialized_players:
         item["group"] = group_by_member.get(item["registry_id"])
     return {
@@ -504,11 +582,42 @@ async def player_command(
             )
             if len(found) != len(member_ids) or any(not item.available for item in found):
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Membro non valido")
-        command = command_adapter.validate_python({"operation": payload.operation, **arguments})
+        dispatch_registry_id = registry_id
+        dispatch_operation = payload.operation
+        dispatch_arguments = arguments
+        if payload.operation in {"tts", "set_dnd"}:
+            related = list(
+                (
+                    await session.scalars(
+                        select(Entity).where(
+                            Entity.installation_id == installation_id,
+                            Entity.deleted_at.is_(None),
+                            Entity.device_id == entity.device_id,
+                        )
+                    )
+                ).all()
+            )
+            speech, dnd, is_echo = _echo_siblings(entity, related)
+            target = speech if payload.operation == "tts" else dnd
+            if not is_echo or target is None or not target.available or not target.ha_registry_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Funzione Echo non supportata o entità associata non esposta",
+                )
+            dispatch_registry_id = target.ha_registry_id
+            if payload.operation == "tts":
+                dispatch_operation = "speak"
+                dispatch_arguments = {"message": str(arguments["text"]).strip()}
+            else:
+                dispatch_operation = "power_on" if arguments["enabled"] else "power_off"
+                dispatch_arguments = {}
+        command = command_adapter.validate_python(
+            {"operation": dispatch_operation, **dispatch_arguments}
+        )
     except (ValueError, ValidationError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Argomenti non validi") from error
     outcome = await CommandDispatchService(session, sessions).dispatch(
-        installation_id, registry_id, command, command_id=payload.request_id
+        installation_id, dispatch_registry_id, command, command_id=payload.request_id
     )
     result = {
         "request_id": str(payload.request_id),
