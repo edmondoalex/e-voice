@@ -18,7 +18,8 @@ Questo è un contratto interno. Il componente fornisce dati e comandi affidabili
 - Gli aggiornamenti del componente sono raggruppati in una finestra nominale di 250 ms.
 - e‑Face non riceve token Home Assistant, URL firmati, `access_token` o copertine Base64.
 - Le aree Home Assistant non fanno parte del modello Media e non sono richieste.
-- Sono restituiti soltanto i player esposti e classificati in Ekonex Voice.
+- Sono restituiti tutti i player esposti in Ekonex Voice; la classificazione è richiesta soltanto
+  per inserirli negli elenchi `media_rooms` Watch/Listen.
 
 ## 2. Revisioni
 

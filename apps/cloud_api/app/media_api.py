@@ -153,7 +153,7 @@ async def _entities(session: AsyncSession, installation_id: UUID) -> list[Entity
             )
         ).all()
     )
-    return [entity for entity in values if _experiences(entity)]
+    return values
 
 
 def _fingerprint(entity: Entity) -> str | None:
