@@ -28,12 +28,14 @@ from .const import (
     DOMAIN,
 )
 from .entity_inventory import EntityInventorySynchronizer
+from .local_media_api import register_local_media_api
 from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, object]) -> bool:
     """Register local automation actions without opening another connection."""
     register_announcement_service(hass)
+    register_local_media_api(hass)
     return True
 
 
