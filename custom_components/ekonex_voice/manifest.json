@@ -3,6 +3,7 @@
   "name": "Ekonex Voice",
   "codeowners": ["@edmondoalex"],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/edmondoalex/e-voice#readme",
   "integration_type": "service",
   "iot_class": "cloud_push",

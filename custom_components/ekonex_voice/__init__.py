@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.const import __version__ as ha_version
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_integration
 
@@ -30,6 +31,8 @@ from .const import (
 from .entity_inventory import EntityInventorySynchronizer
 from .local_media_api import register_local_media_api
 from .models import EkonexVoiceConfigEntry, EkonexVoiceRuntimeData
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, object]) -> bool:
