@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 from collections.abc import Iterable
-from contextlib import suppress
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -169,6 +168,19 @@ def local_media_snapshot(hass: HomeAssistant) -> dict[str, object]:
     return {"api_version": "v1", "players": values, "player_count": len(values)}
 
 
+def _media_event_entity_ids(
+    players: dict[str, tuple[EkonexVoiceConfigEntry, dict[str, object]]],
+    related: list[dict[str, object]],
+) -> set[str]:
+    """Return only entities whose changes can alter the local Media snapshot."""
+    entity_ids: set[str] = set()
+    for _, player in players.values():
+        for item in (player, *_siblings(player, related)[:2]):
+            if item is not None and isinstance(item.get("entity_id"), str):
+                entity_ids.add(str(item["entity_id"]))
+    return entity_ids
+
+
 def _json_error(status: int, code: str, message: str) -> web.Response:
     return web.json_response({"error": {"code": code, "message": message}}, status=status)
 
@@ -280,27 +292,38 @@ class LocalMediaEventsView(HomeAssistantView):
             }
         )
         await response.prepare(request)
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=64)
+        # Resolve the exposed entities once when the stream is opened.  Calling
+        # _exposed_items() for every state_changed event is prohibitively
+        # expensive on installations with hundreds of entities because that
+        # event is emitted for every state in Home Assistant.
+        players, related = _exposed_items(hass)
+        exposed_entity_ids = _media_event_entity_ids(players, related)
+        pending_entity_ids: set[str] = set()
+        changed_event = asyncio.Event()
 
         @callback
         def changed(event: Event[Any]) -> None:
             entity_id = event.data.get("entity_id")
             if not isinstance(entity_id, str):
                 return
-            _, related = _exposed_items(hass)
-            if entity_id not in {str(item.get("entity_id")) for item in related}:
+            if entity_id not in exposed_entity_ids:
                 return
-            with suppress(asyncio.QueueFull):
-                queue.put_nowait(entity_id)
+            pending_entity_ids.add(entity_id)
+            changed_event.set()
 
         unsubscribe = hass.bus.async_listen(EVENT_STATE_CHANGED, changed)
         try:
             while True:
                 try:
-                    entity_id = await asyncio.wait_for(queue.get(), timeout=15)
+                    await asyncio.wait_for(changed_event.wait(), timeout=30)
+                    # Nominal aggregation window: changes arriving together
+                    # produce one compact notification instead of one complete
+                    # snapshot per entity update.
                     await asyncio.sleep(0.25)
-                    payload = local_media_snapshot(hass)
-                    event = {"type": "player.updated", "entity_id": entity_id, **payload}
+                    entity_ids = sorted(pending_entity_ids)
+                    pending_entity_ids.clear()
+                    changed_event.clear()
+                    event = {"type": "player.updated", "entity_ids": entity_ids}
                 except TimeoutError:
                     event = {"type": "heartbeat"}
                 data = json.dumps(event, separators=(",", ":"))

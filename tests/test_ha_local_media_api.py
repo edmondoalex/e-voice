@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 from homeassistant.components.media_player import MediaPlayerEntityFeature
 
-from custom_components.ekonex_voice.local_media_api import _player_payload, _siblings
+from custom_components.ekonex_voice.local_media_api import (
+    _media_event_entity_ids,
+    _player_payload,
+    _siblings,
+)
 
 
 def echo_items() -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -78,3 +82,28 @@ def test_echo_capabilities_are_false_without_exposed_siblings() -> None:
     assert speech is None and dnd is None
     assert payload["capabilities"]["tts"] is False  # type: ignore[index]
     assert payload["capabilities"]["do_not_disturb"] is False  # type: ignore[index]
+
+
+def test_media_events_ignore_unrelated_exposed_entities() -> None:
+    player, related = echo_items()
+    related.append(
+        {
+            "registry_id": "temperature-registry",
+            "entity_id": "sensor.temperature_sala",
+            "domain": "sensor",
+            "device_id": "another-device",
+            "available": True,
+        }
+    )
+    players = {
+        "echo-registry": (
+            SimpleNamespace(data={"installation_id": "installation-one"}),
+            player,
+        )
+    }
+
+    assert _media_event_entity_ids(players, related) == {
+        "media_player.echo_sala",
+        "notify.echo_sala_speak",
+        "switch.echo_sala_do_not_disturb",
+    }
