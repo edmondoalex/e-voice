@@ -62,6 +62,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:
+        if self.environment in {"laboratory", "production"}:
+            if "pairing_delivery_key" not in self.model_fields_set:
+                raise ValueError(
+                    "laboratory and production pairing delivery key must be explicitly configured"
+                )
+            try:
+                Fernet(self.pairing_delivery_key.encode())
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "laboratory and production pairing delivery key must be a valid Fernet key"
+                ) from error
         if self.environment == "production" and (
             self.pairing_portal_csrf_secret.startswith("development-only")
             or len(self.pairing_portal_csrf_secret) < 32

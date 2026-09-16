@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,10 +114,18 @@ async def test_laboratory_state_sync_never_reports_to_alexa(
     service = EntitySyncService(session, installation)
     gateway = MagicMock()
     monkeypatch.setattr(
-        "apps.cloud_api.app.entity_sync.get_settings", lambda: Settings(environment="laboratory")
+        "apps.cloud_api.app.entity_sync.get_settings",
+        lambda: Settings(
+            environment="laboratory",
+            pairing_delivery_key=Fernet.generate_key().decode(),
+        ),
     )
     monkeypatch.setattr(
-        "apps.cloud_api.app.alexa_events.get_settings", lambda: Settings(environment="laboratory")
+        "apps.cloud_api.app.alexa_events.get_settings",
+        lambda: Settings(
+            environment="laboratory",
+            pairing_delivery_key=Fernet.generate_key().decode(),
+        ),
     )
     monkeypatch.setattr("apps.cloud_api.app.alexa_events.AlexaEventGateway", gateway)
 

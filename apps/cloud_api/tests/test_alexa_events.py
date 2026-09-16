@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +33,10 @@ async def test_laboratory_never_attempts_proactive_alexa_discovery(
     factory = MagicMock()
     monkeypatch.setattr(
         "apps.cloud_api.app.alexa_events.get_settings",
-        lambda: Settings(environment="laboratory"),
+        lambda: Settings(
+            environment="laboratory",
+            pairing_delivery_key=Fernet.generate_key().decode(),
+        ),
     )
     monkeypatch.setattr("apps.cloud_api.app.alexa_events.AlexaEventGateway", factory)
 
