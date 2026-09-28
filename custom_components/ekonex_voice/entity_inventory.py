@@ -306,7 +306,11 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
         "registry_id": entry.id,
         "entity_id": entry.entity_id,
         "domain": entry.domain,
-        "icon": _bound(state.attributes.get("icon") or getattr(entry, "icon", None)),
+        "icon": _bound(
+            state.attributes.get("icon")
+            or getattr(entry, "icon", None)
+            or getattr(entry, "original_icon", None)
+        ),
         "friendly_name": _bound(_friendly_name(entry, state)),
         "area_id": area_id,
         "area_name": _bound(area.name if area else None),
@@ -327,14 +331,15 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
 
 
 def _friendly_name(entry: er.RegistryEntry, state: State) -> object | None:
-    """Resolve the current HA-visible name before registry fallbacks."""
-    visible_name: object | None = state.attributes.get(ATTR_FRIENDLY_NAME)
-    if visible_name:
-        return visible_name
+    """Resolve the entity name without Home Assistant's device-name prefix."""
     name_by_user: object | None = getattr(entry, "name_by_user", None)
     if name_by_user:
         return name_by_user
-    return entry.name or entry.original_name or state.name
+    registry_name: object | None = entry.name or entry.original_name
+    if registry_name:
+        return registry_name
+    visible_name: object | None = state.attributes.get(ATTR_FRIENDLY_NAME)
+    return visible_name or state.name
 
 
 def _device_class(entry: er.RegistryEntry, state: State) -> str | None:
