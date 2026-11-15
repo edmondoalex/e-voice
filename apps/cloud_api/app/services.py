@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import TenantContext
 from .domain.enums import TenantRole
 from .domain.models import AlexaPublication, Entity, Installation
+from .installation_access import InstallationAccessService
 from .repositories import AlexaPublicationRepository, EntityRepository, InstallationRepository
 
 
@@ -32,18 +33,19 @@ class TenantDomainService:
         self._installations = InstallationRepository(session)
         self._entities = EntityRepository(session)
         self._publications = AlexaPublicationRepository(session)
+        self._installation_access = InstallationAccessService(session)
 
     async def get_installation(self, context: TenantContext, installation_id: UUID) -> Installation:
-        installation = await self._installations.get(
-            tenant_id=context.tenant_id, installation_id=installation_id
-        )
+        installation = await self._installation_access.get(context, installation_id)
         if installation is None:
             raise ResourceNotFoundError
         return installation
 
     async def get_entity(self, context: TenantContext, entity_id: UUID) -> Entity:
         entity = await self._entities.get(tenant_id=context.tenant_id, entity_id=entity_id)
-        if entity is None:
+        if entity is None or not await self._installation_access.allows(
+            context, entity.installation_id
+        ):
             raise ResourceNotFoundError
         return entity
 
@@ -55,7 +57,9 @@ class TenantDomainService:
         publication = await self._publications.get(
             tenant_id=context.tenant_id, publication_id=publication_id
         )
-        if publication is None:
+        if publication is None or not await self._installation_access.allows(
+            context, publication.entity.installation_id
+        ):
             raise ResourceNotFoundError
         publication.enabled = enabled
         await self._session.flush()

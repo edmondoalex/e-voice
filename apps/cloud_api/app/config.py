@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     conversation_learning_ttl_days: int = Field(default=180, ge=1, le=730)
     laboratory_learning_username: str = "ekonex-lab"
     laboratory_learning_password: str = ""
+    econtrol_launch_issuer: str = "econtrol-local"
+    econtrol_launch_audience: str = "evoice-installation-bound"
+    econtrol_launch_secret: str = "development-only-econtrol-launch-secret-change-me"
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:
@@ -78,6 +81,11 @@ class Settings(BaseSettings):
             or len(self.pairing_portal_csrf_secret) < 32
         ):
             raise ValueError("production pairing portal secrets must be explicitly configured")
+        if self.environment == "production" and (
+            self.econtrol_launch_secret.startswith("development-only")
+            or len(self.econtrol_launch_secret) < 32
+        ):
+            raise ValueError("production e-Control launch secret must be explicitly configured")
         return self
 
     @property

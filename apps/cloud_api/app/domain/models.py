@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     LargeBinary,
     String,
@@ -169,7 +170,10 @@ class PortalLoginAttempt(Base):
 
 class Installation(TimestampMixin, Base):
     __tablename__ = "installations"
-    __table_args__ = (Index("ix_installations_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("ix_installations_tenant_id", "tenant_id"),
+        UniqueConstraint("id", "tenant_id", name="uq_installations_id_tenant"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
@@ -202,6 +206,89 @@ class Installation(TimestampMixin, Base):
     connector_credentials: Mapped[list["ConnectorCredential"]] = relationship(
         back_populates="installation", foreign_keys="ConnectorCredential.installation_id"
     )
+
+
+class UserInstallationAssignment(Base):
+    """Revocable grant allowing one tenant user to access one installation."""
+
+    __tablename__ = "user_installation_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "installation_id",
+            name="uq_user_installation_assignment",
+        ),
+        Index("ix_user_installation_assignments_user", "tenant_id", "user_id"),
+        Index("ix_user_installation_assignments_installation", "installation_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid)
+    user_id: Mapped[UUID] = mapped_column(Uuid)
+    installation_id: Mapped[UUID] = mapped_column(Uuid)
+    access_level: Mapped[str] = mapped_column(
+        String(20), default="use", server_default="use"
+    )
+    granted_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    granted_by: Mapped[User | None] = relationship(foreign_keys=[granted_by_user_id])
+
+
+class ExternalInstallationBinding(Base):
+    """Auditable one-to-one mapping from e-Control to an e-Voice installation."""
+
+    __tablename__ = "external_installation_bindings"
+    __table_args__ = (
+        UniqueConstraint("issuer", "external_installation_id", name="uq_external_binding"),
+        UniqueConstraint("installation_id", name="uq_external_binding_installation"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    issuer: Mapped[str] = mapped_column(String(200))
+    external_installation_id: Mapped[str] = mapped_column(String(200))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class InstallationBoundSession(Base):
+    """Short-lived e-Control session whose authority cannot become tenant-global."""
+
+    __tablename__ = "installation_bound_sessions"
+    __table_args__ = (Index("ix_bound_sessions_expires", "expires_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    launch_jti_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    correlation_id: Mapped[str] = mapped_column(String(200))
+    issuer: Mapped[str] = mapped_column(String(200))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    effective_installation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("installations.id", ondelete="CASCADE")
+    )
+    capabilities_json: Mapped[list[str]] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Entity(TimestampMixin, Base):

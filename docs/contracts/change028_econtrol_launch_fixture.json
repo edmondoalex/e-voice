@@ -1,0 +1,31 @@
+{
+  "contract": "CHANGE-2026-028",
+  "transport": "POST /bounded/exchange",
+  "claims": {
+    "issuer": "econtrol-local",
+    "audience": "evoice-installation-bound",
+    "subject": "00000000-0000-0000-0000-000000000101",
+    "tenant_id": "00000000-0000-0000-0000-000000000201",
+    "installation_id": "econtrol-installation-a",
+    "requested_capabilities": ["readonly", "use", "command", "stream"],
+    "issued_at": 1794740400,
+    "expires_at": 1794740520,
+    "jti": "synthetic-one-use-jti-a",
+    "correlation_id": "synthetic-correlation-a"
+  },
+  "response": {
+    "effective_installation_id": "00000000-0000-0000-0000-000000000301",
+    "capabilities": ["command", "readonly", "stream", "use"],
+    "correlation_id": "synthetic-correlation-a"
+  },
+  "errors": {
+    "launch_denied": 403,
+    "bounded_resource_denied": 404,
+    "session_invalid": 401
+  },
+  "notes": [
+    "All identifiers and times are synthetic fixtures.",
+    "The launch signature and bounded cookie are intentionally omitted.",
+    "No bearer token is accepted from URL, query string, or browser storage."
+  ]
+}

@@ -79,7 +79,11 @@ class AlexaPublicationRepository:
         )
 
     async def get(self, *, tenant_id: UUID, publication_id: UUID) -> AlexaPublication | None:
-        statement = self._tenant_statement(tenant_id).where(AlexaPublication.id == publication_id)
+        statement = (
+            self._tenant_statement(tenant_id)
+            .where(AlexaPublication.id == publication_id)
+            .options(selectinload(AlexaPublication.entity))
+        )
         result = await self._session.scalars(statement)
         return result.one_or_none()
 

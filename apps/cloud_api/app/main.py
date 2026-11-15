@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin_console import router as admin_console_router
@@ -23,6 +24,8 @@ from .evcp import router as evcp_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
 from .media_api import router as media_router
+from .installation_bound_api import router as installation_bound_router
+from .installation_bound import BoundLaunchDenied
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
 from .voice_alerts import run_live_alert_monitor
@@ -69,6 +72,13 @@ app.include_router(doorbell_public_router)
 app.include_router(control4_favorites_router)
 app.include_router(media_router)
 
+app.include_router(installation_bound_router)
+
+
+@app.exception_handler(BoundLaunchDenied)
+async def bounded_denied(_request, _error) -> JSONResponse:
+    """Uniform bounded denial without resource-existence disclosure."""
+    return JSONResponse({"detail": "bounded_resource_denied"}, status_code=404)
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])
 async def health() -> HealthResponse:
