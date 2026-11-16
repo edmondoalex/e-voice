@@ -345,6 +345,11 @@ async def test_wear_page_documents_private_installer_flow(session, seeded_domain
     assert "Debug wireless" in response.text
     assert "disattiva Debug wireless" in response.text
     assert "non deve essere eseguita dal cliente finale" in response.text.casefold()
+    assert "Apri installazione tecnica" in response.text
+    assert "ekonex:wear-installer" in response.text
+    assert "In attesa dell'associazione dall'orologio" in response.text
+    assert "Orologio associato correttamente" in response.text
+    assert "/bounded/wear/enrollments/" in response.text
     await client.aclose()
     app.dependency_overrides.clear()
 

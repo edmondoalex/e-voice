@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .command_dispatch import CommandDispatchService, PowerCommand
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
-from .domain.models import Entity, Installation, WearDevice
+from .domain.models import Entity, Installation, WearDevice, WearEnrollment
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
 from .installation_bound_api import _frame_policy, _ui_csrf, bound_context_dependency
@@ -40,6 +40,11 @@ class EnrollmentResponse(BaseModel):
     enrollment_id: str
     code: str
     expires_at: datetime
+
+
+class EnrollmentStatusResponse(BaseModel):
+    claimed: bool
+    device_name: str | None = None
 
 
 class ClaimRequest(BaseModel):
@@ -184,6 +189,42 @@ async def create_enrollment(
     )
 
 
+@router.get(
+    "/bounded/wear/enrollments/{enrollment_id}", response_model=EnrollmentStatusResponse
+)
+async def enrollment_status(
+    enrollment_id: UUID,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> EnrollmentStatusResponse:
+    context.require("use")
+    enrollment = await session.scalar(
+        select(WearEnrollment).where(
+            WearEnrollment.id == enrollment_id,
+            WearEnrollment.tenant_id == context.tenant_id,
+            WearEnrollment.user_id == context.user_id,
+            WearEnrollment.installation_id == context.effective_installation_id,
+            WearEnrollment.revoked_at.is_(None),
+        )
+    )
+    if enrollment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "wear_enrollment_not_found")
+    if enrollment.claimed_at is None:
+        return EnrollmentStatusResponse(claimed=False)
+    device_name = await session.scalar(
+        select(WearDevice.display_name)
+        .where(
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+        .order_by(WearDevice.created_at.desc())
+        .limit(1)
+    )
+    return EnrollmentStatusResponse(claimed=True, device_name=device_name)
+
+
 @router.get("/bounded/wear", response_class=HTMLResponse)
 async def wear_management(
     context: Annotated[BoundContext, bound_context_dependency],
@@ -249,12 +290,16 @@ async def wear_management(
 <li>Dal computer autorizzato installa l'APK con lo strumento Ekonex per Wear. L'installazione tecnica usa il collegamento ADB wireless soltanto in questa fase.</li>
 <li>Apri Ekonex Wear sull'orologio, genera qui sotto il codice monouso e completa <b>Associa</b>.</li>
 <li>Verifica un comando e una notifica di prova, quindi <b>disattiva Debug wireless</b> sull'orologio.</li></ol>
+<p><button id=open-installer type=button>Apri installazione tecnica</button></p>
 <p class=warning><b>Sicurezza:</b> non lasciare attivo il debug wireless e non consegnare chiavi, token o credenziali ADB al cliente.</p></details>
 <button id=create>Genera codice associazione</button><p id=result role=status></p>
 <h2>Dispositivi attivi</h2>{rows}
 <script>async function csrfToken(){{const response=await fetch('/bounded/ui/csrf',{{cache:'no-store'}});if(!response.ok)throw new Error(response.status===401||response.status===403?'session_expired':'csrf_unavailable');const value=await response.json();if(!value.csrf_token)throw new Error('csrf_unavailable');return value.csrf_token}}function actionError(error,fallback){{result.textContent=error&&error.message==='session_expired'?'Sessione scaduta: riapri Google Wear dalla barra laterale di e-Control.':fallback}}</script>
-<script>const result=document.querySelector('#result');document.querySelector('#create').onclick=async()=>{{
-try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollments',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:'{capabilities}'.split(',')}})}});if(response.status===401||response.status===403)throw new Error('session_expired');const value=await response.json();result.innerHTML=response.ok?'Codice monouso (10 minuti): <code>'+value.code+'</code>':'Associazione non disponibile'}}catch(error){{actionError(error,'Associazione non disponibile')}}}};</script>
+<script>document.querySelector('#open-installer').onclick=()=>parent.postMessage('ekonex:wear-installer','*');</script>
+<script>const result=document.querySelector('#result');let enrollmentPoll;
+async function waitForEnrollment(id){{clearInterval(enrollmentPoll);enrollmentPoll=setInterval(async()=>{{try{{const response=await fetch('/bounded/wear/enrollments/'+id,{{cache:'no-store'}});if(response.status===401||response.status===403)throw new Error('session_expired');if(!response.ok)return;const value=await response.json();if(value.claimed){{clearInterval(enrollmentPoll);const name=value.device_name?' ('+value.device_name+')':'';result.textContent='Orologio associato correttamente'+name+'. Aggiornamento dispositivi...';setTimeout(()=>location.reload(),900)}}}}catch(error){{clearInterval(enrollmentPoll);actionError(error,'Verifica associazione non disponibile')}}}},1500)}}
+document.querySelector('#create').onclick=async()=>{{
+try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollments',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:'{capabilities}'.split(',')}})}});if(response.status===401||response.status===403)throw new Error('session_expired');const value=await response.json();if(response.ok){{result.innerHTML=`Codice monouso (10 minuti): <code>${{value.code}}</code><br><span class=muted>In attesa dell'associazione dall'orologio...</span>`;waitForEnrollment(value.enrollment_id)}}else result.textContent='Associazione non disponibile'}}catch(error){{actionError(error,'Associazione non disponibile')}}}};</script>
 <script>document.querySelectorAll('[data-device]').forEach(button=>button.onclick=async()=>{{if(!confirm('Revocare questo orologio?'))return;try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.device,{{method:'DELETE',headers:{{'X-Ekonex-CSRF':csrf}}}});if(response.status===401||response.status===403)throw new Error('session_expired');if(response.ok)location.reload();else result.textContent='Revoca non riuscita'}}catch(error){{actionError(error,'Revoca non riuscita')}}}});</script>
 <script>document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito'}}catch(error){{actionError(error,'Invio prova non riuscito')}}}});</script>
 <script>document.querySelectorAll('[data-save]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),start=card.querySelector('[data-quiet-start]').value,end=card.querySelector('[data-quiet-end]').value;if((start&&!end)||(!start&&end)){{result.textContent='Compila entrambi gli orari silenziosi oppure lasciali vuoti.';return}}const body={{enabled:card.querySelector('[data-enabled]').checked,categories:[...card.querySelectorAll('[data-category]:checked')].map(x=>x.value),minimum_severity:card.querySelector('[data-severity]').value,vibration:card.querySelector('[data-vibration]').checked,quiet_start:start||null,quiet_end:end||null,timezone:'Europe/Rome'}};try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.save+'/notification-preferences',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(body)}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Preferenze salvate.':'Salvataggio non riuscito'}}catch(error){{actionError(error,'Salvataggio non riuscito')}}}});</script>
