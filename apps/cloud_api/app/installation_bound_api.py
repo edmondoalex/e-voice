@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,18 +126,24 @@ async def prepare_launch(
 async def open_bounded_session(
     code: str,
     session: Annotated[AsyncSession, Depends(get_database_session)],
-) -> RedirectResponse:
+) -> HTMLResponse:
     try:
         raw = await _service(session).open_prepared(code)
         await session.commit()
     except BoundLaunchDenied as error:
         await session.rollback()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
-    response = RedirectResponse("/bounded/context", status_code=status.HTTP_303_SEE_OTHER)
+    response = HTMLResponse(
+        "<!doctype html><html><head><meta charset=utf-8>"
+        '<meta http-equiv="refresh" content="0;url=/bounded/context">'
+        "<title>e-Voice</title></head><body>"
+        '<a href="/bounded/context">Continua in e-Voice</a></body></html>'
+    )
     response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite="strict",
                         path="/bounded", max_age=900)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     return response
 
 
