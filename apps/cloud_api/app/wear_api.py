@@ -62,7 +62,11 @@ def _voice_tokens(value: str) -> set[str]:
     normalized = unicodedata.normalize("NFKD", value.casefold())
     words = re.findall(r"[a-z0-9]+", "".join(c for c in normalized if not unicodedata.combining(c)))
     aliases = {"luci": "luce", "lampade": "luce", "lampada": "luce"}
-    return {aliases.get(word, word) for word in words if word not in {"la", "le", "il", "i", "lo", "gli"}}
+    return {
+        aliases.get(word, word)
+        for word in words
+        if word not in {"la", "le", "il", "i", "lo", "gli"}
+    }
 
 
 async def _wear_power_command(session: AsyncSession, context, utterance: str) -> str | None:
@@ -74,16 +78,24 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
     target = words - {"accendi", "spegni", "luce"}
     if not target:
         return "Dimmi quale dispositivo vuoi comandare."
-    entities = list((await session.scalars(select(Entity).where(
-        Entity.installation_id == context.installation_id,
-        Entity.deleted_at.is_(None),
-        Entity.available.is_(True),
-        Entity.ha_domain.in_(("light", "switch")),
-    ))).all())
+    entities = list(
+        (
+            await session.scalars(
+                select(Entity).where(
+                    Entity.installation_id == context.installation_id,
+                    Entity.deleted_at.is_(None),
+                    Entity.available.is_(True),
+                    Entity.ha_domain.in_(("light", "switch")),
+                )
+            )
+        ).all()
+    )
     ranked = []
     for entity in entities:
         names = (entity.voice_name, entity.display_name, entity.friendly_name)
-        score = max((len(target & (_voice_tokens(name) - {"luce"})) for name in names if name), default=0)
+        score = max(
+            (len(target & (_voice_tokens(name) - {"luce"})) for name in names if name), default=0
+        )
         if score:
             ranked.append((score, entity))
     ranked.sort(key=lambda item: item[0], reverse=True)
@@ -110,7 +122,23 @@ class DeviceCapabilitiesRequest(BaseModel):
 class TestNotificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(default="Notifica di prova Ekonex", min_length=1, max_length=120)
-    body: str = Field(default="Le notifiche sul tuo orologio funzionano.", min_length=1, max_length=500)
+    body: str = Field(
+        default="Le notifiche sul tuo orologio funzionano.", min_length=1, max_length=500
+    )
+
+
+NOTIFICATION_CATEGORIES = ("security", "climate", "energy", "routines", "maintenance", "system")
+
+
+class NotificationPreferencesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    categories: set[str]
+    minimum_severity: str = Field(pattern=r"^(info|warning|critical)$")
+    vibration: bool
+    quiet_start: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    quiet_end: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: str = Field(default="Europe/Rome", pattern=r"^[A-Za-z_]+(?:/[A-Za-z_+-]+)+$")
 
 
 async def _wear_context(
@@ -162,31 +190,64 @@ async def wear_management(
     session: Annotated[AsyncSession, session_dependency],
 ) -> HTMLResponse:
     context.require("use")
-    devices = (await session.scalars(select(WearDevice).where(
-        WearDevice.tenant_id == context.tenant_id,
-        WearDevice.user_id == context.user_id,
-        WearDevice.installation_id == context.effective_installation_id,
-        WearDevice.revoked_at.is_(None),
-    ).order_by(WearDevice.created_at.desc()))).all()
-    rows = "".join(
-        f'<li><strong>{html.escape(item.display_name)}</strong> '
-        f'<small>{html.escape(", ".join(item.capabilities_json))}</small> '
-        f'<button data-enable="{item.id}">Abilita notifiche</button> '
-        f'<button data-test="{item.id}">Invia prova</button> '
-        f'<button data-device="{item.id}">Revoca</button></li>'
-        for item in devices
-    ) or "<li>Nessun orologio associato.</li>"
+    devices = (
+        await session.scalars(
+            select(WearDevice)
+            .where(
+                WearDevice.tenant_id == context.tenant_id,
+                WearDevice.user_id == context.user_id,
+                WearDevice.installation_id == context.effective_installation_id,
+                WearDevice.revoked_at.is_(None),
+            )
+            .order_by(WearDevice.created_at.desc())
+        )
+    ).all()
+
+    def device_card(item: WearDevice) -> str:
+        preferences = item.notification_preferences_json or {}
+        selected = set(preferences.get("categories") or NOTIFICATION_CATEGORIES)
+        categories = "".join(
+            f'<label><input type=checkbox data-category value="{value}" {"checked" if value in selected else ""}> {label}</label>'
+            for value, label in (
+                ("security", "Sicurezza"),
+                ("climate", "Clima"),
+                ("energy", "Energia"),
+                ("routines", "Routine"),
+                ("maintenance", "Manutenzione"),
+                ("system", "Sistema"),
+            )
+        )
+        severity = str(preferences.get("minimum_severity") or "info")
+        options = "".join(
+            f'<option value="{value}" {"selected" if value == severity else ""}>{label}</option>'
+            for value, label in (
+                ("info", "Tutte"),
+                ("warning", "Avvisi e critiche"),
+                ("critical", "Solo critiche"),
+            )
+        )
+        return f'''<article class=device-card data-preferences="{item.id}"><h2>{html.escape(item.display_name)}</h2>
+<p class=muted>{html.escape(", ".join(item.capabilities_json))}</p>
+<label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
+<fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
+<label>Priorità minima <select data-severity>{options}</select></label>
+<label class=switch><input type=checkbox data-vibration {"checked" if preferences.get("vibration", True) else ""}> Vibrazione</label>
+<div class=quiet><label>Silenzioso dalle <input type=time data-quiet-start value="{html.escape(str(preferences.get("quiet_start") or ""))}"></label><label> alle <input type=time data-quiet-end value="{html.escape(str(preferences.get("quiet_end") or ""))}"></label></div>
+<div class=actions><button data-save="{item.id}">Salva preferenze</button><button data-test="{item.id}">Invia prova</button><button class=danger data-device="{item.id}">Revoca</button></div></article>'''
+
+    rows = "".join(device_card(item) for item in devices) or "<p>Nessun orologio associato.</p>"
     capabilities = ",".join(sorted(CAPABILITIES))
     page = f"""<!doctype html><html lang=it><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Google Wear</title>
-<style>body{{font:16px system-ui;background:#101619;color:#f4f7f8;margin:0;padding:24px}}button{{padding:10px 14px;border:1px solid #41cbea;border-radius:10px;background:#142126;color:#fff}}code{{font-size:18px;color:#41cbea}}li{{margin:10px 0}}</style></head><body>
+<style>body{{font:16px system-ui;background:#101619;color:#f4f7f8;margin:0;padding:24px}}button,select,input[type=time]{{padding:10px 14px;border:1px solid #41cbea;border-radius:10px;background:#142126;color:#fff}}button{{font-weight:700}}code{{font-size:18px;color:#41cbea}}.device-card{{max-width:900px;margin:18px 0;padding:22px;border:1px solid #314149;border-radius:18px;background:#151c20}}.device-card h2{{margin-top:0}}.muted{{color:#9db2bc}}fieldset{{margin:16px 0;border:1px solid #314149;border-radius:12px}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.danger{{border-color:#d92d20;color:#ffb4ac}}</style></head><body>
 <h1>Google Wear</h1><p>Orologi legati a questo utente e a questo impianto.</p>
 <button id=create>Genera codice associazione</button><p id=result role=status></p>
-<h2>Dispositivi attivi</h2><ul>{rows}</ul>
+<h2>Dispositivi attivi</h2>{rows}
 <script>const result=document.querySelector('#result');document.querySelector('#create').onclick=async()=>{{
 const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/enrollments',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:'{capabilities}'.split(',')}})}});const value=await response.json();result.innerHTML=response.ok?'Codice monouso (10 minuti): <code>'+value.code+'</code>':'Associazione non disponibile';}};</script>
 <script>document.querySelectorAll('[data-device]').forEach(button=>button.onclick=async()=>{{if(!confirm('Revocare questo orologio?'))return;const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.device,{{method:'DELETE',headers:{{'X-Ekonex-CSRF':csrf}}}});if(response.ok)location.reload();else result.textContent='Revoca non riuscita';}});</script>
-<script>document.querySelectorAll('[data-enable]').forEach(button=>button.onclick=async()=>{{const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.enable,{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:['state.read','voice.ask','notification.receive','notification.ack']}})}});result.textContent=response.ok?'Notifiche abilitate.':'Abilitazione non riuscita';if(response.ok)location.reload();}});document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito';}});</script>
+<script>document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito';}});</script>
+<script>document.querySelectorAll('[data-save]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),start=card.querySelector('[data-quiet-start]').value,end=card.querySelector('[data-quiet-end]').value;if((start&&!end)||(!start&&end)){{result.textContent='Compila entrambi gli orari silenziosi oppure lasciali vuoti.';return}}const body={{enabled:card.querySelector('[data-enabled]').checked,categories:[...card.querySelectorAll('[data-category]:checked')].map(x=>x.value),minimum_severity:card.querySelector('[data-severity]').value,vibration:card.querySelector('[data-vibration]').checked,quiet_start:start||null,quiet_end:end||null,timezone:'Europe/Rome'}},csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token,response=await fetch('/bounded/wear/devices/'+button.dataset.save+'/notification-preferences',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(body)}});result.textContent=response.ok?'Preferenze salvate.':'Salvataggio non riuscito';}});</script>
 </body></html>"""
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
@@ -211,16 +272,19 @@ async def revoke_device(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     try:
         from uuid import UUID
+
         parsed = UUID(device_id)
     except ValueError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND) from error
-    device = await session.scalar(select(WearDevice).where(
-        WearDevice.id == parsed,
-        WearDevice.tenant_id == context.tenant_id,
-        WearDevice.user_id == context.user_id,
-        WearDevice.installation_id == context.effective_installation_id,
-        WearDevice.revoked_at.is_(None),
-    ))
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == parsed,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     device.revoked_at = datetime.now(UTC)
@@ -240,18 +304,57 @@ async def update_device_capabilities(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     if not payload.capabilities or not payload.capabilities <= CAPABILITIES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_capabilities")
-    device = await session.scalar(select(WearDevice).where(
-        WearDevice.id == device_id,
-        WearDevice.tenant_id == context.tenant_id,
-        WearDevice.user_id == context.user_id,
-        WearDevice.installation_id == context.effective_installation_id,
-        WearDevice.revoked_at.is_(None),
-    ))
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     device.capabilities_json = sorted(payload.capabilities)
     await session.commit()
     return {"device_id": str(device.id), "capabilities": device.capabilities_json}
+
+
+@router.patch("/bounded/wear/devices/{device_id}/notification-preferences")
+async def update_notification_preferences(
+    device_id: UUID,
+    payload: NotificationPreferencesRequest,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    x_ekonex_csrf: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    context.require("use")
+    if x_ekonex_csrf != _ui_csrf(context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    if not payload.categories <= set(NOTIFICATION_CATEGORIES):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    device.notification_preferences_json = {
+        "enabled": payload.enabled,
+        "categories": sorted(payload.categories),
+        "minimum_severity": payload.minimum_severity,
+        "vibration": payload.vibration,
+        "quiet_start": payload.quiet_start,
+        "quiet_end": payload.quiet_end,
+        "timezone": payload.timezone,
+    }
+    await session.commit()
+    return {"device_id": str(device.id), "preferences": device.notification_preferences_json}
 
 
 @router.post("/bounded/wear/devices/{device_id}/notifications/test")
@@ -265,13 +368,15 @@ async def create_test_notification(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
-    device = await session.scalar(select(WearDevice).where(
-        WearDevice.id == device_id,
-        WearDevice.tenant_id == context.tenant_id,
-        WearDevice.user_id == context.user_id,
-        WearDevice.installation_id == context.effective_installation_id,
-        WearDevice.revoked_at.is_(None),
-    ))
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
     if device is None or "notification.receive" not in device.capabilities_json:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     created = await WearNotificationService(session).enqueue_for_installation(
@@ -312,9 +417,7 @@ async def claim(
         WearClaimLimiter(session, source_hash).record(successful=False)
         await session.commit()
         response_status = (
-            status.HTTP_429_TOO_MANY_REQUESTS
-            if failed + 1 >= 5
-            else status.HTTP_403_FORBIDDEN
+            status.HTTP_429_TOO_MANY_REQUESTS if failed + 1 >= 5 else status.HTTP_403_FORBIDDEN
         )
         detail = "wear_claim_rate_limited" if response_status == 429 else "wear_claim_denied"
         raise HTTPException(response_status, detail) from error
@@ -336,18 +439,20 @@ async def pending_notifications(
 ) -> dict[str, object]:
     items = await WearNotificationService(session).pending(context)
     await session.commit()
-    return {"notifications": [
-        {
-            "id": str(item.id),
-            "event_key": item.event_key,
-            "category": item.category,
-            "severity": item.severity,
-            "title": item.title,
-            "body": item.body,
-            "created_at": item.created_at.isoformat(),
-        }
-        for item in items
-    ]}
+    return {
+        "notifications": [
+            {
+                "id": str(item.id),
+                "event_key": item.event_key,
+                "category": item.category,
+                "severity": item.severity,
+                "title": item.title,
+                "body": item.body,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ]
+    }
 
 
 @router.post("/api/wear/v1/notifications/{notification_id}/ack", status_code=204)
@@ -371,11 +476,13 @@ async def ask(
     session: Annotated[AsyncSession, session_dependency] = None,
 ) -> dict[str, str]:
     context.require("voice.ask")
-    installation = await session.scalar(select(Installation).where(
-        Installation.id == context.installation_id,
-        Installation.tenant_id == context.tenant_id,
-        Installation.revoked_at.is_(None),
-    ))
+    installation = await session.scalar(
+        select(Installation).where(
+            Installation.id == context.installation_id,
+            Installation.tenant_id == context.tenant_id,
+            Installation.revoked_at.is_(None),
+        )
+    )
     if installation is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "installation_unavailable")
     last_seen = installation.last_seen_at

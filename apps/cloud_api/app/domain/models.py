@@ -237,9 +237,7 @@ class UserInstallationAssignment(Base):
     tenant_id: Mapped[UUID] = mapped_column(Uuid)
     user_id: Mapped[UUID] = mapped_column(Uuid)
     installation_id: Mapped[UUID] = mapped_column(Uuid)
-    access_level: Mapped[str] = mapped_column(
-        String(20), default="use", server_default="use"
-    )
+    access_level: Mapped[str] = mapped_column(String(20), default="use", server_default="use")
     granted_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
@@ -328,9 +326,7 @@ class WearClaimAttempt(Base):
     """Short-lived, anonymized anti-bruteforce record for Wear claims."""
 
     __tablename__ = "wear_claim_attempts"
-    __table_args__ = (
-        Index("ix_wear_claim_attempts_source_time", "source_hash", "attempted_at"),
-    )
+    __table_args__ = (Index("ix_wear_claim_attempts_source_time", "source_hash", "attempted_at"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     source_hash: Mapped[str] = mapped_column(String(64))
@@ -366,6 +362,18 @@ class WearDevice(Base):
     installation_id: Mapped[UUID] = mapped_column(Uuid)
     display_name: Mapped[str] = mapped_column(String(120))
     capabilities_json: Mapped[list[str]] = mapped_column(JSON)
+    notification_preferences_json: Mapped[dict[str, object]] = mapped_column(
+        JSON,
+        default=lambda: {
+            "enabled": True,
+            "categories": ["security", "climate", "energy", "routines", "maintenance", "system"],
+            "minimum_severity": "info",
+            "vibration": True,
+            "quiet_start": None,
+            "quiet_end": None,
+            "timezone": "Europe/Rome",
+        },
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -387,9 +395,7 @@ class WearNotification(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    device_id: Mapped[UUID] = mapped_column(
-        ForeignKey("wear_devices.id", ondelete="CASCADE")
-    )
+    device_id: Mapped[UUID] = mapped_column(ForeignKey("wear_devices.id", ondelete="CASCADE"))
     tenant_id: Mapped[UUID] = mapped_column(Uuid)
     installation_id: Mapped[UUID] = mapped_column(Uuid)
     event_key: Mapped[str] = mapped_column(String(120))

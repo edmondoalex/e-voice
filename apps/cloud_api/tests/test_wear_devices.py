@@ -15,12 +15,14 @@ from apps.cloud_api.app.wear_notifications import WearNotificationService
 
 
 async def grant(session, seeded_domain):
-    session.add(UserInstallationAssignment(
-        tenant_id=seeded_domain.tenant_a_id,
-        user_id=seeded_domain.user_a_id,
-        installation_id=seeded_domain.installation_a_id,
-        granted_by_user_id=seeded_domain.user_a_id,
-    ))
+    session.add(
+        UserInstallationAssignment(
+            tenant_id=seeded_domain.tenant_a_id,
+            user_id=seeded_domain.user_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            granted_by_user_id=seeded_domain.user_a_id,
+        )
+    )
     await session.commit()
 
 
@@ -91,9 +93,11 @@ async def test_expired_offer_and_removed_assignment_fail_closed(session, seeded_
         capabilities={"state.read"},
     )
     device, credential = await service.claim(code2, "Revoked grant")
-    assignment = await session.scalar(select(UserInstallationAssignment).where(
-        UserInstallationAssignment.user_id == seeded_domain.user_a_id
-    ))
+    assignment = await session.scalar(
+        select(UserInstallationAssignment).where(
+            UserInstallationAssignment.user_id == seeded_domain.user_a_id
+        )
+    )
     assignment.revoked_at = datetime.now(UTC)
     await session.commit()
     assert offer2.claimed_at is not None and device.id is not None
@@ -146,9 +150,7 @@ async def test_claim_rate_limiter_blocks_after_five_failures(session, seeded_dom
 
 
 @pytest.mark.asyncio
-async def test_notifications_are_deduplicated_device_bound_and_acknowledged(
-    session, seeded_domain
-):
+async def test_notifications_are_deduplicated_device_bound_and_acknowledged(session, seeded_domain):
     await grant(session, seeded_domain)
     devices = WearDeviceService(session)
     _offer, code = await devices.create_enrollment(
@@ -204,14 +206,92 @@ async def test_notification_capabilities_are_enforced(session, seeded_domain):
     await session.commit()
     context = await devices.context(credential)
     notifications = WearNotificationService(session)
-    assert await notifications.enqueue_for_installation(
-        tenant_id=seeded_domain.tenant_a_id,
-        installation_id=seeded_domain.installation_a_id,
-        event_key="event-no-capability",
-        category="system",
-        severity="info",
-        title="Test",
-        body="Non deve essere consegnata.",
-    ) == 0
+    assert (
+        await notifications.enqueue_for_installation(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            event_key="event-no-capability",
+            category="system",
+            severity="info",
+            title="Test",
+            body="Non deve essere consegnata.",
+        )
+        == 0
+    )
     with pytest.raises(WearDenied):
         await notifications.pending(context)
+
+
+@pytest.mark.asyncio
+async def test_notification_preferences_are_scoped_to_each_user_and_wear(session, seeded_domain):
+    session.add_all(
+        [
+            UserInstallationAssignment(
+                tenant_id=seeded_domain.tenant_a_id,
+                user_id=seeded_domain.user_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                granted_by_user_id=seeded_domain.user_a_id,
+            ),
+            UserInstallationAssignment(
+                tenant_id=seeded_domain.tenant_a_id,
+                user_id=seeded_domain.user_readonly_id,
+                installation_id=seeded_domain.installation_a_id,
+                granted_by_user_id=seeded_domain.user_a_id,
+            ),
+        ]
+    )
+    await session.commit()
+    devices = WearDeviceService(session)
+    _offer_a, code_a = await devices.create_enrollment(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        created_by_user_id=seeded_domain.user_a_id,
+        capabilities={"notification.receive", "notification.ack"},
+    )
+    device_a, credential_a = await devices.claim(code_a, "Wear utente A")
+    _offer_b, code_b = await devices.create_enrollment(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_readonly_id,
+        installation_id=seeded_domain.installation_a_id,
+        created_by_user_id=seeded_domain.user_a_id,
+        capabilities={"notification.receive", "notification.ack"},
+    )
+    device_b, credential_b = await devices.claim(code_b, "Wear utente B")
+    device_a.notification_preferences_json = {
+        "enabled": True,
+        "categories": ["security"],
+        "minimum_severity": "warning",
+        "vibration": True,
+        "quiet_start": None,
+        "quiet_end": None,
+        "timezone": "Europe/Rome",
+    }
+    device_b.notification_preferences_json = {
+        "enabled": False,
+        "categories": ["security"],
+        "minimum_severity": "info",
+        "vibration": False,
+        "quiet_start": None,
+        "quiet_end": None,
+        "timezone": "Europe/Rome",
+    }
+    await session.commit()
+
+    notifications = WearNotificationService(session)
+    assert (
+        await notifications.enqueue_for_installation(
+            tenant_id=seeded_domain.tenant_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            event_key="user-wear-scope",
+            category="security",
+            severity="warning",
+            title="Allarme",
+            body="Evento di prova.",
+        )
+        == 1
+    )
+    pending_a = await notifications.pending(await devices.context(credential_a))
+    pending_b = await notifications.pending(await devices.context(credential_b))
+    assert [item.device_id for item in pending_a] == [device_a.id]
+    assert pending_b == []
