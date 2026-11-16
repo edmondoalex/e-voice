@@ -14,15 +14,16 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .auth import AccessDeniedError, AuthenticationService
 from .domain.enums import TenantRole
 from .domain.models import (
+    AlexaPublication,
     AlexaRoutineExecution,
     AlexaSpeakerGroup,
     AlexaVoiceRoutine,
     AuditEvent,
-    AlexaPublication,
     Entity,
     EntityStateHistory,
     ExternalInstallationBinding,
@@ -279,6 +280,7 @@ class BoundedResourceService:
     async def entities(self) -> list[Entity]:
         return list((await self._session.scalars(
             select(Entity)
+            .options(selectinload(Entity.voice_category))
             .join(Installation, Installation.id == Entity.installation_id)
             .where(
                 Installation.tenant_id == self.context.tenant_id,

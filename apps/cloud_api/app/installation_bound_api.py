@@ -8,8 +8,8 @@ import io
 import json
 import logging
 import re
-from urllib.parse import parse_qs, urlencode
 from typing import Annotated, Any
+from urllib.parse import parse_qs, urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -18,14 +18,28 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .admin_console import (
+    DOMAIN_OPERATIONS,
+    _command_data,
+    _entity_groups,
+    _layout,
+    _media_source_setting,
+    _media_sources,
+    _validate_climate_value,
+    _validate_domain_command_value,
+)
+from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
 from .database import get_database_session
-from .installation_bound import BoundContext, BoundLaunchDenied, InstallationBoundService
-from .installation_bound import BoundedResourceService
-from .command_dispatch import CommandDispatchService, command_adapter
+from .domain.models import AuditEvent, Entity
 from .evcp import sessions
-from .domain.models import Entity
-from .domain.models import AuditEvent
+from .installation_bound import (
+    BoundContext,
+    BoundedResourceService,
+    BoundLaunchDenied,
+    InstallationBoundService,
+)
+from .laboratory_live_state import load_live_states, overlay_entities
 
 logger = logging.getLogger(__name__)
 
@@ -202,36 +216,49 @@ async def bounded_app(
     resources = BoundedResourceService(session, context)
     installation = await resources.installation(context.effective_installation_id)
     entities = await resources.entities()
-    routines = await resources.routines()
-    entity_rows = "".join(
-        f"<li class=\"device-row\"><span class=\"device-copy\"><strong>{html.escape(item.display_name or item.friendly_name or item.voice_name or item.ha_entity_id)}</strong>"
-        f"<small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small></span>"
-        f"{_entity_controls(item, context)}</li>"
-        for item in sorted(entities, key=lambda row: (row.display_name or row.friendly_name or row.ha_entity_id).casefold())[:80]
-    ) or "<li><strong>Nessun dispositivo sincronizzato</strong><small>Controlla il connettore Home Assistant.</small></li>"
-    routine_rows = "".join(
-        f"<li><strong>{html.escape(item.name)}</strong><small>{'attiva' if item.enabled else 'disattivata'}</small></li>"
-        for item in sorted(routines, key=lambda row: row.name.casefold())[:40]
-    ) or "<li><strong>Nessuna routine vocale</strong><small>Le routine compariranno dopo la sincronizzazione.</small></li>"
-    capabilities = " · ".join(html.escape(item) for item in sorted(context.capabilities))
-    title = html.escape(installation.name or "Impianto associato")
-    feedback = {
-        "success": '<p class="feedback ok" role="status">Comando eseguito.</p>',
-        "failed": '<p class="feedback error" role="alert">Comando non eseguito. Controlla connessione e dispositivo.</p>',
-    }.get(result or "", "")
-    body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>e-Voice · {title}</title>
-<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0e1215;color:#f4f7f8}}*{{box-sizing:border-box}}body{{margin:0}}header{{padding:32px max(24px,calc((100vw - 1400px)/2));background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(2rem,4vw,3rem)}}h2{{margin:0 0 18px;font-size:1.35rem}}.muted,small{{color:#9fb0ba}}main{{width:min(1400px,calc(100% - 40px));margin:0 auto;padding:28px 0 48px;display:grid;gap:22px;grid-template-columns:minmax(0,2fr) minmax(310px,1fr);align-items:start}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:24px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(160px,230px));gap:16px}}.metric{{background:#111619;border-radius:14px;padding:16px 18px}}.metric strong{{display:block;font-size:2rem;color:#55d9ff}}.devices{{grid-row:span 2}}.feedback{{grid-column:1/-1;margin:0;padding:13px 16px;border-radius:12px}}.ok{{background:#123d30;color:#9ff2cf}}.error{{background:#54252a;color:#ffd0d3}}ul{{list-style:none;margin:0;padding:0}}.device-list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-height:68vh;overflow:auto;padding-right:8px}}.device-row{{min-height:92px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid #2b343a;border-radius:12px;background:#141a1e}}.device-copy{{min-width:0;display:block;text-align:left}}.device-copy strong{{display:block;line-height:1.25}}.device-copy small{{display:block;margin-top:6px}}.simple-list li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}form{{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;flex:0 0 auto}}button{{border:1px solid #45d6ff;background:#10242c;color:#e9fbff;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}}button:hover,button:focus{{background:#174353}}a{{color:#63dcff}}@media(max-width:1100px){{main{{grid-template-columns:1fr}}.devices{{grid-row:auto}}.device-list{{grid-template-columns:1fr}}}}@media(max-width:640px){{header{{padding:24px 20px}}main{{width:min(100% - 24px,1400px);padding-top:16px}}section{{padding:18px}}.summary{{grid-template-columns:1fr}}.device-row{{display:block}}form{{justify-content:flex-start;margin-top:12px}}}}</style></head><body>
-<header><div class="brand">EKONEX · e-VOICE</div><h1>{title}</h1><p class="muted">Sessione sicura limitata a questo impianto.</p></header>
-<main><section class="summary"><div class="metric"><strong>{len(entities)}</strong>Dispositivi</div><div class="metric"><strong>{len(routines)}</strong>Routine vocali</div><div class="metric"><strong>Attiva</strong>Connessione</div></section>{feedback}
-<section class="devices"><h2>Dispositivi vocali</h2><ul class="device-list">{entity_rows}</ul></section><section><h2>Routine vocali</h2><ul class="simple-list">{routine_rows}</ul></section>
-<section><h2>Sessione e permessi</h2><p class="muted">{capabilities}</p><p class="session-ok">● Sessione protetta attiva</p><small>Se la sessione scade, chiudi questa scheda e riapri e‑Voice da e‑Control.</small></section></main></body></html>"""
-    response = HTMLResponse(body)
+    overlay_entities(entities, await load_live_states(installation.public_id))
+    csrf = _ui_csrf(context)
+    feedback = (
+        '<p class="ok" role="status">Comando eseguito.</p>' if result == "success"
+        else '<p class="bad" role="alert">Comando non eseguito.</p>' if result == "failed"
+        else ""
+    )
+    page = _layout(
+        installation.name,
+        '<p class="muted bounded-scope">Sessione e-Voice legata a questo impianto.</p>'
+        + feedback + _entity_groups(installation, entities, csrf),
+        context,
+        csrf,
+        "installations",
+    )
+    page = re.sub(r"<aside>.*?</aside>", "", page, count=1, flags=re.DOTALL)
+    page = page.replace("<main>", '<main class="bounded-installation">', 1)
+    page = page.replace(
+        "</style>",
+        "main.bounded-installation{margin-left:0;max-width:none;width:100%;padding:28px}"
+        ".bounded-installation>p.muted:first-of-type{display:none}</style>",
+        1,
+    )
+    page = page.replace(f'/installations/{installation.id}/commands', "/bounded/ui/commands")
+    page = re.sub(
+        rf'/installations/{installation.id}/entities/([0-9a-f-]+)/edit',
+        r'/bounded/entities/\1/edit',
+        page,
+    )
+    page = page.replace("fetch('/admin/csrf'", "fetch('/bounded/ui/csrf'")
+    response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     frame_ancestors, _same_site = _frame_policy()
-    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors {frame_ancestors}"
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors {frame_ancestors}"
     return response
+
+
+@router.get("/ui/csrf")
+async def bounded_ui_csrf(
+    context: Annotated[BoundContext, bound_context_dependency],
+) -> dict[str, str]:
+    return {"csrf_token": _ui_csrf(context)}
 
 
 @router.post("/ui/commands")
@@ -239,7 +266,7 @@ async def ui_command(
     request: Request,
     context: Annotated[BoundContext, bound_context_dependency],
     session: Annotated[AsyncSession, Depends(get_database_session)],
-) -> RedirectResponse:
+) -> Response:
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if media_type != "application/x-www-form-urlencoded":
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
@@ -248,25 +275,67 @@ async def ui_command(
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
     try:
         values = parse_qs(body.decode("utf-8"), strict_parsing=True)
-        if set(values) != {"csrf", "registry_id", "operation"} or any(len(value) != 1 for value in values.values()):
+        if not {"csrf_token", "entity_id", "operation"}.issubset(values) or any(len(value) != 1 for value in values.values()):
             raise ValueError
-        csrf, registry_id, operation = (values[key][0] for key in ("csrf", "registry_id", "operation"))
+        csrf, raw_entity_id, operation = (values[key][0] for key in ("csrf_token", "entity_id", "operation"))
+        entity_id = UUID(raw_entity_id)
     except (UnicodeDecodeError, ValueError):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT) from None
     if not hmac.compare_digest(csrf, _ui_csrf(context)):
         raise HTTPException(status.HTTP_403_FORBIDDEN)
     entity = await session.scalar(select(Entity).where(
+        Entity.id == entity_id,
         Entity.installation_id == context.effective_installation_id,
-        Entity.ha_registry_id == registry_id,
+        Entity.deleted_at.is_(None),
     ))
-    allowed = {item[0] for item in UI_OPERATIONS.get(entity.ha_domain, ())} if entity is not None else set()
-    if entity is None or operation not in allowed:
+    if entity is None or entity.ha_registry_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    if operation not in DOMAIN_OPERATIONS.get(entity.ha_domain, set()):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Comando non consentito")
+    value = values.get("value", [""])[0]
+    try:
+        if entity.ha_domain == "climate":
+            _validate_climate_value(entity, operation, value)
+        _validate_domain_command_value(entity, operation, value)
+        if operation == "select_source" and (
+            value not in _media_sources(entity)
+            or _media_source_setting(entity, value).get("enabled", True) is False
+        ):
+            raise ValueError
+        if operation == "media_join":
+            member = await session.scalar(select(Entity).where(
+                Entity.installation_id == context.effective_installation_id,
+                Entity.ha_registry_id == value,
+                Entity.ha_domain == "media_player",
+                Entity.deleted_at.is_(None),
+                Entity.available.is_(True),
+            ))
+            if member is None or member.id == entity.id:
+                raise ValueError
+        command_payload = _command_data(operation, value)
+        command_adapter.validate_python(command_payload)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Comando non valido") from error
     outcome = await command(BoundCommandRequest(
         installation_id=context.effective_installation_id,
-        registry_id=registry_id,
-        command={"operation": operation},
+        registry_id=entity.ha_registry_id,
+        command=command_payload,
     ), context, session)
+    if "application/json" in request.headers.get("accept", ""):
+        succeeded = outcome["status"] == "success"
+        payload: dict[str, object] = {
+            "ok": succeeded,
+            "message": "Comando eseguito" if succeeded else "Comando non riuscito",
+            "status": outcome["status"],
+            "state": (
+                "on" if succeeded and operation == "power_on"
+                else "off" if succeeded and operation == "power_off"
+                else None
+            ),
+        }
+        if succeeded and operation in {"set_target_temperature", "set_hvac_mode"}:
+            payload["value"] = value
+        return Response(json.dumps(payload), media_type="application/json")
     query = urlencode({"result": "success" if outcome["status"] == "success" else "failed"})
     response = RedirectResponse(f"/bounded/app?{query}", status_code=status.HTTP_303_SEE_OTHER)
     response.headers["Cache-Control"] = "no-store"

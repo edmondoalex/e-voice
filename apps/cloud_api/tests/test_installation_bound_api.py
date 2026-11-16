@@ -1,16 +1,22 @@
-from datetime import UTC, datetime, timedelta
 import re
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-
-import httpx
 from unittest.mock import AsyncMock
 from uuid import uuid4
+
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.cloud_api.app.config import get_settings
 from apps.cloud_api.app.database import get_database_session
-from apps.cloud_api.app.domain.models import AuditEvent, Entity, ExternalInstallationBinding, InstallationBoundSession, UserInstallationAssignment
+from apps.cloud_api.app.domain.models import (
+    AuditEvent,
+    Entity,
+    ExternalInstallationBinding,
+    InstallationBoundSession,
+    UserInstallationAssignment,
+)
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.installation_bound import InstallationBoundService, encode_launch
 from apps.cloud_api.app.installation_bound_api import bounded_event_payload
@@ -97,8 +103,11 @@ async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domai
     assert opened.headers["content-security-policy"] == "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     page = await client.get("/bounded/app")
     assert page.status_code == 200
-    assert "EKONEX · e-VOICE" in page.text
-    assert "Sessione sicura limitata a questo impianto" in page.text
+    assert "Sessione e-Voice legata a questo impianto" in page.text
+    assert "Comandi diretti" in page.text
+    assert "Aspirapolvere" in page.text
+    assert "Dispositivi vocali" not in page.text
+    assert "<aside>" not in page.text
     assert str(seeded_domain.installation_b_id) not in page.text
     assert (await client.get("/bounded/context")).status_code == 200
     replay = await client.get(path, follow_redirects=False)
@@ -126,23 +135,28 @@ async def test_bounded_app_renders_safe_controls_and_dispatches_with_csrf(
     assert (await client.post("/bounded/exchange", json={"launch": launch})).status_code == 200
     page = await client.get("/bounded/app")
     assert page.status_code == 200
-    assert "Accendi" in page.text and "Spegni" in page.text
-    assert 'class="devices"' in page.text
-    assert 'class="device-list"' in page.text
-    assert "Sessione protetta attiva" in page.text
+    assert ">ON<" in page.text and ">OFF<" in page.text
+    assert 'class="entity-group"' in page.text
+    assert "Categoria vocale" in page.text
+    assert "Comandi diretti" in page.text
+    assert "Dispositivi vocali" not in page.text
+    assert "<aside>" not in page.text
     assert 'href="/bounded/context"' not in page.text
-    csrf = re.search(r'name="csrf" value="([0-9a-f]{64})"', page.text)
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]{64})"', page.text)
     assert csrf is not None
     denied = await client.post("/bounded/ui/commands", data={
-        "csrf": "0" * 64, "registry_id": "registry-a", "operation": "power_on",
+        "csrf_token": "0" * 64, "entity_id": str(seeded_domain.entity_a_id),
+        "operation": "power_on",
     })
     assert denied.status_code == 403
     foreign = await client.post("/bounded/ui/commands", data={
-        "csrf": csrf.group(1), "registry_id": "registry-b", "operation": "power_on",
+        "csrf_token": csrf.group(1), "entity_id": str(seeded_domain.entity_b_id),
+        "operation": "power_on",
     })
     assert foreign.status_code == 404
     accepted = await client.post("/bounded/ui/commands", data={
-        "csrf": csrf.group(1), "registry_id": "registry-a", "operation": "power_on",
+        "csrf_token": csrf.group(1), "entity_id": str(seeded_domain.entity_a_id),
+        "operation": "power_on",
     }, follow_redirects=False)
     assert accepted.status_code == 303
     assert accepted.headers["location"] == "/bounded/app?result=success"
