@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import html
+import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -15,10 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .command_dispatch import CommandDispatchService, PowerCommand
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
-from .domain.models import Installation, WearDevice
-from .evcp import LIVENESS_TIMEOUT_SECONDS
+from .domain.models import Entity, Installation, WearDevice
+from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
 from .installation_bound_api import _frame_policy, _ui_csrf, bound_context_dependency
 from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
@@ -53,6 +56,50 @@ class ClaimResponse(BaseModel):
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     utterance: str = Field(min_length=1, max_length=300)
+
+
+def _voice_tokens(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    words = re.findall(r"[a-z0-9]+", "".join(c for c in normalized if not unicodedata.combining(c)))
+    aliases = {"luci": "luce", "lampade": "luce", "lampada": "luce"}
+    return {aliases.get(word, word) for word in words if word not in {"la", "le", "il", "i", "lo", "gli"}}
+
+
+async def _wear_power_command(session: AsyncSession, context, utterance: str) -> str | None:
+    words = _voice_tokens(utterance)
+    operation = "power_on" if "accendi" in words else "power_off" if "spegni" in words else None
+    if operation is None:
+        return None
+    context.require("command.execute")
+    target = words - {"accendi", "spegni", "luce"}
+    if not target:
+        return "Dimmi quale dispositivo vuoi comandare."
+    entities = list((await session.scalars(select(Entity).where(
+        Entity.installation_id == context.installation_id,
+        Entity.deleted_at.is_(None),
+        Entity.available.is_(True),
+        Entity.ha_domain.in_(("light", "switch")),
+    ))).all())
+    ranked = []
+    for entity in entities:
+        names = (entity.voice_name, entity.display_name, entity.friendly_name)
+        score = max((len(target & (_voice_tokens(name) - {"luce"})) for name in names if name), default=0)
+        if score:
+            ranked.append((score, entity))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if not ranked or (len(ranked) > 1 and ranked[0][0] == ranked[1][0]):
+        return "Non trovo un solo dispositivo autorizzato con quel nome."
+    entity = ranked[0][1]
+    if not entity.ha_registry_id:
+        return "Il dispositivo non dispone di un identificativo di comando."
+    outcome = await CommandDispatchService(session, sessions).dispatch(
+        context.installation_id, entity.ha_registry_id, PowerCommand(operation=operation)
+    )
+    await session.commit()
+    if outcome.status != "success":
+        return "Il comando non è riuscito."
+    action = "acceso" if operation == "power_on" else "spento"
+    return f"Ho {action} {entity.voice_name or entity.display_name or entity.friendly_name}."
 
 
 class DeviceCapabilitiesRequest(BaseModel):
@@ -336,6 +383,12 @@ async def ask(
         datetime.now(UTC) - timedelta(seconds=LIVENESS_TIMEOUT_SECONDS)
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "installation_offline")
+    try:
+        command_speech = await _wear_power_command(session, context, payload.utterance)
+    except WearDenied as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "command_not_authorized") from error
+    if command_speech is not None:
+        return {"status": "answered", "speech": command_speech}
     reply = await ConversationEntityService(session).ask_for_scope(
         context.tenant_id,
         context.installation_id,
