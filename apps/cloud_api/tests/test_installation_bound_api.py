@@ -332,6 +332,23 @@ async def test_revocation_while_stream_is_open_stops_before_next_item(session, s
     app.dependency_overrides.clear()
 
 
+async def test_wear_page_documents_private_installer_flow(session, seeded_domain):
+    launch = await _setup(session, seeded_domain)
+    client = await _client(session)
+    assert (await client.post("/bounded/exchange", json={"launch": launch})).status_code == 200
+
+    response = await client.get("/bounded/wear")
+
+    assert response.status_code == 200
+    assert "Installazione privata APK" in response.text
+    assert "Solo installatore" in response.text
+    assert "Debug wireless" in response.text
+    assert "disattiva Debug wireless" in response.text
+    assert "non deve essere eseguita dal cliente finale" in response.text.casefold()
+    await client.aclose()
+    app.dependency_overrides.clear()
+
+
 async def test_http_tampering_vectors_cannot_change_effective_installation(session, seeded_domain):
     launch = await _setup(session, seeded_domain)
     client = await _client(session)

@@ -25,7 +25,7 @@ $env:JAVA_HOME=$JdkRoot; $env:PATH=(Join-Path $JdkRoot 'bin')+';'+$env:PATH
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $classes,$dex,$compiled,$generated
 New-Item -ItemType Directory -Force -Path $classes,$dex,$compiled,$generated | Out-Null
 $unsigned=Join-Path $build 'unsigned.apk'; $aligned=Join-Path $build 'aligned.apk'
-if (-not $OutputName) { $OutputName = "ekonex-wear-change081-$($Environment.ToLowerInvariant())-debug.apk" }
+if (-not $OutputName) { $OutputName = "ekonex-wear-0.1.0-$($Environment.ToLowerInvariant()).apk" }
 if ([IO.Path]::GetFileName($OutputName) -ne $OutputName -or [IO.Path]::GetExtension($OutputName) -ne '.apk') { throw 'OutputName deve essere un nome file .apk senza percorso.' }
 $output=Join-Path $build $OutputName; $keystore=if($KeystorePath){$KeystorePath}else{Join-Path $build 'debug.keystore'}
 & $aapt2 compile --dir (Join-Path $project 'res') -o $compiled
