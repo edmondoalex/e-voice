@@ -161,11 +161,14 @@ def test_frame_policy_allows_only_explicit_http_origins(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             econtrol_bounded_frame_ancestors=
-            "http://192.168.3.24:8125,http://192.168.3.24:8123"
+            "http://192.168.3.24:8125,http://192.168.3.24:8123,https://manager-easas.e-control.tech"
         ),
     )
     ancestors, same_site = installation_bound_api._frame_policy()
-    assert ancestors == "http://192.168.3.24:8125 http://192.168.3.24:8123"
+    assert ancestors == (
+        "http://192.168.3.24:8125 http://192.168.3.24:8123 "
+        "https://manager-easas.e-control.tech"
+    )
     assert same_site == "none"
 
 async def test_export_stream_and_foreign_command_are_bounded(session, seeded_domain):
