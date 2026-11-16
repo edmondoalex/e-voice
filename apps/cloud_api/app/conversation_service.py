@@ -62,13 +62,16 @@ class ConversationEntityService:
         now: datetime | None = None,
         named_only: bool = False,
         category_slug: str | None = None,
+        live_installation_public_id: str | None = None,
+        allow_ai_fallback: bool = True,
     ) -> ConversationReply:
         entities = await self._entities.list_for_installation(
             tenant_id=tenant_id, installation_id=installation_id
         )
         settings = get_settings()
         live_states = await load_live_states(
-            settings.alexa_laboratory_installation_public_id
+            live_installation_public_id
+            or settings.alexa_laboratory_installation_public_id
         )
         overlay_entities(entities, live_states)
         snapshots = tuple(
@@ -108,6 +111,8 @@ class ConversationEntityService:
             ReplyStatus.AMBIGUOUS,
         }
         if reply.status not in fallback_statuses:
+            return reply
+        if not allow_ai_fallback:
             return reply
         if not settings.conversation_learning_enabled:
             return await self._ask_with_ai(utterance, snapshots, reply, now=now)

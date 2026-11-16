@@ -8,6 +8,7 @@ from apps.cloud_api.app.conversation import ReplyStatus
 from apps.cloud_api.app.conversation_service import ConversationEntityService
 from apps.cloud_api.app.domain.enums import TenantRole
 from apps.cloud_api.app.domain.models import Entity
+from apps.cloud_api.app.laboratory_live_state import LiveEntityState
 from apps.cloud_api.app.services import ResourceNotFoundError
 
 NOW = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
@@ -95,3 +96,69 @@ async def test_deleted_entity_is_not_visible_to_conversation(
     )
 
     assert reply.status is ReplyStatus.NOT_FOUND
+
+
+async def test_wear_scope_uses_bound_live_installation_without_ai_fallback(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entity = Entity(
+        installation_id=seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+        ha_entity_id="sensor.office_temperature",
+        ha_domain="sensor",
+        friendly_name="Temperatura ufficio",
+        voice_aliases=["sonda wear"],
+        device_class="temperature",
+        state="20",
+        attributes_json={"unit_of_measurement": "°C"},
+        available=True,
+        last_seen_at=NOW,
+    )
+    session.add(entity)
+    await session.commit()
+    requested: list[str] = []
+
+    async def live_states(public_id: str):
+        requested.append(public_id)
+        return {
+            "sensor.office_temperature": LiveEntityState(
+                ha_entity_id="sensor.office_temperature",
+                ha_registry_id=None,
+                ha_domain="sensor",
+                icon=None,
+                friendly_name="Temperatura ufficio",
+                area_id=None,
+                area_name="Ufficio",
+                device_id=None,
+                device_name=None,
+                state="21.6",
+                available=True,
+                attributes={"unit_of_measurement": "°C"},
+                device_class="temperature",
+                supported_features=0,
+                last_changed_at=NOW,
+                last_seen_at=NOW,
+            )
+        }
+
+    async def forbidden_ai(*_args, **_kwargs):
+        raise AssertionError("AI fallback must remain disabled for Wear")
+
+    monkeypatch.setattr(
+        "apps.cloud_api.app.conversation_service.load_live_states", live_states
+    )
+    monkeypatch.setattr(
+        "apps.cloud_api.app.conversation_service.OpenAIQuestionInterpreter.interpret",
+        forbidden_ai,
+    )
+    service = ConversationEntityService(session)
+    reply = await service.ask_for_scope(
+        seeded_domain.tenant_a_id,  # type: ignore[attr-defined]
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
+        "Qual è la temperatura della sonda wear?",
+        now=NOW,
+        live_installation_public_id="evi_bound_casa_easas",
+        allow_ai_fallback=False,
+    )
+
+    assert requested == ["evi_bound_casa_easas"]
+    assert reply.status is ReplyStatus.ANSWERED
