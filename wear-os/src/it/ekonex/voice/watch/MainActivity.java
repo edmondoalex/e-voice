@@ -8,6 +8,8 @@ import android.os.Bundle;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.speech.RecognizerIntent;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
@@ -44,7 +46,7 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state){super.onCreate(state); getWindow().getDecorView().setBackgroundColor(Color.BLACK);
         LinearLayout content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(24,24,24,24);
         TextView title=text("Ekonex Wear",23); content.addView(title);
-        code=new EditText(this); code.setHint("Codice associazione"); code.setSingleLine(true); code.setTextColor(Color.WHITE); code.setHintTextColor(Color.GRAY); content.addView(code,new LinearLayout.LayoutParams(-1,-2));
+        code=new EditText(this); code.setHint("Codice a 6 cifre"); code.setSingleLine(true); code.setInputType(InputType.TYPE_CLASS_NUMBER); code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)}); code.setTextColor(Color.WHITE); code.setHintTextColor(Color.GRAY); content.addView(code,new LinearLayout.LayoutParams(-1,-2));
         associate=new Button(this); associate.setText("Associa"); associate.setOnClickListener(v->claim()); content.addView(associate,new LinearLayout.LayoutParams(-1,-2));
         microphone=new Button(this); microphone.setText("Parla con e-Voice"); microphone.setOnClickListener(v->listen()); content.addView(microphone,new LinearLayout.LayoutParams(-1,-2));
         result=text("Associa l'orologio da e-Control.",15); content.addView(result);
@@ -52,7 +54,7 @@ public final class MainActivity extends Activity {
     }
     private TextView text(String value,float size){TextView view=new TextView(this); view.setText(value); view.setTextColor(Color.WHITE); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setPadding(0,10,0,10); return view;}
     private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE); microphone.setEnabled(paired); if(paired) result.setText("Orologio associato. Tocca Parla con e-Voice.");}
-    private void claim(){String value=code.getText().toString().trim(); if(value.length()<20){result.setText("Codice non valido.");return;} associate.setEnabled(false); result.setText("Associazione in corso..."); new Thread(()->requestClaim(value)).start();}
+    private void claim(){String value=code.getText().toString().trim(); if(!value.matches("\\d{6}")){result.setText("Inserisci le 6 cifre.");return;} associate.setEnabled(false); result.setText("Associazione in corso..."); new Thread(()->requestClaim(value)).start();}
     private void requestClaim(String value){try{JSONObject body=new JSONObject().put("code",value).put("display_name",android.os.Build.MODEL); JSONObject response=post(API+"/enrollments/claim",body,null); saveCredential(response.getString("credential")); runOnUiThread(()->{code.setText("");associate.setEnabled(true);refresh();});}catch(Exception error){runOnUiThread(()->{associate.setEnabled(true);result.setText("Associazione non riuscita. Genera un nuovo codice in e-Control.");});}}
     private void listen(){Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH); intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,Locale.ITALIAN.toLanguageTag()); intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,1); try{startActivityForResult(intent,SPEECH_REQUEST);}catch(ActivityNotFoundException error){result.setText("Riconoscimento vocale non disponibile.");}}
     @Override protected void onActivityResult(int request,int outcome,Intent data){super.onActivityResult(request,outcome,data); if(request!=SPEECH_REQUEST||outcome!=RESULT_OK||data==null)return; ArrayList<String> phrases=data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS); if(phrases==null||phrases.isEmpty())return; String utterance=phrases.get(0).trim(); result.setText("Attendo e-Voice..."); new Thread(()->ask(utterance)).start();}

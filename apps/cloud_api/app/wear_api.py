@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -19,7 +20,7 @@ from .domain.models import Installation, WearDevice
 from .evcp import LIVENESS_TIMEOUT_SECONDS
 from .installation_bound import BoundContext
 from .installation_bound_api import _frame_policy, _ui_csrf, bound_context_dependency
-from .wear_devices import CAPABILITIES, WearDenied, WearDeviceService
+from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
 
 router = APIRouter(tags=["wear"])
 session_dependency = Depends(get_database_session)
@@ -38,7 +39,7 @@ class EnrollmentResponse(BaseModel):
 
 class ClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    code: str = Field(min_length=20, max_length=64)
+    code: str = Field(pattern=r"^\d{6}$")
     display_name: str = Field(min_length=1, max_length=120)
 
 
@@ -165,16 +166,34 @@ async def revoke_device(
 @router.post("/api/wear/v1/enrollments/claim", response_model=ClaimResponse)
 async def claim(
     payload: ClaimRequest,
+    request: Request,
     session: Annotated[AsyncSession, session_dependency],
 ) -> ClaimResponse:
+    source = request.headers.get("cf-connecting-ip")
+    if not source:
+        source = request.client.host if request.client else "unknown"
+    source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    limiter = WearClaimLimiter(session, source_hash)
+    failed = await limiter.failed_count()
+    if failed >= 5:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "wear_claim_rate_limited")
     try:
         device, credential = await WearDeviceService(session).claim(
             payload.code, payload.display_name
         )
+        limiter.record(successful=True)
         await session.commit()
     except WearDenied as error:
         await session.rollback()
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "wear_claim_denied") from error
+        WearClaimLimiter(session, source_hash).record(successful=False)
+        await session.commit()
+        response_status = (
+            status.HTTP_429_TOO_MANY_REQUESTS
+            if failed + 1 >= 5
+            else status.HTTP_403_FORBIDDEN
+        )
+        detail = "wear_claim_rate_limited" if response_status == 429 else "wear_claim_denied"
+        raise HTTPException(response_status, detail) from error
     return ClaimResponse(device_id=str(device.id), credential=credential)
 
 

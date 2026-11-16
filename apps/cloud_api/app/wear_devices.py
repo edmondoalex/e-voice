@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .domain.enums import RecordStatus
@@ -18,6 +18,7 @@ from .domain.models import (
     TenantMembership,
     User,
     UserInstallationAssignment,
+    WearClaimAttempt,
     WearDevice,
     WearEnrollment,
 )
@@ -80,7 +81,15 @@ class WearDeviceService:
         ))
         if grant is None or membership is None or installation is None:
             raise WearDenied
-        code = secrets.token_urlsafe(18)
+        for _attempt in range(20):
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            exists = await self.session.scalar(select(WearEnrollment.id).where(
+                WearEnrollment.code_hash == _digest(code)
+            ))
+            if exists is None:
+                break
+        else:
+            raise WearDenied
         enrollment = WearEnrollment(
             code_hash=_digest(code), tenant_id=tenant_id, user_id=user_id,
             installation_id=installation_id, capabilities_json=sorted(capabilities),
@@ -159,3 +168,27 @@ class WearDeviceService:
         if device is None:
             raise WearDenied
         device.revoked_at = datetime.now(UTC)
+
+
+class WearClaimLimiter:
+    """Persisted five-attempt/15-minute limit for an anonymized source."""
+
+    def __init__(self, session: AsyncSession, source_hash: str) -> None:
+        self.session = session
+        self.source_hash = source_hash
+
+    async def failed_count(self) -> int:
+        since = datetime.now(UTC) - timedelta(minutes=15)
+        value = await self.session.scalar(
+            select(func.count()).select_from(WearClaimAttempt).where(
+                WearClaimAttempt.source_hash == self.source_hash,
+                WearClaimAttempt.successful.is_(False),
+                WearClaimAttempt.attempted_at >= since,
+            )
+        )
+        return int(value or 0)
+
+    def record(self, *, successful: bool) -> None:
+        self.session.add(WearClaimAttempt(
+            source_hash=self.source_hash, successful=successful
+        ))

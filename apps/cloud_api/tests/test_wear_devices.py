@@ -5,8 +5,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from apps.cloud_api.app.domain.models import UserInstallationAssignment, WearDevice
-from apps.cloud_api.app.wear_devices import WearDenied, WearDeviceService
+from apps.cloud_api.app.domain.models import UserInstallationAssignment
+from apps.cloud_api.app.wear_devices import (
+    WearClaimLimiter,
+    WearDenied,
+    WearDeviceService,
+)
 
 
 async def grant(session, seeded_domain):
@@ -30,6 +34,7 @@ async def test_enrollment_claim_is_single_use_and_secret_is_not_stored(session, 
         created_by_user_id=seeded_domain.user_a_id,
         capabilities={"state.read", "voice.ask"},
     )
+    assert len(code) == 6 and code.isdecimal()
     device, credential = await service.claim(code, "Xiaomi Watch 2")
     await session.commit()
     assert enrollment.claimed_at is not None
@@ -122,3 +127,18 @@ async def test_device_name_is_bounded_before_rendering(session, seeded_domain):
     device, _credential = await service.claim(code, "<script>alert(1)</script>")
     await session.commit()
     assert device.display_name == "<script>alert(1)</script>"
+
+
+@pytest.mark.asyncio
+async def test_claim_rate_limiter_blocks_after_five_failures(session, seeded_domain):
+    await grant(session, seeded_domain)
+    limiter = WearClaimLimiter(session, "a" * 64)
+    assert await limiter.failed_count() == 0
+    for expected in range(1, 6):
+        limiter.record(successful=False)
+        await session.commit()
+        assert await limiter.failed_count() == expected
+    other = WearClaimLimiter(session, "b" * 64)
+    other.record(successful=True)
+    await session.commit()
+    assert await other.failed_count() == 0

@@ -324,6 +324,22 @@ class WearEnrollment(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WearClaimAttempt(Base):
+    """Short-lived, anonymized anti-bruteforce record for Wear claims."""
+
+    __tablename__ = "wear_claim_attempts"
+    __table_args__ = (
+        Index("ix_wear_claim_attempts_source_time", "source_hash", "attempted_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    source_hash: Mapped[str] = mapped_column(String(64))
+    successful: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
 class WearDevice(Base):
     """Revocable Wear identity; only the credential digest is persisted."""
 
