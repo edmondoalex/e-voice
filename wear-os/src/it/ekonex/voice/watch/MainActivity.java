@@ -36,7 +36,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public final class MainActivity extends Activity {
     private static final int SPEECH_REQUEST=1;
-    private static final String API="https://voice.e-control.tech/api/wear/v1";
+    private static final String API="__EKONEX_WEAR_API_BASE__";
     private static final String PREFS="ekonex_wear";
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
     private EditText code; private TextView result; private Button associate; private Button microphone;
