@@ -74,6 +74,7 @@ async def test_exchange_cookie_is_path_restricted_and_global_cookie_cannot_ampli
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
     assert "Path=/bounded" in cookie
+    assert "Max-Age=28800" in cookie
     assert response.json()["effective_installation_id"] == str(seeded_domain.installation_a_id)
     own = await client.get(f"/bounded/installations/{seeded_domain.installation_a_id}/entities")
     assert own.status_code == 200

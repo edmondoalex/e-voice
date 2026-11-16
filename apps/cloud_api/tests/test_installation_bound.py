@@ -73,6 +73,37 @@ async def test_admin_global_role_is_still_bounded_to_a(session, seeded_domain):
     assert (await service.context(raw, now=now)).effective_installation_id == seeded_domain.installation_a_id
 
 
+async def test_browser_session_uses_sliding_thirty_minute_idle_timeout(session, seeded_domain):
+    now = datetime.now(UTC)
+    await _grant(session, seeded_domain)
+    service = InstallationBoundService(session, issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+    raw, _context = await service.exchange(
+        encode_launch(_claims(seeded_domain, now), SECRET), now=now
+    )
+    await service.context(raw, now=now + timedelta(minutes=29))
+    await service.context(raw, now=now + timedelta(minutes=58))
+    with pytest.raises(BoundLaunchDenied):
+        await service.context(raw, now=now + timedelta(minutes=89))
+
+
+async def test_prepared_code_keeps_launch_expiry_then_opens_browser_session(session, seeded_domain):
+    now = datetime.now(UTC)
+    await _grant(session, seeded_domain)
+    service = InstallationBoundService(session, issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+    code = await service.prepare(encode_launch(_claims(seeded_domain, now), SECRET), now=now)
+    raw = await service.open_prepared(code, now=now + timedelta(minutes=1))
+    assert (await service.context(raw, now=now + timedelta(minutes=25))).effective_installation_id == seeded_domain.installation_a_id
+
+
+async def test_unused_prepared_code_expires_with_launch(session, seeded_domain):
+    now = datetime.now(UTC)
+    await _grant(session, seeded_domain)
+    service = InstallationBoundService(session, issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+    code = await service.prepare(encode_launch(_claims(seeded_domain, now), SECRET), now=now)
+    with pytest.raises(BoundLaunchDenied):
+        await service.open_prepared(code, now=now + timedelta(minutes=3))
+
+
 async def test_launch_replay_is_denied(session, seeded_domain):
     now = datetime.now(UTC)
     await _grant(session, seeded_domain)

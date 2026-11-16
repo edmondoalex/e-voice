@@ -55,6 +55,7 @@ def _frame_policy() -> tuple[str, str]:
         return "'none'", "strict"
     return " ".join(origins), "none"
 BOUND_COOKIE = "ekonex_installation_bound"
+BOUND_COOKIE_MAX_AGE = 8 * 60 * 60
 
 
 class LaunchExchangeRequest(BaseModel):
@@ -154,7 +155,7 @@ async def exchange(
         httponly=True,
         samesite="strict",
         path="/bounded",
-        max_age=900,
+        max_age=BOUND_COOKIE_MAX_AGE,
     )
     return BoundContextResponse(
         effective_installation_id=str(context.effective_installation_id),
@@ -202,7 +203,7 @@ async def open_bounded_session(
     )
     frame_ancestors, same_site = _frame_policy()
     response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite=same_site,
-                        path="/bounded", max_age=900)
+                        path="/bounded", max_age=BOUND_COOKIE_MAX_AGE)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Content-Security-Policy"] = f"default-src 'none'; base-uri 'none'; frame-ancestors {frame_ancestors}"

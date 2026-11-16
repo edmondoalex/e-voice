@@ -34,6 +34,7 @@ from .domain.models import (
 )
 
 ALLOWED_CAPABILITIES = frozenset({"readonly", "use", "manage", "command", "export", "stream"})
+BOUND_SESSION_IDLE_TTL = timedelta(minutes=30)
 ACCESS_CAPABILITIES = {
     "readonly": frozenset({"readonly", "stream"}),
     "use": frozenset({"readonly", "use", "command", "stream"}),
@@ -102,7 +103,13 @@ class InstallationBoundService:
         self._audience = audience
         self._secret = secret
 
-    async def exchange(self, token: str, *, now: datetime | None = None) -> tuple[str, BoundContext]:
+    async def exchange(
+        self,
+        token: str,
+        *,
+        now: datetime | None = None,
+        prepared: bool = False,
+    ) -> tuple[str, BoundContext]:
         now = now or datetime.now(UTC)
         claims = decode_launch(token, self._secret)
         required = {"issuer", "audience", "subject", "installation_id", "requested_capabilities", "issued_at", "expires_at", "jti", "correlation_id", "tenant_id"}
@@ -154,7 +161,8 @@ class InstallationBoundService:
             token_hash=hashlib.sha256(raw_session.encode()).hexdigest(), launch_jti_hash=jti_hash,
             correlation_id=str(claims["correlation_id"]), issuer=self._issuer, user_id=user_id,
             tenant_id=tenant_id, effective_installation_id=binding.installation_id,
-            capabilities_json=sorted(effective), expires_at=min(expires, now + timedelta(minutes=15)),
+            capabilities_json=sorted(effective),
+            expires_at=(expires if prepared else now + BOUND_SESSION_IDLE_TTL),
         )
         self._session.add(row)
         await self._session.flush()
@@ -177,7 +185,7 @@ class InstallationBoundService:
     async def prepare(self, token: str, *, now: datetime | None = None) -> str:
         """Validate the signed launch and replace it with an opaque URL code."""
         now = now or datetime.now(UTC)
-        _raw, context = await self.exchange(token, now=now)
+        _raw, context = await self.exchange(token, now=now, prepared=True)
         code = secrets.token_urlsafe(32)
         row = await self._session.get(InstallationBoundSession, context.session_id)
         if row is None:
@@ -199,7 +207,10 @@ class InstallationBoundService:
                 InstallationBoundSession.revoked_at.is_(None),
                 InstallationBoundSession.expires_at > now,
             )
-            .values(token_hash=hashlib.sha256(raw_session.encode()).hexdigest())
+            .values(
+                token_hash=hashlib.sha256(raw_session.encode()).hexdigest(),
+                expires_at=now + BOUND_SESSION_IDLE_TTL,
+            )
             .returning(InstallationBoundSession.id)
         )
         if result.scalar_one_or_none() is None:
@@ -245,6 +256,7 @@ class InstallationBoundService:
         )
         if not capabilities:
             raise BoundLaunchDenied
+        row.expires_at = now + BOUND_SESSION_IDLE_TTL
         return BoundContext(row.id, row.user_id, row.tenant_id, row.effective_installation_id, capabilities, row.correlation_id)
 
     async def revoke(self, raw_session: str, *, now: datetime | None = None) -> None:
