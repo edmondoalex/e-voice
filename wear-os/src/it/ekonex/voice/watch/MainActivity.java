@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
     private EditText code; private TextView result; private Button associate; private Button microphone;
     private TextToSpeech textToSpeech; private boolean speechReady; private String pendingSpeech;
-    private SpeechRecognizer speechRecognizer;
+    private SpeechRecognizer speechRecognizer; private String partialUtterance="";
 
     @Override protected void onCreate(Bundle state){super.onCreate(state); getWindow().getDecorView().setBackgroundColor(Color.BLACK);
         LinearLayout content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(24,24,24,24);
@@ -60,14 +60,14 @@ public final class MainActivity extends Activity {
         result=text("Associa l'orologio da e-Control.",15); content.addView(result);
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true); scroll.addView(content); setContentView(scroll); refresh();
         if(SpeechRecognizer.isRecognitionAvailable(this)){speechRecognizer=SpeechRecognizer.createSpeechRecognizer(this);speechRecognizer.setRecognitionListener(new RecognitionListener(){
-            public void onReadyForSpeech(Bundle params){result.setText("Ti ascolto...");}
+            public void onReadyForSpeech(Bundle params){partialUtterance="";result.setText("Ti ascolto...");}
             public void onBeginningOfSpeech(){result.setText("Sto ascoltando...");}
             public void onRmsChanged(float rmsdB){}
             public void onBufferReceived(byte[] buffer){}
             public void onEndOfSpeech(){result.setText("Attendo e-Voice...");}
-            public void onError(int error){microphone.setEnabled(true);result.setText("Non ho capito. Tocca e riprova.");}
-            public void onResults(Bundle results){microphone.setEnabled(true);ArrayList<String> phrases=results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);if(phrases==null||phrases.isEmpty()){result.setText("Non ho capito. Tocca e riprova.");return;}String utterance=phrases.get(0).trim();result.setText("Attendo e-Voice...");new Thread(()->ask(utterance)).start();}
-            public void onPartialResults(Bundle partialResults){}
+            public void onError(int error){microphone.setEnabled(true);if(!partialUtterance.isEmpty()){String utterance=partialUtterance;result.setText("Ho capito: "+utterance+"\nAttendo e-Voice...");new Thread(()->ask(utterance)).start();return;}result.setText("Non ho capito (errore "+error+"). Tocca e riprova.");}
+            public void onResults(Bundle results){microphone.setEnabled(true);ArrayList<String> phrases=results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);String utterance="";if(phrases!=null)for(String phrase:phrases)if(phrase!=null&&!phrase.trim().isEmpty()){utterance=phrase.trim();break;}if(utterance.isEmpty())utterance=partialUtterance;if(utterance.isEmpty()){result.setText("Non ho capito. Tocca e riprova.");return;}String request=utterance;result.setText("Ho capito: "+request+"\nAttendo e-Voice...");new Thread(()->ask(request)).start();}
+            public void onPartialResults(Bundle partialResults){ArrayList<String> phrases=partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);if(phrases!=null&&!phrases.isEmpty()&&phrases.get(0)!=null&&!phrases.get(0).trim().isEmpty()){partialUtterance=phrases.get(0).trim();result.setText("Ho sentito: "+partialUtterance);}}
             public void onEvent(int eventType,Bundle params){}
         });}
         textToSpeech=new TextToSpeech(this,status->{if(status!=TextToSpeech.SUCCESS)return; int language=textToSpeech.setLanguage(Locale.ITALIAN); speechReady=language!=TextToSpeech.LANG_MISSING_DATA&&language!=TextToSpeech.LANG_NOT_SUPPORTED; if(speechReady&&pendingSpeech!=null){String message=pendingSpeech;pendingSpeech=null;speak(message);}});
@@ -79,7 +79,7 @@ public final class MainActivity extends Activity {
     private void claim(){String value=code.getText().toString().trim(); if(!value.matches("\\d{6}")){result.setText("Inserisci le 6 cifre.");return;} associate.setEnabled(false); result.setText("Associazione in corso..."); new Thread(()->requestClaim(value)).start();}
     private void requestClaim(String value){try{JSONObject body=new JSONObject().put("code",value).put("display_name",android.os.Build.MODEL); JSONObject response=post(API+"/enrollments/claim",body,null); saveCredential(response.getString("credential")); runOnUiThread(()->{code.setText("");associate.setEnabled(true);refresh();});}catch(Exception error){runOnUiThread(()->{associate.setEnabled(true);result.setText("Associazione non riuscita. Genera un nuovo codice in e-Control.");});}}
     private void listen(){if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},MICROPHONE_PERMISSION_REQUEST);return;}startListening();}
-    private void startListening(){if(speechRecognizer==null){result.setText("Riconoscimento vocale non disponibile.");return;}if(textToSpeech!=null)textToSpeech.stop();microphone.setEnabled(false);Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,Locale.ITALIAN.toLanguageTag());intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,1);intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,false);speechRecognizer.startListening(intent);}
+    private void startListening(){if(speechRecognizer==null){result.setText("Riconoscimento vocale non disponibile.");return;}if(textToSpeech!=null)textToSpeech.stop();microphone.setEnabled(false);Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,Locale.ITALIAN.toLanguageTag());intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,5);intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,true);intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE,false);speechRecognizer.startListening(intent);}
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==NOTIFICATION_PERMISSION_REQUEST){if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)enableNotifications();return;}if(requestCode!=MICROPHONE_PERMISSION_REQUEST)return;if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startListening();else result.setText("Abilita il microfono per parlare con e-Voice.");}
     private void ask(String utterance){try{JSONObject response=post(API+"/ask",new JSONObject().put("utterance",utterance),loadCredential()); showAndSpeak(response.getString("speech"));}catch(Exception error){show("e-Voice non disponibile o autorizzazione revocata.");}}
     private void show(String message){runOnUiThread(()->result.setText(message));}
