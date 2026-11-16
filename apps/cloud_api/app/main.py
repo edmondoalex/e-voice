@@ -29,6 +29,8 @@ from .installation_bound import BoundLaunchDenied
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
 from .voice_alerts import run_live_alert_monitor
+from .wear_api import router as wear_router
+from .wear_devices import WearDenied
 
 try:
     application_version = version("ekonex-voice")
@@ -73,12 +75,19 @@ app.include_router(control4_favorites_router)
 app.include_router(media_router)
 
 app.include_router(installation_bound_router)
+app.include_router(wear_router)
 
 
 @app.exception_handler(BoundLaunchDenied)
 async def bounded_denied(_request, _error) -> JSONResponse:
     """Uniform bounded denial without resource-existence disclosure."""
     return JSONResponse({"detail": "bounded_resource_denied"}, status_code=404)
+
+
+@app.exception_handler(WearDenied)
+async def wear_denied(_request, _error) -> JSONResponse:
+    """Do not disclose which Wear scope or capability check failed."""
+    return JSONResponse({"detail": "wear_resource_denied"}, status_code=403)
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])
 async def health() -> HealthResponse:

@@ -39,6 +39,8 @@ def test_domain_tables_are_registered() -> None:
         "users",
         "user_installation_assignments",
         "voice_categories",
+        "wear_devices",
+        "wear_enrollments",
     }
 
 

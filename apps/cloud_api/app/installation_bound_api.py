@@ -185,6 +185,7 @@ async def prepare_launch(
 async def open_bounded_session(
     code: str,
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    next: str = "app",
 ) -> HTMLResponse:
     try:
         raw = await _service(session).open_prepared(code)
@@ -192,11 +193,12 @@ async def open_bounded_session(
     except BoundLaunchDenied as error:
         await session.rollback()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
+    destination = "/bounded/wear" if next == "wear" else "/bounded/app"
     response = HTMLResponse(
         "<!doctype html><html><head><meta charset=utf-8>"
-        '<meta http-equiv="refresh" content="0;url=/bounded/app">'
+        f'<meta http-equiv="refresh" content="0;url={destination}">'
         "<title>e-Voice</title></head><body>"
-        '<a href="/bounded/app">Continua in e-Voice</a></body></html>'
+        f'<a href="{destination}">Continua</a></body></html>'
     )
     frame_ancestors, same_site = _frame_policy()
     response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite=same_site,

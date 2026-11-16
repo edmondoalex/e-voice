@@ -291,6 +291,71 @@ class InstallationBoundSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WearEnrollment(Base):
+    """Short-lived, single-use Wear offer created for one authorized user."""
+
+    __tablename__ = "wear_enrollments"
+    __table_args__ = (
+        Index("ix_wear_enrollments_expires", "expires_at"),
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid)
+    user_id: Mapped[UUID] = mapped_column(Uuid)
+    installation_id: Mapped[UUID] = mapped_column(Uuid)
+    capabilities_json: Mapped[list[str]] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WearDevice(Base):
+    """Revocable Wear identity; only the credential digest is persisted."""
+
+    __tablename__ = "wear_devices"
+    __table_args__ = (
+        Index("ix_wear_devices_owner", "tenant_id", "user_id"),
+        Index("ix_wear_devices_installation", "installation_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    credential_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid)
+    user_id: Mapped[UUID] = mapped_column(Uuid)
+    installation_id: Mapped[UUID] = mapped_column(Uuid)
+    display_name: Mapped[str] = mapped_column(String(120))
+    capabilities_json: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Entity(TimestampMixin, Base):
     __tablename__ = "entities"
     __table_args__ = (
