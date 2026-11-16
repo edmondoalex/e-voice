@@ -53,10 +53,9 @@ _INTENT_MAP = {
 
 def _alexa_intent(intent: str, canonical: str) -> str:
     normalized = canonical.casefold()
-    collective = (
-        any(word in normalized.split() for word in ("tutti", "tutte", "entrambi", "entrambe"))
-        or ("sas" in normalized.split() and "privato" in normalized.split())
-    )
+    collective = any(
+        word in normalized.split() for word in ("tutti", "tutte", "entrambi", "entrambe")
+    ) or ("sas" in normalized.split() and "privato" in normalized.split())
     collective_intents = {
         "battery_level": "BatterySummaryIntent",
         "consumption_power": "ConsumptionSummaryIntent",
@@ -89,10 +88,14 @@ def _alexa_intent(intent: str, canonical: str) -> str:
 
 def _authorize(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> None:
     settings = get_settings()
-    valid = bool(settings.laboratory_learning_password) and hmac.compare_digest(
-        credentials.username.encode(), settings.laboratory_learning_username.encode()
-    ) and hmac.compare_digest(
-        credentials.password.encode(), settings.laboratory_learning_password.encode()
+    valid = (
+        bool(settings.laboratory_learning_password)
+        and hmac.compare_digest(
+            credentials.username.encode(), settings.laboratory_learning_username.encode()
+        )
+        and hmac.compare_digest(
+            credentials.password.encode(), settings.laboratory_learning_password.encode()
+        )
     )
     if not valid:
         raise HTTPException(
@@ -163,11 +166,7 @@ def _compile_model(
         for category in categories
     ]
     alert_target_type = next(
-        (
-            item
-            for item in language_model["types"]
-            if item["name"] == "EKONEX_ALERT_TARGET"
-        ),
+        (item for item in language_model["types"] if item["name"] == "EKONEX_ALERT_TARGET"),
         None,
     )
     if alert_target_type is not None:
@@ -200,9 +199,7 @@ def _compile_model(
         # produced by earlier model versions before adding the current assignment.
         for item in intents.values():
             item["samples"] = [
-                value
-                for value in item.get("samples", [])
-                if _normalized_sample(value) != sample
+                value for value in item.get("samples", []) if _normalized_sample(value) != sample
             ]
         intents[intent_name].setdefault("samples", []).append(sample)
     return model
@@ -225,9 +222,7 @@ def _model_errors(model: dict[str, object]) -> list[str]:
             normalized = _normalized_sample(sample)
             previous = owners.get(normalized)
             if previous is not None and previous != intent["name"]:
-                errors.append(
-                    f"Frase duplicata tra {previous} e {intent['name']}: {sample}."
-                )
+                errors.append(f"Frase duplicata tra {previous} e {intent['name']}: {sample}.")
             owners[normalized] = intent["name"]
     return errors
 
@@ -332,9 +327,7 @@ async def learning_page(
     installations = {
         str(item.id): item.name
         for item in (
-            await session.scalars(
-                select(Installation).where(Installation.tenant_id == tenant.id)
-            )
+            await session.scalars(select(Installation).where(Installation.tenant_id == tenant.id))
         ).all()
     }
     rows = "".join(
@@ -367,7 +360,7 @@ async def learning_page(
 {publish_notice}
 <div class="actions"><a class="button" href="/laboratory/learning/model.json">Genera, verifica e scarica modello</a><form method="post" action="/laboratory/learning/publish" onsubmit="return confirm('Validare e pubblicare il modello nella skill Laboratorio?')"><button>Valida, pubblica e avvia Build</button></form></div>
 <input class="filter" id="phrase-filter" type="search" placeholder="Filtra per frase, interpretazione, intent, impianto o stato..." autocomplete="off">
-<table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody id="learning-rows">{rows or '<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>'}</tbody></table>
+<table><thead><tr><th>Frase pronunciata</th><th>Interpretazione</th><th>Intent Alexa</th><th>Impianto</th><th>Riutilizzi</th><th>Stato</th></tr></thead><tbody id="learning-rows">{rows or "<tr><td colspan=6>Nessuna frase ancora appresa</td></tr>"}</tbody></table>
 <script>const filter=document.getElementById('phrase-filter');const rows=[...document.querySelectorAll('#learning-rows tr')];filter.addEventListener('input',()=>{{const query=filter.value.trim().toLocaleLowerCase('it');for(const row of rows)row.hidden=query&&!row.textContent.toLocaleLowerCase('it').includes(query);}});</script>
 </main></body></html>"""
     return HTMLResponse(body)

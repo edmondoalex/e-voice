@@ -83,9 +83,7 @@ async def test_revocation_is_effective_during_the_next_access_check(
     )
     session.add(assignment)
     await session.commit()
-    assert await InstallationAccessService(session).allows(
-        context, seeded_domain.installation_a_id
-    )
+    assert await InstallationAccessService(session).allows(context, seeded_domain.installation_a_id)
 
     assignment.revoked_at = datetime.now(UTC)
     await session.commit()
@@ -122,9 +120,7 @@ async def test_tenant_administrators_keep_management_access(
         tenant_id=seeded_domain.tenant_a_id,
     )
 
-    assert await InstallationAccessService(session).allows(
-        context, seeded_domain.installation_a_id
-    )
+    assert await InstallationAccessService(session).allows(context, seeded_domain.installation_a_id)
 
 
 async def test_admin_can_grant_revoke_and_regrant_access(

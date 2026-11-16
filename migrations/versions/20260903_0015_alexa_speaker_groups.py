@@ -68,9 +68,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_alexa_speaker_group_members_group", table_name="alexa_speaker_group_members"
-    )
+    op.drop_index("ix_alexa_speaker_group_members_group", table_name="alexa_speaker_group_members")
     op.drop_table("alexa_speaker_group_members")
     op.drop_index("ix_alexa_speaker_groups_installation", table_name="alexa_speaker_groups")
     op.drop_index("ix_alexa_speaker_groups_tenant", table_name="alexa_speaker_groups")

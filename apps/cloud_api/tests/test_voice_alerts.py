@@ -25,15 +25,18 @@ def test_parses_supported_state_condition() -> None:
 
 
 def test_alert_intent_builds_deterministic_condition() -> None:
-    assert _utterance(
-        {
-            "name": "AlertIntent",
-            "slots": {
-                "target": {"value": "lampadario cucina"},
-                "desired_state": {"value": "spento"},
-            },
-        }
-    ) == "quando lampadario cucina è spento"
+    assert (
+        _utterance(
+            {
+                "name": "AlertIntent",
+                "slots": {
+                    "target": {"value": "lampadario cucina"},
+                    "desired_state": {"value": "spento"},
+                },
+            }
+        )
+        == "quando lampadario cucina è spento"
+    )
 
 
 async def test_voice_alert_binds_echo_and_dispatches_once(

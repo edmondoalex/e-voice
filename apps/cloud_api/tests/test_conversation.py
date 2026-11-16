@@ -634,9 +634,7 @@ def test_temperature_summary_is_strictly_scoped_to_requested_area() -> None:
         ),
     )
 
-    reply = ConversationEngine().ask(
-        "dimmi tutte le temperature in cucina", temperatures, now=NOW
-    )
+    reply = ConversationEngine().ask("dimmi tutte le temperature in cucina", temperatures, now=NOW)
 
     assert reply.status is ReplyStatus.ANSWERED
     assert {item.entity_id for item in reply.evidence} == {"sensor.cucina"}

@@ -95,9 +95,7 @@ async def load_live_states(installation_public_id: str) -> dict[str, LiveEntityS
                     device_name=row.device_name,
                     state=row.state,
                     available=bool(row.available),
-                    attributes=row.attributes_json
-                    if isinstance(row.attributes_json, dict)
-                    else {},
+                    attributes=row.attributes_json if isinstance(row.attributes_json, dict) else {},
                     device_class=row.device_class,
                     supported_features=int(row.supported_features or 0),
                     last_changed_at=row.last_changed_at,
@@ -117,9 +115,7 @@ async def sync_live_entities(session: AsyncSession, installation: Installation) 
         return 0
     local_entities = list(
         (
-            await session.scalars(
-                select(Entity).where(Entity.installation_id == installation.id)
-            )
+            await session.scalars(select(Entity).where(Entity.installation_id == installation.id))
         ).all()
     )
     by_entity_id = {entity.ha_entity_id: entity for entity in local_entities}
@@ -221,9 +217,7 @@ def overlay_entities(entities: Iterable[Entity], states: dict[str, LiveEntitySta
             set_committed_value(entity, field, value)
 
 
-def overlay_installation(
-    installation: Installation, live: LiveInstallationState | None
-) -> None:
+def overlay_installation(installation: Installation, live: LiveInstallationState | None) -> None:
     """Overlay connection metadata without modifying the laboratory database."""
     if live is None:
         return

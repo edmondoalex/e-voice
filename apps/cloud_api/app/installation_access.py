@@ -47,9 +47,7 @@ class InstallationAccessService:
     async def list(self, context: TenantContext) -> list[Installation]:
         return list((await self._session.scalars(self.statement(context))).all())
 
-    async def get(
-        self, context: TenantContext, installation_id: UUID
-    ) -> Installation | None:
+    async def get(self, context: TenantContext, installation_id: UUID) -> Installation | None:
         result = await self._session.scalars(
             self.statement(context).where(Installation.id == installation_id)
         )

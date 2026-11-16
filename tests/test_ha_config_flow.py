@@ -93,9 +93,7 @@ async def test_user_can_choose_isolated_laboratory(hass: HomeAssistant) -> None:
         )
 
     assert result["step_id"] == "pairing"
-    assert result["description_placeholders"]["pairing_url"] == (
-        f"{LABORATORY_CLOUD_URL}/pair"
-    )
+    assert result["description_placeholders"]["pairing_url"] == (f"{LABORATORY_CLOUD_URL}/pair")
     assert factory.call_args.args[1] == LABORATORY_CLOUD_URL
 
 

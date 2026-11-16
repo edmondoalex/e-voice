@@ -361,8 +361,7 @@ def _echo_siblings(
         (
             item
             for item in related
-            if item.ha_domain == "notify"
-            and item.ha_entity_id.endswith(("_speak", "_parla"))
+            if item.ha_domain == "notify" and item.ha_entity_id.endswith(("_speak", "_parla"))
         ),
         None,
     )

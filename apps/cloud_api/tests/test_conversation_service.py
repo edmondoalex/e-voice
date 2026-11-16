@@ -143,9 +143,7 @@ async def test_wear_scope_uses_bound_live_installation_without_ai_fallback(
     async def forbidden_ai(*_args, **_kwargs):
         raise AssertionError("AI fallback must remain disabled for Wear")
 
-    monkeypatch.setattr(
-        "apps.cloud_api.app.conversation_service.load_live_states", live_states
-    )
+    monkeypatch.setattr("apps.cloud_api.app.conversation_service.load_live_states", live_states)
     monkeypatch.setattr(
         "apps.cloud_api.app.conversation_service.OpenAIQuestionInterpreter.interpret",
         forbidden_ai,

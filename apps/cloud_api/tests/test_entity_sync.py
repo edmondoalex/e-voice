@@ -108,7 +108,8 @@ async def test_laboratory_state_sync_never_reports_to_alexa(
     session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installation = await session.get(
-        Installation, seeded_domain.installation_a_id  # type: ignore[attr-defined]
+        Installation,
+        seeded_domain.installation_a_id,  # type: ignore[attr-defined]
     )
     assert installation is not None
     service = EntitySyncService(session, installation)

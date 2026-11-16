@@ -82,9 +82,7 @@ def _slot_value(intent: dict[str, Any], name: str) -> str | None:
     slot = slots.get(name) if isinstance(slots, dict) else None
     resolutions = slot.get("resolutions") if isinstance(slot, dict) else None
     authorities = (
-        resolutions.get("resolutionsPerAuthority")
-        if isinstance(resolutions, dict)
-        else None
+        resolutions.get("resolutionsPerAuthority") if isinstance(resolutions, dict) else None
     )
     if isinstance(authorities, list):
         for authority in authorities:
@@ -110,9 +108,7 @@ def _slot_id(intent: dict[str, Any], name: str) -> str | None:
     slot = slots.get(name) if isinstance(slots, dict) else None
     resolutions = slot.get("resolutions") if isinstance(slot, dict) else None
     authorities = (
-        resolutions.get("resolutionsPerAuthority")
-        if isinstance(resolutions, dict)
-        else None
+        resolutions.get("resolutionsPerAuthority") if isinstance(resolutions, dict) else None
     )
     if not isinstance(authorities, list):
         return None
@@ -229,9 +225,7 @@ async def laboratory(
         alert_request = _utterance(intent)
         if alert_request is None:
             return _speech("Prova, avvisami quando il cancello è chiuso.", end=False)
-        _, alert_reply = await create_voice_alert(
-            database, tenant.id, installation, alert_request
-        )
+        _, alert_reply = await create_voice_alert(database, tenant.id, installation, alert_request)
         return _speech(alert_reply, end=True)
     category_slug = (
         _slot_id(intent, "category") if isinstance(intent, dict) else None

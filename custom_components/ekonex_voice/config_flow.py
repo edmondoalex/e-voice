@@ -80,9 +80,7 @@ class EkonexVoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             )
         self._cloud_url = (
-            LABORATORY_CLOUD_URL
-            if user_input["environment"] == "laboratory"
-            else DEFAULT_CLOUD_URL
+            LABORATORY_CLOUD_URL if user_input["environment"] == "laboratory" else DEFAULT_CLOUD_URL
         )
         return await self._async_start_pairing(self._cloud_url)
 

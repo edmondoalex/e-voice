@@ -28,9 +28,7 @@ def intent(name: str, **slots: str) -> dict[str, object]:
             "type": "IntentRequest",
             "intent": {
                 "name": name,
-                "slots": {
-                    key: {"name": key, "value": value} for key, value in slots.items()
-                },
+                "slots": {key: {"name": key, "value": value} for key, value in slots.items()},
             },
         },
     }
@@ -130,10 +128,7 @@ def test_learned_temperature_summaries_do_not_collide_in_generic_intent() -> Non
         _alexa_intent("temperature", "tutte le temperature della centrale termica")
         == "ThermalTemperatureSummaryIntent"
     )
-    assert (
-        _alexa_intent("temperature", "tutte le temperature")
-        == "TemperatureSummaryIntent"
-    )
+    assert _alexa_intent("temperature", "tutte le temperature") == "TemperatureSummaryIntent"
 
 
 def test_light_category_synonyms_include_natural_floor_wording() -> None:
@@ -179,8 +174,7 @@ def test_model_compiler_moves_learned_phrase_to_one_intent() -> None:
 
     compiled = _compile_model(base, [], (record,))
     intents = {
-        item["name"]: item
-        for item in compiled["interactionModel"]["languageModel"]["intents"]
+        item["name"]: item for item in compiled["interactionModel"]["languageModel"]["intents"]
     }
 
     assert intents["TemperatureSummaryIntent"]["samples"] == []

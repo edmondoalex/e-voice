@@ -45,9 +45,7 @@ class ConversationLearningStore:
     def _index_key(tenant_id: UUID) -> str:
         return f"ekonex:conversation-learning-index:{tenant_id}"
 
-    async def get(
-        self, tenant_id: UUID, installation_id: UUID, utterance: str
-    ) -> str | None:
+    async def get(self, tenant_id: UUID, installation_id: UUID, utterance: str) -> str | None:
         try:
             key = self._key(tenant_id, installation_id, utterance)
             value = await self._redis.get(key)

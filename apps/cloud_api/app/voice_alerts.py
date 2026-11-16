@@ -147,9 +147,7 @@ async def create_voice_alert(
         entity
         for entity in entities
         if any(
-            wanted == _normalize(name)
-            or len(wanted) >= 4
-            and wanted in _normalize(name)
+            wanted == _normalize(name) or len(wanted) >= 4 and wanted in _normalize(name)
             for name in _entity_names(entity)
         )
     ]
@@ -245,14 +243,10 @@ async def evaluate_voice_alerts(
             AlexaVoiceAlert.source_device_id.is_(None),
         ]
         if voice_events:
-            binding_filters.append(
-                AlexaVoiceAlert.created_at >= now - timedelta(seconds=30)
-            )
+            binding_filters.append(AlexaVoiceAlert.created_at >= now - timedelta(seconds=30))
         else:
             # Give Alexa Devices time to publish the exact originating Echo first.
-            binding_filters.append(
-                AlexaVoiceAlert.created_at <= now - timedelta(seconds=10)
-            )
+            binding_filters.append(AlexaVoiceAlert.created_at <= now - timedelta(seconds=10))
         await session.execute(
             update(AlexaVoiceAlert)
             .where(*binding_filters)
@@ -269,13 +263,7 @@ async def evaluate_voice_alerts(
     ]
     if not voice_events:
         alert_filters.append(AlexaVoiceAlert.target_entity_id.in_(changed_ids))
-    alerts = list(
-        (
-            await session.scalars(
-                select(AlexaVoiceAlert).where(*alert_filters)
-            )
-        ).all()
-    )
+    alerts = list((await session.scalars(select(AlexaVoiceAlert).where(*alert_filters))).all())
     live_states = await load_live_states(installation.public_id) if use_live_states else {}
     from .alexa_routines import _dispatch_announcement
 
@@ -315,8 +303,7 @@ async def evaluate_voice_alerts(
             if any(item.status == "success" for item in outcomes):
                 alert.status = "triggered"
             elif any(
-                item.error_code == "INSTALLATION_OFFLINE"
-                or item.status == "unavailable"
+                item.error_code == "INSTALLATION_OFFLINE" or item.status == "unavailable"
                 for item in outcomes
             ):
                 alert.status = "pending"

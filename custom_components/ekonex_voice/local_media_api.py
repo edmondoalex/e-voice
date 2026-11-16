@@ -85,16 +85,20 @@ def _siblings(
             item
             for item in same_device
             if item.get("domain") == "switch"
-            and str(item.get("entity_id")).endswith(
-                ("_do_not_disturb", "_non_disturbare")
-            )
+            and str(item.get("entity_id")).endswith(("_do_not_disturb", "_non_disturbare"))
         ),
         None,
     )
-    return speech, dnd, manufacturer == "amazon" or platform in {
-        "alexa_media",
-        "alexa_devices",
-    }
+    return (
+        speech,
+        dnd,
+        manufacturer == "amazon"
+        or platform
+        in {
+            "alexa_media",
+            "alexa_devices",
+        },
+    )
 
 
 def _player_payload(
@@ -161,8 +165,7 @@ def local_media_snapshot(hass: HomeAssistant) -> dict[str, object]:
     """Return one stable record for every locally exposed media player."""
     players, related = _exposed_items(hass)
     values = [
-        _player_payload(config_entry, item, related)
-        for config_entry, item in players.values()
+        _player_payload(config_entry, item, related) for config_entry, item in players.values()
     ]
     values.sort(key=lambda item: str(item["name"]).casefold())
     return {"api_version": "v1", "players": values, "player_count": len(values)}
@@ -268,9 +271,7 @@ class LocalMediaArtworkView(HomeAssistantView):
         if result.status != "success" or result.response_data is None:
             return _json_error(404, result.error_code or "ARTWORK_NOT_FOUND", "Copertina assente")
         try:
-            image = base64.b64decode(
-                str(result.response_data["image_base64"]), validate=True
-            )
+            image = base64.b64decode(str(result.response_data["image_base64"]), validate=True)
             content_type = str(result.response_data["content_type"]).split(";", 1)[0]
         except (KeyError, TypeError, ValueError):
             return _json_error(502, "INVALID_ARTWORK", "Copertina non valida")

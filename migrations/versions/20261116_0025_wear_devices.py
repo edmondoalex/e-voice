@@ -31,8 +31,16 @@ def upgrade() -> None:
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["tenant_id", "user_id"], ["tenant_memberships.tenant_id", "tenant_memberships.user_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["installation_id", "tenant_id"], ["installations.id", "installations.tenant_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("code_hash"),
     )
@@ -50,8 +58,16 @@ def upgrade() -> None:
         sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["tenant_id", "user_id"], ["tenant_memberships.tenant_id", "tenant_memberships.user_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["installation_id", "tenant_id"], ["installations.id", "installations.tenant_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("credential_hash"),
     )

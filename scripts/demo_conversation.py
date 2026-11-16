@@ -66,9 +66,7 @@ def main() -> None:
                     f"{source.unit or ''}.".replace(" %.", "%.")
                 )
             continue
-        reply = session.ask(
-            utterance, DEMO_ENTITIES, now=datetime(2026, 9, 1, 8, 5, tzinfo=UTC)
-        )
+        reply = session.ask(utterance, DEMO_ENTITIES, now=datetime(2026, 9, 1, 8, 5, tzinfo=UTC))
         last_reply = reply
         print(f"Ekonex: {reply.speech}")
 

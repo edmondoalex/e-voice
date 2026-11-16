@@ -66,6 +66,8 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     except Exception as exc:  # Lambda boundary must always return valid Alexa speech.
         print(f"laboratory backend request failed: {type(exc).__name__}: {exc}")
         return _response("Il laboratorio Ekonex non è momentaneamente disponibile.")
-    return cast(dict[str, Any], value) if isinstance(value, dict) else _response(
-        "Il laboratorio Ekonex ha restituito una risposta non valida."
+    return (
+        cast(dict[str, Any], value)
+        if isinstance(value, dict)
+        else _response("Il laboratorio Ekonex ha restituito una risposta non valida.")
     )

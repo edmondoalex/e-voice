@@ -117,9 +117,7 @@ def test_entity_schema_accepts_only_unique_media_experiences() -> None:
         "domain": "media_player",
         "available": True,
     }
-    validated = EntityItem.model_validate(
-        {**base, "experiences": ["watch", "listen"]}
-    )
+    validated = EntityItem.model_validate({**base, "experiences": ["watch", "listen"]})
     assert validated.experiences == ["watch", "listen"]
     with pytest.raises(ValidationError):
         EntityItem.model_validate({**base, "experiences": ["other"]})

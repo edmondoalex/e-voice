@@ -21,11 +21,11 @@ from .control4_favorites import router as control4_favorites_router
 from .doorbells import public_router as doorbell_public_router
 from .doorbells import router as doorbell_router
 from .evcp import router as evcp_router
+from .installation_bound import BoundLaunchDenied
+from .installation_bound_api import router as installation_bound_router
 from .laboratory_learning import router as laboratory_learning_router
 from .legal import router as legal_router
 from .media_api import router as media_router
-from .installation_bound_api import router as installation_bound_router
-from .installation_bound import BoundLaunchDenied
 from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
 from .voice_alerts import run_live_alert_monitor
@@ -88,6 +88,7 @@ async def bounded_denied(_request, _error) -> JSONResponse:
 async def wear_denied(_request, _error) -> JSONResponse:
     """Do not disclose which Wear scope or capability check failed."""
     return JSONResponse({"detail": "wear_resource_denied"}, status_code=403)
+
 
 @app.get("/health", response_model=HealthResponse, tags=["operations"])
 async def health() -> HealthResponse:

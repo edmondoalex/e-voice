@@ -25,9 +25,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("installation_id", sa.Uuid(), nullable=False),
         sa.Column("access_level", sa.String(20), server_default="use", nullable=False),
-        sa.Column(
-            "granted_by_user_id", sa.Uuid(), nullable=True
-        ),
+        sa.Column("granted_by_user_id", sa.Uuid(), nullable=True),
         sa.Column(
             "granted_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),

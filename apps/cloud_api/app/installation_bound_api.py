@@ -54,6 +54,8 @@ def _frame_policy() -> tuple[str, str]:
     if any(not re.fullmatch(r"https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", item) for item in origins):
         return "'none'", "strict"
     return " ".join(origins), "none"
+
+
 BOUND_COOKIE = "ekonex_installation_bound"
 BOUND_COOKIE_MAX_AGE = 8 * 60 * 60
 
@@ -91,12 +93,19 @@ UI_OPERATIONS = {
 
 def _ui_csrf(context: BoundContext) -> str:
     secret = get_settings().econtrol_launch_secret.encode()
-    return hmac.new(secret, f"bounded-ui-v1\n{context.session_id}".encode(), hashlib.sha256).hexdigest()
+    return hmac.new(
+        secret, f"bounded-ui-v1\n{context.session_id}".encode(), hashlib.sha256
+    ).hexdigest()
 
 
 def _entity_controls(item: Entity, context: BoundContext) -> str:
     operations = UI_OPERATIONS.get(item.ha_domain, ())
-    if "command" not in context.capabilities or not item.available or not operations or not item.ha_registry_id:
+    if (
+        "command" not in context.capabilities
+        or not item.available
+        or not operations
+        or not item.ha_registry_id
+    ):
         return ""
     buttons = "".join(
         f'<button type="submit" name="operation" value="{operation}">{html.escape(label)}</button>'
@@ -105,8 +114,9 @@ def _entity_controls(item: Entity, context: BoundContext) -> str:
     return (
         '<form method="post" action="/bounded/ui/commands">'
         f'<input type="hidden" name="csrf" value="{_ui_csrf(context)}">'
-        f'<input type="hidden" name="registry_id" value="{html.escape(item.ha_registry_id, quote=True)}">'
-        f'{buttons}</form>'
+        '<input type="hidden" name="registry_id" '
+        f'value="{html.escape(item.ha_registry_id, quote=True)}">'
+        f"{buttons}</form>"
     )
 
 
@@ -202,11 +212,20 @@ async def open_bounded_session(
         f'<a href="{destination}">Continua</a></body></html>'
     )
     frame_ancestors, same_site = _frame_policy()
-    response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite=same_site,
-                        path="/bounded", max_age=BOUND_COOKIE_MAX_AGE)
+    response.set_cookie(
+        BOUND_COOKIE,
+        raw,
+        secure=True,
+        httponly=True,
+        samesite=same_site,
+        path="/bounded",
+        max_age=BOUND_COOKIE_MAX_AGE,
+    )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = f"default-src 'none'; base-uri 'none'; frame-ancestors {frame_ancestors}"
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'none'; base-uri 'none'; frame-ancestors {frame_ancestors}"
+    )
     return response
 
 
@@ -222,14 +241,17 @@ async def bounded_app(
     overlay_entities(entities, await load_live_states(installation.public_id))
     csrf = _ui_csrf(context)
     feedback = (
-        '<p class="ok" role="status">Comando eseguito.</p>' if result == "success"
-        else '<p class="bad" role="alert">Comando non eseguito.</p>' if result == "failed"
+        '<p class="ok" role="status">Comando eseguito.</p>'
+        if result == "success"
+        else '<p class="bad" role="alert">Comando non eseguito.</p>'
+        if result == "failed"
         else ""
     )
     page = _layout(
         installation.name,
         '<p class="muted bounded-scope">Sessione e-Voice legata a questo impianto.</p>'
-        + feedback + _entity_groups(installation, entities, csrf),
+        + feedback
+        + _entity_groups(installation, entities, csrf),
         context,
         csrf,
         "installations",
@@ -242,10 +264,10 @@ async def bounded_app(
         ".bounded-installation>p.muted:first-of-type{display:none}</style>",
         1,
     )
-    page = page.replace(f'/installations/{installation.id}/commands', "/bounded/ui/commands")
+    page = page.replace(f"/installations/{installation.id}/commands", "/bounded/ui/commands")
     page = re.sub(
-        rf'/installations/{installation.id}/entities/([0-9a-f-]+)/edit',
-        r'/bounded/entities/\1/edit',
+        rf"/installations/{installation.id}/entities/([0-9a-f-]+)/edit",
+        r"/bounded/entities/\1/edit",
         page,
     )
     page = page.replace("fetch('/admin/csrf'", "fetch('/bounded/ui/csrf'")
@@ -261,7 +283,11 @@ async def bounded_app(
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     frame_ancestors, _same_site = _frame_policy()
-    response.headers["Content-Security-Policy"] = f"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors {frame_ancestors}"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+        f"frame-ancestors {frame_ancestors}"
+    )
     return response
 
 
@@ -286,19 +312,25 @@ async def ui_command(
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
     try:
         values = parse_qs(body.decode("utf-8"), strict_parsing=True)
-        if not {"csrf_token", "entity_id", "operation"}.issubset(values) or any(len(value) != 1 for value in values.values()):
+        if not {"csrf_token", "entity_id", "operation"}.issubset(values) or any(
+            len(value) != 1 for value in values.values()
+        ):
             raise ValueError
-        csrf, raw_entity_id, operation = (values[key][0] for key in ("csrf_token", "entity_id", "operation"))
+        csrf, raw_entity_id, operation = (
+            values[key][0] for key in ("csrf_token", "entity_id", "operation")
+        )
         entity_id = UUID(raw_entity_id)
     except (UnicodeDecodeError, ValueError):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT) from None
     if not hmac.compare_digest(csrf, _ui_csrf(context)):
         raise HTTPException(status.HTTP_403_FORBIDDEN)
-    entity = await session.scalar(select(Entity).where(
-        Entity.id == entity_id,
-        Entity.installation_id == context.effective_installation_id,
-        Entity.deleted_at.is_(None),
-    ))
+    entity = await session.scalar(
+        select(Entity).where(
+            Entity.id == entity_id,
+            Entity.installation_id == context.effective_installation_id,
+            Entity.deleted_at.is_(None),
+        )
+    )
     if entity is None or entity.ha_registry_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     if operation not in DOMAIN_OPERATIONS.get(entity.ha_domain, set()):
@@ -314,24 +346,30 @@ async def ui_command(
         ):
             raise ValueError
         if operation == "media_join":
-            member = await session.scalar(select(Entity).where(
-                Entity.installation_id == context.effective_installation_id,
-                Entity.ha_registry_id == value,
-                Entity.ha_domain == "media_player",
-                Entity.deleted_at.is_(None),
-                Entity.available.is_(True),
-            ))
+            member = await session.scalar(
+                select(Entity).where(
+                    Entity.installation_id == context.effective_installation_id,
+                    Entity.ha_registry_id == value,
+                    Entity.ha_domain == "media_player",
+                    Entity.deleted_at.is_(None),
+                    Entity.available.is_(True),
+                )
+            )
             if member is None or member.id == entity.id:
                 raise ValueError
         command_payload = _command_data(operation, value)
         command_adapter.validate_python(command_payload)
     except (ValueError, TypeError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Comando non valido") from error
-    outcome = await command(BoundCommandRequest(
-        installation_id=context.effective_installation_id,
-        registry_id=entity.ha_registry_id,
-        command=command_payload,
-    ), context, session)
+    outcome = await command(
+        BoundCommandRequest(
+            installation_id=context.effective_installation_id,
+            registry_id=entity.ha_registry_id,
+            command=command_payload,
+        ),
+        context,
+        session,
+    )
     if "application/json" in request.headers.get("accept", ""):
         succeeded = outcome["status"] == "success"
         payload: dict[str, object] = {
@@ -339,8 +377,10 @@ async def ui_command(
             "message": "Comando eseguito" if succeeded else "Comando non riuscito",
             "status": outcome["status"],
             "state": (
-                "on" if succeeded and operation == "power_on"
-                else "off" if succeeded and operation == "power_off"
+                "on"
+                if succeeded and operation == "power_on"
+                else "off"
+                if succeeded and operation == "power_off"
                 else None
             ),
         }
@@ -398,7 +438,10 @@ async def routines(
 ) -> list[dict[str, Any]]:
     resources = BoundedResourceService(session, context)
     await resources.installation(installation_id)
-    return [{"id": str(item.id), "name": item.name, "enabled": item.enabled} for item in await resources.routines()]
+    return [
+        {"id": str(item.id), "name": item.name, "enabled": item.enabled}
+        for item in await resources.routines()
+    ]
 
 
 @router.get("/installations/{installation_id}/activity/export")
@@ -462,10 +505,12 @@ async def command(
 ) -> dict[str, Any]:
     resources = BoundedResourceService(session, context)
     resources.authorize_installation(payload.installation_id, "command")
-    entity = await session.scalar(select(Entity).where(
-        Entity.installation_id == payload.installation_id,
-        Entity.ha_registry_id == payload.registry_id,
-    ))
+    entity = await session.scalar(
+        select(Entity).where(
+            Entity.installation_id == payload.installation_id,
+            Entity.ha_registry_id == payload.registry_id,
+        )
+    )
     if entity is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     try:
@@ -475,18 +520,24 @@ async def command(
     outcome = await CommandDispatchService(session, sessions).dispatch(
         payload.installation_id, payload.registry_id, spec
     )
-    session.add(AuditEvent(
-        tenant_id=context.tenant_id,
-        installation_id=context.effective_installation_id,
-        user_id=context.user_id,
-        source="econtrol_bounded",
-        event_type="bounded.command",
-        request_id=context.correlation_id,
-        payload_redacted_json={
-            "registry_id": payload.registry_id,
-            "operation": spec.operation,
-        },
-        result=outcome.status,
-    ))
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            installation_id=context.effective_installation_id,
+            user_id=context.user_id,
+            source="econtrol_bounded",
+            event_type="bounded.command",
+            request_id=context.correlation_id,
+            payload_redacted_json={
+                "registry_id": payload.registry_id,
+                "operation": spec.operation,
+            },
+            result=outcome.status,
+        )
+    )
     await session.commit()
-    return {"command_id": str(outcome.command_id), "status": outcome.status, "error_code": outcome.error_code}
+    return {
+        "command_id": str(outcome.command_id),
+        "status": outcome.status,
+        "error_code": outcome.error_code,
+    }

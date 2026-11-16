@@ -45,7 +45,9 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["effective_installation_id"], ["installations.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["effective_installation_id"], ["installations.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token_hash"),
         sa.UniqueConstraint("launch_jti_hash"),

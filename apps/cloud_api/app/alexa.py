@@ -100,10 +100,7 @@ def _media_inputs(entity: Entity) -> list[dict[str, object]]:
             if not isinstance(value, str):
                 continue
             clean = value.strip()
-            if (
-                clean
-                and clean.casefold() not in used_voice_names
-            ):
+            if clean and clean.casefold() not in used_voice_names:
                 friendly.append(clean[:120])
                 used_voice_names.add(clean.casefold())
         item: dict[str, object] = {"name": source[:255]}

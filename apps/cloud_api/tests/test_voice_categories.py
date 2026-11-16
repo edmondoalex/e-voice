@@ -30,9 +30,7 @@ def test_classifies_energy_and_power_sensors() -> None:
 
 def test_classifies_battery_and_thermal_temperatures() -> None:
     assert infer("Battery % EASAS", device_class="battery", unit="%") == "battery_level"
-    assert infer("Temp Sanicube Alta", device_class="temperature", unit="°C") == (
-        "acs_temperature"
-    )
+    assert infer("Temp Sanicube Alta", device_class="temperature", unit="°C") == ("acs_temperature")
     assert infer("Temp Volano PDC Alta", device_class="temperature", unit="°C") == (
         "thermal_temperature"
     )

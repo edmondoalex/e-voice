@@ -107,9 +107,7 @@ def test_player_experiences_and_media_rooms_are_area_bound() -> None:
             {"room_id": "registry-speaker", "room_name": "Speaker Ufficio"},
             {"room_id": "registry-tv", "room_name": "TV Sala"},
         ],
-        "listen": [
-            {"room_id": "registry-speaker", "room_name": "Speaker Ufficio"}
-        ],
+        "listen": [{"room_id": "registry-speaker", "room_name": "Speaker Ufficio"}],
     }
 
 
