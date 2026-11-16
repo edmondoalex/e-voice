@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import re
 
 import httpx
 from unittest.mock import AsyncMock
@@ -101,6 +102,48 @@ async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domai
     assert (await client.get("/bounded/context")).status_code == 200
     replay = await client.get(path, follow_redirects=False)
     assert replay.status_code == 403
+    await client.aclose()
+    app.dependency_overrides.clear()
+
+
+async def test_bounded_app_renders_safe_controls_and_dispatches_with_csrf(
+    session, seeded_domain, monkeypatch
+):
+    launch = await _setup(session, seeded_domain)
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    assert entity is not None
+    entity.ha_registry_id = "registry-a"
+    await session.commit()
+    monkeypatch.setattr(
+        sessions,
+        "dispatch",
+        AsyncMock(return_value=CommandResultPayload(
+            session_id=uuid4(), command_id=uuid4(), status="success"
+        )),
+    )
+    client = await _client(session)
+    assert (await client.post("/bounded/exchange", json={"launch": launch})).status_code == 200
+    page = await client.get("/bounded/app")
+    assert page.status_code == 200
+    assert "Accendi" in page.text and "Spegni" in page.text
+    csrf = re.search(r'name="csrf" value="([0-9a-f]{64})"', page.text)
+    assert csrf is not None
+    denied = await client.post("/bounded/ui/commands", data={
+        "csrf": "0" * 64, "registry_id": "registry-a", "operation": "power_on",
+    })
+    assert denied.status_code == 403
+    foreign = await client.post("/bounded/ui/commands", data={
+        "csrf": csrf.group(1), "registry_id": "registry-b", "operation": "power_on",
+    })
+    assert foreign.status_code == 404
+    accepted = await client.post("/bounded/ui/commands", data={
+        "csrf": csrf.group(1), "registry_id": "registry-a", "operation": "power_on",
+    }, follow_redirects=False)
+    assert accepted.status_code == 303
+    assert accepted.headers["location"] == "/bounded/app?result=success"
+    sessions.dispatch.assert_awaited_once()
+    feedback = await client.get(accepted.headers["location"])
+    assert "Comando eseguito" in feedback.text
     await client.aclose()
     app.dependency_overrides.clear()
 

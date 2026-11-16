@@ -1,15 +1,18 @@
 """HTTP exchange and dependency for CHANGE028 bounded sessions."""
 
 import csv
+import hashlib
+import hmac
 import html
 import io
 import json
 import logging
+from urllib.parse import parse_qs, urlencode
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +52,36 @@ class BoundCommandRequest(BaseModel):
     installation_id: UUID
     registry_id: str = Field(min_length=1, max_length=255)
     command: dict[str, Any]
+
+
+UI_OPERATIONS = {
+    "light": (("power_on", "Accendi"), ("power_off", "Spegni")),
+    "switch": (("power_on", "Accendi"), ("power_off", "Spegni")),
+    "cover": (("open", "Apri"), ("stop", "Stop"), ("close", "Chiudi")),
+    "scene": (("activate", "Attiva"),),
+    "script": (("activate", "Avvia"),),
+}
+
+
+def _ui_csrf(context: BoundContext) -> str:
+    secret = get_settings().econtrol_launch_secret.encode()
+    return hmac.new(secret, f"bounded-ui-v1\n{context.session_id}".encode(), hashlib.sha256).hexdigest()
+
+
+def _entity_controls(item: Entity, context: BoundContext) -> str:
+    operations = UI_OPERATIONS.get(item.ha_domain, ())
+    if "command" not in context.capabilities or not item.available or not operations or not item.ha_registry_id:
+        return ""
+    buttons = "".join(
+        f'<button type="submit" name="operation" value="{operation}">{html.escape(label)}</button>'
+        for operation, label in operations
+    )
+    return (
+        '<form method="post" action="/bounded/ui/commands">'
+        f'<input type="hidden" name="csrf" value="{_ui_csrf(context)}">'
+        f'<input type="hidden" name="registry_id" value="{html.escape(item.ha_registry_id, quote=True)}">'
+        f'{buttons}</form>'
+    )
 
 
 def _service(session: AsyncSession) -> InstallationBoundService:
@@ -152,6 +185,7 @@ async def open_bounded_session(
 async def bounded_app(
     context: Annotated[BoundContext, bound_context_dependency],
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    result: str | None = None,
 ) -> HTMLResponse:
     resources = BoundedResourceService(session, context)
     installation = await resources.installation(context.effective_installation_id)
@@ -159,7 +193,8 @@ async def bounded_app(
     routines = await resources.routines()
     entity_rows = "".join(
         f"<li><strong>{html.escape(item.display_name or item.friendly_name or item.voice_name or item.ha_entity_id)}</strong>"
-        f"<small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small></li>"
+        f"<span><small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small>"
+        f"{_entity_controls(item, context)}</span></li>"
         for item in sorted(entities, key=lambda row: (row.display_name or row.friendly_name or row.ha_entity_id).casefold())[:80]
     ) or "<li><strong>Nessun dispositivo sincronizzato</strong><small>Controlla il connettore Home Assistant.</small></li>"
     routine_rows = "".join(
@@ -168,17 +203,60 @@ async def bounded_app(
     ) or "<li><strong>Nessuna routine vocale</strong><small>Le routine compariranno dopo la sincronizzazione.</small></li>"
     capabilities = " · ".join(html.escape(item) for item in sorted(context.capabilities))
     title = html.escape(installation.name or "Impianto associato")
+    feedback = {
+        "success": '<p class="feedback ok" role="status">Comando eseguito.</p>',
+        "failed": '<p class="feedback error" role="alert">Comando non eseguito. Controlla connessione e dispositivo.</p>',
+    }.get(result or "", "")
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>e-Voice · {title}</title>
-<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#111416;color:#f4f7f8}}body{{margin:0}}header{{padding:28px clamp(20px,5vw,72px);background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(1.7rem,4vw,2.7rem)}}.muted,small{{color:#9fb0ba}}main{{padding:24px clamp(20px,5vw,72px);display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:20px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:flex;gap:16px;flex-wrap:wrap}}.metric{{min-width:150px;background:#111619;border-radius:14px;padding:14px}}.metric strong{{display:block;font-size:1.8rem;color:#55d9ff}}ul{{list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}}li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}li small{{text-align:right}}a{{color:#63dcff}}@media(max-width:600px){{li{{display:block}}li small{{display:block;text-align:left;margin-top:4px}}}}</style></head><body>
+<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#111416;color:#f4f7f8}}body{{margin:0}}header{{padding:28px clamp(20px,5vw,72px);background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(1.7rem,4vw,2.7rem)}}.muted,small{{color:#9fb0ba}}main{{padding:24px clamp(20px,5vw,72px);display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:20px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:flex;gap:16px;flex-wrap:wrap}}.metric{{min-width:150px;background:#111619;border-radius:14px;padding:14px}}.metric strong{{display:block;font-size:1.8rem;color:#55d9ff}}.feedback{{grid-column:1/-1;margin:0;padding:13px 16px;border-radius:12px}}.ok{{background:#123d30;color:#9ff2cf}}.error{{background:#54252a;color:#ffd0d3}}ul{{list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}}li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}li>span{{text-align:right}}form{{display:flex;justify-content:flex-end;gap:6px;margin-top:7px;flex-wrap:wrap}}button{{border:1px solid #45d6ff;background:#10242c;color:#e9fbff;border-radius:8px;padding:7px 10px;font-weight:700;cursor:pointer}}button:hover,button:focus{{background:#174353}}a{{color:#63dcff}}@media(max-width:600px){{li{{display:block}}li>span{{display:block;text-align:left;margin-top:4px}}form{{justify-content:flex-start}}}}</style></head><body>
 <header><div class="brand">EKONEX · e-VOICE</div><h1>{title}</h1><p class="muted">Sessione sicura limitata a questo impianto.</p></header>
-<main><section class="summary"><div class="metric"><strong>{len(entities)}</strong>Dispositivi</div><div class="metric"><strong>{len(routines)}</strong>Routine vocali</div><div class="metric"><strong>Attiva</strong>Connessione</div></section>
+<main><section class="summary"><div class="metric"><strong>{len(entities)}</strong>Dispositivi</div><div class="metric"><strong>{len(routines)}</strong>Routine vocali</div><div class="metric"><strong>Attiva</strong>Connessione</div></section>{feedback}
 <section><h2>Dispositivi vocali</h2><ul>{entity_rows}</ul></section><section><h2>Routine vocali</h2><ul>{routine_rows}</ul></section>
 <section><h2>Permessi sessione</h2><p class="muted">{capabilities}</p><p><a href="/bounded/context">Diagnostica contesto</a></p></section></main></body></html>"""
     response = HTMLResponse(body)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+    return response
+
+
+@router.post("/ui/commands")
+async def ui_command(
+    request: Request,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> RedirectResponse:
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type != "application/x-www-form-urlencoded":
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    body = await request.body()
+    if len(body) > 4096:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+    try:
+        values = parse_qs(body.decode("utf-8"), strict_parsing=True)
+        if set(values) != {"csrf", "registry_id", "operation"} or any(len(value) != 1 for value in values.values()):
+            raise ValueError
+        csrf, registry_id, operation = (values[key][0] for key in ("csrf", "registry_id", "operation"))
+    except (UnicodeDecodeError, ValueError):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT) from None
+    if not hmac.compare_digest(csrf, _ui_csrf(context)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN)
+    entity = await session.scalar(select(Entity).where(
+        Entity.installation_id == context.effective_installation_id,
+        Entity.ha_registry_id == registry_id,
+    ))
+    allowed = {item[0] for item in UI_OPERATIONS.get(entity.ha_domain, ())} if entity is not None else set()
+    if entity is None or operation not in allowed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    outcome = await command(BoundCommandRequest(
+        installation_id=context.effective_installation_id,
+        registry_id=registry_id,
+        command={"operation": operation},
+    ), context, session)
+    query = urlencode({"result": "success" if outcome["status"] == "success" else "failed"})
+    response = RedirectResponse(f"/bounded/app?{query}", status_code=status.HTTP_303_SEE_OTHER)
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
