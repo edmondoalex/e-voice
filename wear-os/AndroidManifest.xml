@@ -3,6 +3,11 @@
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
     <application android:label="Ekonex Wear" android:icon="@drawable/ekonex_wear"
         android:roundIcon="@drawable/ekonex_wear" android:allowBackup="false"
         android:fullBackupContent="false" android:usesCleartextTraffic="false"
