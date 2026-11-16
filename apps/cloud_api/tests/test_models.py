@@ -42,6 +42,7 @@ def test_domain_tables_are_registered() -> None:
         "wear_devices",
         "wear_enrollments",
         "wear_claim_attempts",
+        "wear_notifications",
     }
 
 

@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.speech.RecognizerIntent;
@@ -42,6 +43,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public final class MainActivity extends Activity {
     private static final int MICROPHONE_PERMISSION_REQUEST=1;
+    private static final int NOTIFICATION_PERMISSION_REQUEST=2;
     private static final String API="__EKONEX_WEAR_API_BASE__";
     private static final String PREFS="ekonex_wear";
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
@@ -71,12 +73,13 @@ public final class MainActivity extends Activity {
         textToSpeech=new TextToSpeech(this,status->{if(status!=TextToSpeech.SUCCESS)return; int language=textToSpeech.setLanguage(Locale.ITALIAN); speechReady=language!=TextToSpeech.LANG_MISSING_DATA&&language!=TextToSpeech.LANG_NOT_SUPPORTED; if(speechReady&&pendingSpeech!=null){String message=pendingSpeech;pendingSpeech=null;speak(message);}});
     }
     private TextView text(String value,float size){TextView view=new TextView(this); view.setText(value); view.setTextColor(Color.WHITE); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setPadding(0,10,0,10); return view;}
-    private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE); microphone.setEnabled(paired); if(paired) result.setText("Orologio associato. Tocca Parla con e-Voice.");}
+    private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE); microphone.setEnabled(paired); if(paired){result.setText("Orologio associato. Tocca Parla con e-Voice.");enableNotifications();}}
+    private void enableNotifications(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_PERMISSION_REQUEST);return;}startForegroundService(new Intent(this,NotificationPollService.class));}
     private void claim(){String value=code.getText().toString().trim(); if(!value.matches("\\d{6}")){result.setText("Inserisci le 6 cifre.");return;} associate.setEnabled(false); result.setText("Associazione in corso..."); new Thread(()->requestClaim(value)).start();}
     private void requestClaim(String value){try{JSONObject body=new JSONObject().put("code",value).put("display_name",android.os.Build.MODEL); JSONObject response=post(API+"/enrollments/claim",body,null); saveCredential(response.getString("credential")); runOnUiThread(()->{code.setText("");associate.setEnabled(true);refresh();});}catch(Exception error){runOnUiThread(()->{associate.setEnabled(true);result.setText("Associazione non riuscita. Genera un nuovo codice in e-Control.");});}}
     private void listen(){if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},MICROPHONE_PERMISSION_REQUEST);return;}startListening();}
     private void startListening(){if(speechRecognizer==null){result.setText("Riconoscimento vocale non disponibile.");return;}if(textToSpeech!=null)textToSpeech.stop();microphone.setEnabled(false);Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,Locale.ITALIAN.toLanguageTag());intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,1);intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,false);speechRecognizer.startListening(intent);}
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode!=MICROPHONE_PERMISSION_REQUEST)return;if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startListening();else result.setText("Abilita il microfono per parlare con e-Voice.");}
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==NOTIFICATION_PERMISSION_REQUEST){if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)enableNotifications();return;}if(requestCode!=MICROPHONE_PERMISSION_REQUEST)return;if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startListening();else result.setText("Abilita il microfono per parlare con e-Voice.");}
     private void ask(String utterance){try{JSONObject response=post(API+"/ask",new JSONObject().put("utterance",utterance),loadCredential()); showAndSpeak(response.getString("speech"));}catch(Exception error){show("e-Voice non disponibile o autorizzazione revocata.");}}
     private void show(String message){runOnUiThread(()->result.setText(message));}
     private void showAndSpeak(String message){runOnUiThread(()->{result.setText(message);speak(message);});}

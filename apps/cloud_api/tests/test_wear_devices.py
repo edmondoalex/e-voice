@@ -11,6 +11,7 @@ from apps.cloud_api.app.wear_devices import (
     WearDenied,
     WearDeviceService,
 )
+from apps.cloud_api.app.wear_notifications import WearNotificationService
 
 
 async def grant(session, seeded_domain):
@@ -142,3 +143,75 @@ async def test_claim_rate_limiter_blocks_after_five_failures(session, seeded_dom
     other.record(successful=True)
     await session.commit()
     assert await other.failed_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_notifications_are_deduplicated_device_bound_and_acknowledged(
+    session, seeded_domain
+):
+    await grant(session, seeded_domain)
+    devices = WearDeviceService(session)
+    _offer, code = await devices.create_enrollment(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        created_by_user_id=seeded_domain.user_a_id,
+        capabilities={"notification.receive", "notification.ack"},
+    )
+    device, credential = await devices.claim(code, "Wear notifiche")
+    await session.commit()
+    notifications = WearNotificationService(session)
+    first = await notifications.enqueue_for_installation(
+        tenant_id=seeded_domain.tenant_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        event_key="event-001",
+        category="security",
+        severity="warning",
+        title="Porta aperta",
+        body="La porta ingresso è aperta.",
+    )
+    duplicate = await notifications.enqueue_for_installation(
+        tenant_id=seeded_domain.tenant_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        event_key="event-001",
+        category="security",
+        severity="warning",
+        title="Porta aperta",
+        body="La porta ingresso è aperta.",
+    )
+    context = await devices.context(credential)
+    pending = await notifications.pending(context)
+    assert first == 1 and duplicate == 0
+    assert [item.device_id for item in pending] == [device.id]
+    assert pending[0].delivered_at is not None
+    await notifications.acknowledge(context, pending[0].id)
+    await session.commit()
+    assert await notifications.pending(context) == []
+
+
+@pytest.mark.asyncio
+async def test_notification_capabilities_are_enforced(session, seeded_domain):
+    await grant(session, seeded_domain)
+    devices = WearDeviceService(session)
+    _offer, code = await devices.create_enrollment(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        created_by_user_id=seeded_domain.user_a_id,
+        capabilities={"voice.ask"},
+    )
+    _device, credential = await devices.claim(code, "Wear senza notifiche")
+    await session.commit()
+    context = await devices.context(credential)
+    notifications = WearNotificationService(session)
+    assert await notifications.enqueue_for_installation(
+        tenant_id=seeded_domain.tenant_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        event_key="event-no-capability",
+        category="system",
+        severity="info",
+        title="Test",
+        body="Non deve essere consegnata.",
+    ) == 0
+    with pytest.raises(WearDenied):
+        await notifications.pending(context)

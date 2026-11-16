@@ -33,12 +33,15 @@ if($LASTEXITCODE){throw 'Compilazione risorse Android non riuscita.'}
 $resources=@(Get-ChildItem $compiled -Filter '*.flat' | ForEach-Object FullName)
 & $aapt2 link -o $unsigned --manifest (Join-Path $project 'AndroidManifest.xml') -I $androidJar --min-sdk-version 30 --target-sdk-version 35 $resources
 if($LASTEXITCODE){throw 'aapt2 non riuscito.'}
-$sourceTemplate=Join-Path $project 'src\it\ekonex\voice\watch\MainActivity.java'
-$source=Join-Path $generated 'MainActivity.java'
-$sourceText=(Get-Content -Raw $sourceTemplate)
-if (-not $sourceText.Contains('__EKONEX_WEAR_API_BASE__')) { throw 'Placeholder endpoint Wear mancante.' }
-[IO.File]::WriteAllText($source,$sourceText.Replace('__EKONEX_WEAR_API_BASE__',$apiBase),(New-Object Text.UTF8Encoding($false)))
-& (Join-Path $JdkRoot 'bin\javac.exe') --release 11 -cp $androidJar -d $classes $source
+$sources=@()
+Get-ChildItem (Join-Path $project 'src\it\ekonex\voice\watch') -Filter '*.java' | ForEach-Object {
+    $source=Join-Path $generated $_.Name
+    $sourceText=(Get-Content -Raw $_.FullName)
+    [IO.File]::WriteAllText($source,$sourceText.Replace('__EKONEX_WEAR_API_BASE__',$apiBase),(New-Object Text.UTF8Encoding($false)))
+    $sources += $source
+}
+if (-not ($sources | ForEach-Object { Get-Content -Raw $_ } | Select-String -SimpleMatch $apiBase)) { throw 'Placeholder endpoint Wear mancante.' }
+& (Join-Path $JdkRoot 'bin\javac.exe') --release 11 -cp $androidJar -d $classes $sources
 if($LASTEXITCODE){throw 'javac non riuscito.'}
 $classFiles=@(Get-ChildItem $classes -Recurse -Filter '*.class' | ForEach-Object FullName)
 & $d8 --min-api 30 --lib $androidJar --output $dex $classFiles

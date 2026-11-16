@@ -7,6 +7,7 @@ import hashlib
 import html
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
@@ -21,6 +22,7 @@ from .evcp import LIVENESS_TIMEOUT_SECONDS
 from .installation_bound import BoundContext
 from .installation_bound_api import _frame_policy, _ui_csrf, bound_context_dependency
 from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
+from .wear_notifications import WearNotificationService
 
 router = APIRouter(tags=["wear"])
 session_dependency = Depends(get_database_session)
@@ -51,6 +53,17 @@ class ClaimResponse(BaseModel):
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     utterance: str = Field(min_length=1, max_length=300)
+
+
+class DeviceCapabilitiesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    capabilities: set[str]
+
+
+class TestNotificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(default="Notifica di prova Ekonex", min_length=1, max_length=120)
+    body: str = Field(default="Le notifiche sul tuo orologio funzionano.", min_length=1, max_length=500)
 
 
 async def _wear_context(
@@ -110,6 +123,9 @@ async def wear_management(
     ).order_by(WearDevice.created_at.desc()))).all()
     rows = "".join(
         f'<li><strong>{html.escape(item.display_name)}</strong> '
+        f'<small>{html.escape(", ".join(item.capabilities_json))}</small> '
+        f'<button data-enable="{item.id}">Abilita notifiche</button> '
+        f'<button data-test="{item.id}">Invia prova</button> '
         f'<button data-device="{item.id}">Revoca</button></li>'
         for item in devices
     ) or "<li>Nessun orologio associato.</li>"
@@ -123,6 +139,7 @@ async def wear_management(
 <script>const result=document.querySelector('#result');document.querySelector('#create').onclick=async()=>{{
 const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/enrollments',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:'{capabilities}'.split(',')}})}});const value=await response.json();result.innerHTML=response.ok?'Codice monouso (10 minuti): <code>'+value.code+'</code>':'Associazione non disponibile';}};</script>
 <script>document.querySelectorAll('[data-device]').forEach(button=>button.onclick=async()=>{{if(!confirm('Revocare questo orologio?'))return;const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.device,{{method:'DELETE',headers:{{'X-Ekonex-CSRF':csrf}}}});if(response.ok)location.reload();else result.textContent='Revoca non riuscita';}});</script>
+<script>document.querySelectorAll('[data-enable]').forEach(button=>button.onclick=async()=>{{const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.enable,{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{capabilities:['state.read','voice.ask','notification.receive','notification.ack']}})}});result.textContent=response.ok?'Notifiche abilitate.':'Abilitazione non riuscita';if(response.ok)location.reload();}});document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{const csrf=(await(await fetch('/bounded/ui/csrf')).json()).csrf_token;const response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito';}});</script>
 </body></html>"""
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
@@ -161,6 +178,66 @@ async def revoke_device(
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     device.revoked_at = datetime.now(UTC)
     await session.commit()
+
+
+@router.patch("/bounded/wear/devices/{device_id}")
+async def update_device_capabilities(
+    device_id: UUID,
+    payload: DeviceCapabilitiesRequest,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    x_ekonex_csrf: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    context.require("use")
+    if x_ekonex_csrf != _ui_csrf(context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    if not payload.capabilities or not payload.capabilities <= CAPABILITIES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_capabilities")
+    device = await session.scalar(select(WearDevice).where(
+        WearDevice.id == device_id,
+        WearDevice.tenant_id == context.tenant_id,
+        WearDevice.user_id == context.user_id,
+        WearDevice.installation_id == context.effective_installation_id,
+        WearDevice.revoked_at.is_(None),
+    ))
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    device.capabilities_json = sorted(payload.capabilities)
+    await session.commit()
+    return {"device_id": str(device.id), "capabilities": device.capabilities_json}
+
+
+@router.post("/bounded/wear/devices/{device_id}/notifications/test")
+async def create_test_notification(
+    device_id: UUID,
+    payload: TestNotificationRequest,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    x_ekonex_csrf: Annotated[str | None, Header()] = None,
+) -> dict[str, int]:
+    context.require("use")
+    if x_ekonex_csrf != _ui_csrf(context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    device = await session.scalar(select(WearDevice).where(
+        WearDevice.id == device_id,
+        WearDevice.tenant_id == context.tenant_id,
+        WearDevice.user_id == context.user_id,
+        WearDevice.installation_id == context.effective_installation_id,
+        WearDevice.revoked_at.is_(None),
+    ))
+    if device is None or "notification.receive" not in device.capabilities_json:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    created = await WearNotificationService(session).enqueue_for_installation(
+        tenant_id=context.tenant_id,
+        installation_id=context.effective_installation_id,
+        event_key=f"wear-test:{device.id}:{datetime.now(UTC).isoformat()}",
+        category="system",
+        severity="info",
+        title=payload.title,
+        body=payload.body,
+    )
+    await session.commit()
+    return {"created": created}
 
 
 @router.post("/api/wear/v1/enrollments/claim", response_model=ClaimResponse)
@@ -203,6 +280,41 @@ async def bootstrap(context=wear_context_dependency) -> dict[str, object]:
         "device_id": str(context.device_id),
         "capabilities": sorted(context.capabilities),
     }
+
+
+@router.get("/api/wear/v1/notifications")
+async def pending_notifications(
+    context=wear_context_dependency,
+    session: Annotated[AsyncSession, session_dependency] = None,
+) -> dict[str, object]:
+    items = await WearNotificationService(session).pending(context)
+    await session.commit()
+    return {"notifications": [
+        {
+            "id": str(item.id),
+            "event_key": item.event_key,
+            "category": item.category,
+            "severity": item.severity,
+            "title": item.title,
+            "body": item.body,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in items
+    ]}
+
+
+@router.post("/api/wear/v1/notifications/{notification_id}/ack", status_code=204)
+async def acknowledge_notification(
+    notification_id: UUID,
+    context=wear_context_dependency,
+    session: Annotated[AsyncSession, session_dependency] = None,
+) -> None:
+    try:
+        await WearNotificationService(session).acknowledge(context, notification_id)
+        await session.commit()
+    except WearDenied as error:
+        await session.rollback()
+        raise HTTPException(status.HTTP_404_NOT_FOUND) from error
 
 
 @router.post("/api/wear/v1/ask")

@@ -372,6 +372,39 @@ class WearDevice(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WearNotification(Base):
+    """Installation-scoped notification delivery for one Wear device."""
+
+    __tablename__ = "wear_notifications"
+    __table_args__ = (
+        UniqueConstraint("device_id", "event_key", name="uq_wear_notification_device_event"),
+        Index("ix_wear_notifications_pending", "device_id", "acknowledged_at", "created_at"),
+        ForeignKeyConstraint(
+            ["installation_id", "tenant_id"],
+            ["installations.id", "installations.tenant_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("wear_devices.id", ondelete="CASCADE")
+    )
+    tenant_id: Mapped[UUID] = mapped_column(Uuid)
+    installation_id: Mapped[UUID] = mapped_column(Uuid)
+    event_key: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Entity(TimestampMixin, Base):
     __tablename__ = "entities"
     __table_args__ = (
