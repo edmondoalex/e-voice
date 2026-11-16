@@ -1,6 +1,7 @@
 """HTTP exchange and dependency for CHANGE028 bounded sessions."""
 
 import csv
+import html
 import io
 import json
 import logging
@@ -135,15 +136,49 @@ async def open_bounded_session(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
     response = HTMLResponse(
         "<!doctype html><html><head><meta charset=utf-8>"
-        '<meta http-equiv="refresh" content="0;url=/bounded/context">'
+        '<meta http-equiv="refresh" content="0;url=/bounded/app">'
         "<title>e-Voice</title></head><body>"
-        '<a href="/bounded/context">Continua in e-Voice</a></body></html>'
+        '<a href="/bounded/app">Continua in e-Voice</a></body></html>'
     )
     response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite="strict",
                         path="/bounded", max_age=900)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Content-Security-Policy"] = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    return response
+
+
+@router.get("/app", response_class=HTMLResponse)
+async def bounded_app(
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> HTMLResponse:
+    resources = BoundedResourceService(session, context)
+    installation = await resources.installation(context.effective_installation_id)
+    entities = await resources.entities()
+    routines = await resources.routines()
+    entity_rows = "".join(
+        f"<li><strong>{html.escape(item.display_name or item.friendly_name or item.voice_name or item.ha_entity_id)}</strong>"
+        f"<small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small></li>"
+        for item in sorted(entities, key=lambda row: (row.display_name or row.friendly_name or row.ha_entity_id).casefold())[:80]
+    ) or "<li><strong>Nessun dispositivo sincronizzato</strong><small>Controlla il connettore Home Assistant.</small></li>"
+    routine_rows = "".join(
+        f"<li><strong>{html.escape(item.name)}</strong><small>{'attiva' if item.enabled else 'disattivata'}</small></li>"
+        for item in sorted(routines, key=lambda row: row.name.casefold())[:40]
+    ) or "<li><strong>Nessuna routine vocale</strong><small>Le routine compariranno dopo la sincronizzazione.</small></li>"
+    capabilities = " · ".join(html.escape(item) for item in sorted(context.capabilities))
+    title = html.escape(installation.name or "Impianto associato")
+    body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>e-Voice · {title}</title>
+<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#111416;color:#f4f7f8}}body{{margin:0}}header{{padding:28px clamp(20px,5vw,72px);background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(1.7rem,4vw,2.7rem)}}.muted,small{{color:#9fb0ba}}main{{padding:24px clamp(20px,5vw,72px);display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:20px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:flex;gap:16px;flex-wrap:wrap}}.metric{{min-width:150px;background:#111619;border-radius:14px;padding:14px}}.metric strong{{display:block;font-size:1.8rem;color:#55d9ff}}ul{{list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}}li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}li small{{text-align:right}}a{{color:#63dcff}}@media(max-width:600px){{li{{display:block}}li small{{display:block;text-align:left;margin-top:4px}}}}</style></head><body>
+<header><div class="brand">EKONEX · e-VOICE</div><h1>{title}</h1><p class="muted">Sessione sicura limitata a questo impianto.</p></header>
+<main><section class="summary"><div class="metric"><strong>{len(entities)}</strong>Dispositivi</div><div class="metric"><strong>{len(routines)}</strong>Routine vocali</div><div class="metric"><strong>Attiva</strong>Connessione</div></section>
+<section><h2>Dispositivi vocali</h2><ul>{entity_rows}</ul></section><section><h2>Routine vocali</h2><ul>{routine_rows}</ul></section>
+<section><h2>Permessi sessione</h2><p class="muted">{capabilities}</p><p><a href="/bounded/context">Diagnostica contesto</a></p></section></main></body></html>"""
+    response = HTMLResponse(body)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
     return response
 
 

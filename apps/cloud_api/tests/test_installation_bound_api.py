@@ -87,12 +87,17 @@ async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domai
     path = launch_url.removeprefix("https://voice.e-control.tech")
     opened = await client.get(path, follow_redirects=False)
     assert opened.status_code == 200
-    assert 'content="0;url=/bounded/context"' in opened.text
+    assert 'content="0;url=/bounded/app"' in opened.text
     assert "location" not in opened.headers
     assert "HttpOnly" in opened.headers["set-cookie"]
     assert "SameSite=strict" in opened.headers["set-cookie"]
     assert opened.headers["cache-control"] == "no-store"
     assert opened.headers["content-security-policy"] == "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    page = await client.get("/bounded/app")
+    assert page.status_code == 200
+    assert "EKONEX · e-VOICE" in page.text
+    assert "Sessione sicura limitata a questo impianto" in page.text
+    assert str(seeded_domain.installation_b_id) not in page.text
     assert (await client.get("/bounded/context")).status_code == 200
     replay = await client.get(path, follow_redirects=False)
     assert replay.status_code == 403
