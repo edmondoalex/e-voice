@@ -246,6 +246,14 @@ async def bounded_app(
         page,
     )
     page = page.replace("fetch('/admin/csrf'", "fetch('/bounded/ui/csrf'")
+    for damaged, corrected in (
+        ("Entit�", "Entità"),
+        ("entit�", "entità"),
+        ("Modalit�", "Modalità"),
+        ("modalit�", "modalità"),
+        ("Umidit�", "Umidità"),
+    ):
+        page = page.replace(damaged, corrected)
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
