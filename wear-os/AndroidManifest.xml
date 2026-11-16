@@ -3,7 +3,8 @@
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="Ekonex Wear" android:allowBackup="false"
+    <application android:label="Ekonex Wear" android:icon="@drawable/ekonex_wear"
+        android:roundIcon="@drawable/ekonex_wear" android:allowBackup="false"
         android:fullBackupContent="false" android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
