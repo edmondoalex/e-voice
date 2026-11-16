@@ -7,6 +7,7 @@ import html
 import io
 import json
 import logging
+import re
 from urllib.parse import parse_qs, urlencode
 from typing import Annotated, Any
 from uuid import UUID
@@ -29,6 +30,16 @@ from .domain.models import AuditEvent
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bounded", tags=["econtrol-installation-bound"])
+
+
+def _frame_policy() -> tuple[str, str]:
+    raw = get_settings().econtrol_bounded_frame_ancestors
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    if not origins:
+        return "'none'", "strict"
+    if any(not re.fullmatch(r"https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", item) for item in origins):
+        return "'none'", "strict"
+    return " ".join(origins), "none"
 BOUND_COOKIE = "ekonex_installation_bound"
 
 
@@ -173,11 +184,12 @@ async def open_bounded_session(
         "<title>e-Voice</title></head><body>"
         '<a href="/bounded/app">Continua in e-Voice</a></body></html>'
     )
-    response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite="strict",
+    frame_ancestors, same_site = _frame_policy()
+    response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite=same_site,
                         path="/bounded", max_age=900)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; base-uri 'none'; frame-ancestors {frame_ancestors}"
     return response
 
 
@@ -192,9 +204,9 @@ async def bounded_app(
     entities = await resources.entities()
     routines = await resources.routines()
     entity_rows = "".join(
-        f"<li><strong>{html.escape(item.display_name or item.friendly_name or item.voice_name or item.ha_entity_id)}</strong>"
-        f"<span><small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small>"
-        f"{_entity_controls(item, context)}</span></li>"
+        f"<li class=\"device-row\"><span class=\"device-copy\"><strong>{html.escape(item.display_name or item.friendly_name or item.voice_name or item.ha_entity_id)}</strong>"
+        f"<small>{html.escape(item.ha_domain)} · {'disponibile' if item.available else 'non disponibile'}</small></span>"
+        f"{_entity_controls(item, context)}</li>"
         for item in sorted(entities, key=lambda row: (row.display_name or row.friendly_name or row.ha_entity_id).casefold())[:80]
     ) or "<li><strong>Nessun dispositivo sincronizzato</strong><small>Controlla il connettore Home Assistant.</small></li>"
     routine_rows = "".join(
@@ -209,15 +221,16 @@ async def bounded_app(
     }.get(result or "", "")
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>e-Voice · {title}</title>
-<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#111416;color:#f4f7f8}}body{{margin:0}}header{{padding:28px clamp(20px,5vw,72px);background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(1.7rem,4vw,2.7rem)}}.muted,small{{color:#9fb0ba}}main{{padding:24px clamp(20px,5vw,72px);display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:20px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:flex;gap:16px;flex-wrap:wrap}}.metric{{min-width:150px;background:#111619;border-radius:14px;padding:14px}}.metric strong{{display:block;font-size:1.8rem;color:#55d9ff}}.feedback{{grid-column:1/-1;margin:0;padding:13px 16px;border-radius:12px}}.ok{{background:#123d30;color:#9ff2cf}}.error{{background:#54252a;color:#ffd0d3}}ul{{list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}}li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}li>span{{text-align:right}}form{{display:flex;justify-content:flex-end;gap:6px;margin-top:7px;flex-wrap:wrap}}button{{border:1px solid #45d6ff;background:#10242c;color:#e9fbff;border-radius:8px;padding:7px 10px;font-weight:700;cursor:pointer}}button:hover,button:focus{{background:#174353}}a{{color:#63dcff}}@media(max-width:600px){{li{{display:block}}li>span{{display:block;text-align:left;margin-top:4px}}form{{justify-content:flex-start}}}}</style></head><body>
+<style>:root{{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0e1215;color:#f4f7f8}}*{{box-sizing:border-box}}body{{margin:0}}header{{padding:32px max(24px,calc((100vw - 1400px)/2));background:#171c20;border-bottom:1px solid #30383e}}.brand{{color:#45d6ff;font-weight:800;letter-spacing:.08em}}h1{{margin:.35rem 0 .2rem;font-size:clamp(2rem,4vw,3rem)}}h2{{margin:0 0 18px;font-size:1.35rem}}.muted,small{{color:#9fb0ba}}main{{width:min(1400px,calc(100% - 40px));margin:0 auto;padding:28px 0 48px;display:grid;gap:22px;grid-template-columns:minmax(0,2fr) minmax(310px,1fr);align-items:start}}section{{background:#1a2024;border:1px solid #30383e;border-radius:18px;padding:24px;box-shadow:0 16px 40px #0004}}.summary{{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(160px,230px));gap:16px}}.metric{{background:#111619;border-radius:14px;padding:16px 18px}}.metric strong{{display:block;font-size:2rem;color:#55d9ff}}.devices{{grid-row:span 2}}.feedback{{grid-column:1/-1;margin:0;padding:13px 16px;border-radius:12px}}.ok{{background:#123d30;color:#9ff2cf}}.error{{background:#54252a;color:#ffd0d3}}ul{{list-style:none;margin:0;padding:0}}.device-list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-height:68vh;overflow:auto;padding-right:8px}}.device-row{{min-height:92px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid #2b343a;border-radius:12px;background:#141a1e}}.device-copy{{min-width:0;display:block;text-align:left}}.device-copy strong{{display:block;line-height:1.25}}.device-copy small{{display:block;margin-top:6px}}.simple-list li{{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #2b343a}}form{{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;flex:0 0 auto}}button{{border:1px solid #45d6ff;background:#10242c;color:#e9fbff;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}}button:hover,button:focus{{background:#174353}}a{{color:#63dcff}}@media(max-width:1100px){{main{{grid-template-columns:1fr}}.devices{{grid-row:auto}}.device-list{{grid-template-columns:1fr}}}}@media(max-width:640px){{header{{padding:24px 20px}}main{{width:min(100% - 24px,1400px);padding-top:16px}}section{{padding:18px}}.summary{{grid-template-columns:1fr}}.device-row{{display:block}}form{{justify-content:flex-start;margin-top:12px}}}}</style></head><body>
 <header><div class="brand">EKONEX · e-VOICE</div><h1>{title}</h1><p class="muted">Sessione sicura limitata a questo impianto.</p></header>
 <main><section class="summary"><div class="metric"><strong>{len(entities)}</strong>Dispositivi</div><div class="metric"><strong>{len(routines)}</strong>Routine vocali</div><div class="metric"><strong>Attiva</strong>Connessione</div></section>{feedback}
-<section><h2>Dispositivi vocali</h2><ul>{entity_rows}</ul></section><section><h2>Routine vocali</h2><ul>{routine_rows}</ul></section>
-<section><h2>Permessi sessione</h2><p class="muted">{capabilities}</p><p><a href="/bounded/context">Diagnostica contesto</a></p></section></main></body></html>"""
+<section class="devices"><h2>Dispositivi vocali</h2><ul class="device-list">{entity_rows}</ul></section><section><h2>Routine vocali</h2><ul class="simple-list">{routine_rows}</ul></section>
+<section><h2>Sessione e permessi</h2><p class="muted">{capabilities}</p><p class="session-ok">● Sessione protetta attiva</p><small>Se la sessione scade, chiudi questa scheda e riapri e‑Voice da e‑Control.</small></section></main></body></html>"""
     response = HTMLResponse(body)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+    frame_ancestors, _same_site = _frame_policy()
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors {frame_ancestors}"
     return response
 
 

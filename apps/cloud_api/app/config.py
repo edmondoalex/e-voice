@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     econtrol_launch_audience: str = "evoice-installation-bound"
     econtrol_launch_secret: str = "development-only-econtrol-launch-secret-change-me"
     econtrol_bounded_public_url: str = "https://voice.e-control.tech"
+    econtrol_bounded_frame_ancestors: str = ""
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 import re
+from types import SimpleNamespace
 
 import httpx
 from unittest.mock import AsyncMock
@@ -126,6 +127,10 @@ async def test_bounded_app_renders_safe_controls_and_dispatches_with_csrf(
     page = await client.get("/bounded/app")
     assert page.status_code == 200
     assert "Accendi" in page.text and "Spegni" in page.text
+    assert 'class="devices"' in page.text
+    assert 'class="device-list"' in page.text
+    assert "Sessione protetta attiva" in page.text
+    assert 'href="/bounded/context"' not in page.text
     csrf = re.search(r'name="csrf" value="([0-9a-f]{64})"', page.text)
     assert csrf is not None
     denied = await client.post("/bounded/ui/commands", data={
@@ -146,6 +151,22 @@ async def test_bounded_app_renders_safe_controls_and_dispatches_with_csrf(
     assert "Comando eseguito" in feedback.text
     await client.aclose()
     app.dependency_overrides.clear()
+
+
+def test_frame_policy_allows_only_explicit_http_origins(monkeypatch):
+    from apps.cloud_api.app import installation_bound_api
+
+    monkeypatch.setattr(
+        installation_bound_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            econtrol_bounded_frame_ancestors=
+            "http://192.168.3.24:8125,http://192.168.3.24:8123"
+        ),
+    )
+    ancestors, same_site = installation_bound_api._frame_policy()
+    assert ancestors == "http://192.168.3.24:8125 http://192.168.3.24:8123"
+    assert same_site == "none"
 
 async def test_export_stream_and_foreign_command_are_bounded(session, seeded_domain):
     launch = await _setup(session, seeded_domain)
