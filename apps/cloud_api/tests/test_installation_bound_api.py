@@ -75,6 +75,27 @@ async def test_exchange_cookie_is_path_restricted_and_global_cookie_cannot_ampli
     await client.aclose()
     app.dependency_overrides.clear()
 
+
+async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domain):
+    launch = await _setup(session, seeded_domain)
+    client = await _client(session)
+    prepared = await client.post("/bounded/prepare", json={"launch": launch})
+    assert prepared.status_code == 200
+    launch_url = prepared.json()["launch_url"]
+    assert launch not in launch_url
+    assert "code=" in launch_url
+    path = launch_url.removeprefix("https://voice.e-control.tech")
+    opened = await client.get(path, follow_redirects=False)
+    assert opened.status_code == 303
+    assert opened.headers["location"] == "/bounded/context"
+    assert "HttpOnly" in opened.headers["set-cookie"]
+    assert opened.headers["cache-control"] == "no-store"
+    assert (await client.get("/bounded/context")).status_code == 200
+    replay = await client.get(path, follow_redirects=False)
+    assert replay.status_code == 403
+    await client.aclose()
+    app.dependency_overrides.clear()
+
 async def test_export_stream_and_foreign_command_are_bounded(session, seeded_domain):
     launch = await _setup(session, seeded_domain)
     client = await _client(session)

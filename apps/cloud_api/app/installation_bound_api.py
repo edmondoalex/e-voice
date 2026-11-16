@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,10 @@ class BoundContextResponse(BaseModel):
     effective_installation_id: str
     capabilities: list[str]
     correlation_id: str
+
+
+class PreparedLaunchResponse(BaseModel):
+    launch_url: str
 
 
 class BoundCommandRequest(BaseModel):
@@ -98,6 +102,43 @@ async def exchange(
         capabilities=sorted(context.capabilities),
         correlation_id=context.correlation_id,
     )
+
+
+@router.post("/prepare", response_model=PreparedLaunchResponse)
+async def prepare_launch(
+    payload: LaunchExchangeRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> PreparedLaunchResponse:
+    try:
+        code = await _service(session).prepare(payload.launch)
+        await session.commit()
+    except BoundLaunchDenied as error:
+        await session.rollback()
+        logger.warning("bounded launch denied")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
+    base = get_settings().econtrol_bounded_public_url.rstrip("/")
+    if not base.startswith("https://"):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bounded_origin_invalid")
+    return PreparedLaunchResponse(launch_url=f"{base}/bounded/open?code={code}")
+
+
+@router.get("/open", name="open_bounded_session")
+async def open_bounded_session(
+    code: str,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> RedirectResponse:
+    try:
+        raw = await _service(session).open_prepared(code)
+        await session.commit()
+    except BoundLaunchDenied as error:
+        await session.rollback()
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
+    response = RedirectResponse("/bounded/context", status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(BOUND_COOKIE, raw, secure=True, httponly=True, samesite="strict",
+                        path="/bounded", max_age=900)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.get("/context", response_model=BoundContextResponse)

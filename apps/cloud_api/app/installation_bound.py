@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import AccessDeniedError, AuthenticationService
@@ -172,6 +172,39 @@ class InstallationBoundService:
             result="success",
         ))
         return raw_session, BoundContext(row.id, user_id, tenant_id, binding.installation_id, effective, row.correlation_id)
+
+    async def prepare(self, token: str, *, now: datetime | None = None) -> str:
+        """Validate the signed launch and replace it with an opaque URL code."""
+        now = now or datetime.now(UTC)
+        _raw, context = await self.exchange(token, now=now)
+        code = secrets.token_urlsafe(32)
+        row = await self._session.get(InstallationBoundSession, context.session_id)
+        if row is None:
+            raise BoundLaunchDenied
+        row.token_hash = hashlib.sha256(code.encode()).hexdigest()
+        await self._session.flush()
+        return code
+
+    async def open_prepared(self, code: str, *, now: datetime | None = None) -> str:
+        """Consume a prepared code once and rotate it to a browser session token."""
+        now = now or datetime.now(UTC)
+        if not isinstance(code, str) or len(code) < 32 or len(code) > 128:
+            raise BoundLaunchDenied
+        raw_session = secrets.token_urlsafe(32)
+        result = await self._session.execute(
+            update(InstallationBoundSession)
+            .where(
+                InstallationBoundSession.token_hash == hashlib.sha256(code.encode()).hexdigest(),
+                InstallationBoundSession.revoked_at.is_(None),
+                InstallationBoundSession.expires_at > now,
+            )
+            .values(token_hash=hashlib.sha256(raw_session.encode()).hexdigest())
+            .returning(InstallationBoundSession.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise BoundLaunchDenied
+        await self._session.flush()
+        return raw_session
 
     async def context(self, raw_session: str, *, now: datetime | None = None) -> BoundContext:
         now = now or datetime.now(UTC)
