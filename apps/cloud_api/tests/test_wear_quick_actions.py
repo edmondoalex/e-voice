@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from apps.cloud_api.app.wear_api import (
+    QUICK_ACTION_COLOR_LABELS,
+    QUICK_ACTION_STANDARD_ICONS,
     QuickActionsRequest,
     _is_activating,
     _resolve_toggle,
@@ -108,6 +110,21 @@ def test_quick_actions_accept_persistent_custom_mdi_and_extended_slot():
     assert payload.actions[0].icon == "mdi:gate"
 
 
+def test_standard_icon_catalog_includes_scenes_lights_and_alarm():
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:sofa"] == "Relax"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:weather-sunset"] == "Atmosfera serale"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:home-export-outline"] == "Vado via"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:home-import-outline"] == "Arrivo"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:star-four-points"] == "Scenario · Stellina"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:toggle-switch"] == "Scenario ON"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:toggle-switch-off"] == "Scenario OFF"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:lightbulb-group"] == "Luci · Gruppo lampadine"
+    assert QUICK_ACTION_STANDARD_ICONS["mdi:alarm-light"] == "Allarme"
+    assert QUICK_ACTION_COLOR_LABELS["yellow"] == "Giallo"
+    assert QUICK_ACTION_COLOR_LABELS["pink"] == "Rosa"
+    assert QUICK_ACTION_COLOR_LABELS["teal"] == "Turchese"
+
+
 def test_toggle_is_official_for_stateful_entities():
     assert ("toggle", "Inverti stato") in _wear_operations("light")
     assert ("toggle", "Inverti stato") in _wear_operations("switch")
@@ -188,7 +205,7 @@ def test_quick_actions_reject_incomplete_or_unknown_direct_targets(action):
     "actions",
     [
         [{"slot": 1, "label": "A", "utterance": "Accendi A", "icon": "raw", "color": "red"}],
-        [{"slot": 1, "label": "A", "utterance": "Accendi A", "icon": "light", "color": "pink"}],
+        [{"slot": 1, "label": "A", "utterance": "Accendi A", "icon": "light", "color": "brown"}],
         [
             {"slot": 1, "label": "A", "utterance": "Accendi A"},
             {"slot": 1, "label": "B", "utterance": "Accendi B"},

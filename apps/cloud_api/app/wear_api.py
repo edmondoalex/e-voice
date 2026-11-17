@@ -153,6 +153,45 @@ class NotificationPreferencesRequest(BaseModel):
     timezone: str = Field(default="Europe/Rome", pattern=r"^[A-Za-z_]+(?:/[A-Za-z_+-]+)+$")
 
 
+QUICK_ACTION_STANDARD_ICONS = {
+    "light": "Luce",
+    "power": "Accensione",
+    "climate": "Clima",
+    "blind": "Tapparella",
+    "lock": "Sicurezza",
+    "scene": "Scenario",
+    "music": "Musica",
+    "mdi:lock": "Serratura",
+    "mdi:garage": "Portone",
+    "mdi:gate": "Cancello",
+    "mdi:sofa": "Relax",
+    "mdi:weather-sunset": "Atmosfera serale",
+    "mdi:home-export-outline": "Vado via",
+    "mdi:home-import-outline": "Arrivo",
+    "mdi:star-four-points": "Scenario · Stellina",
+    "mdi:toggle-switch": "Scenario ON",
+    "mdi:toggle-switch-off": "Scenario OFF",
+    "mdi:lightbulb-group": "Luci · Gruppo lampadine",
+    "mdi:alarm-light": "Allarme",
+    "mdi:shield-alert": "Sicurezza · Allarme",
+    "mdi:party-popper": "Festa",
+    "mdi:movie-open": "Cinema",
+    "mdi:silverware-fork-knife": "Cena",
+    "mdi:sleep": "Notte",
+    "mdi:sprout": "Giardino",
+    "mdi:door": "Porta",
+    "mdi:television": "Televisione",
+    "mdi:thermostat": "Riscaldamento",
+    "mdi:water": "Acqua",
+    "mdi:robot-vacuum": "Aspirapolvere",
+    "mdi:pool": "Piscina",
+    "mdi:cctv": "Telecamera",
+    "mdi:power-plug": "Presa",
+    "mdi:bed": "Camera",
+    "mdi:run": "Movimento",
+}
+
+
 QUICK_ACTION_ICONS = {
     "light",
     "power",
@@ -179,8 +218,23 @@ QUICK_ACTION_ICONS = {
     "mdi:door",
     "mdi:run",
     "mdi:gate",
+} | set(QUICK_ACTION_STANDARD_ICONS)
+QUICK_ACTION_COLOR_LABELS = {
+    "red": "Rosso",
+    "blue": "Blu",
+    "green": "Verde",
+    "orange": "Arancio",
+    "purple": "Viola",
+    "cyan": "Ciano",
+    "yellow": "Giallo",
+    "pink": "Rosa",
+    "white": "Bianco",
+    "gray": "Grigio",
+    "teal": "Turchese",
+    "lime": "Lime",
+    "amber": "Ambra",
 }
-QUICK_ACTION_COLORS = {"red", "blue", "green", "orange", "purple", "cyan"}
+QUICK_ACTION_COLORS = set(QUICK_ACTION_COLOR_LABELS)
 WEAR_TOGGLE_DOMAINS = {"light", "switch", "cover", "lock"}
 WEAR_EXTRA_OPERATIONS = {"lock": (("lock", "Blocca"), ("unlock", "Sblocca"))}
 
@@ -496,18 +550,7 @@ async def wear_management(
         saved_actions = {
             int(action["slot"]): action for action in preferences.get("quick_actions", [])
         }
-        icon_labels = {
-            "light": "Luce",
-            "power": "Accensione",
-            "climate": "Clima",
-            "blind": "Tapparella",
-            "lock": "Sicurezza",
-            "scene": "Scenario",
-            "music": "Musica",
-            "mdi:lock": "Serratura",
-            "mdi:garage": "Portone",
-            "mdi:gate": "Cancello",
-        }
+        icon_labels = QUICK_ACTION_STANDARD_ICONS
         action_rows = []
         visible_slots = max(8, max(saved_actions, default=0))
         for slot in range(1, visible_slots + 1):
@@ -522,14 +565,7 @@ async def wear_management(
             color = str(action.get("color") or "blue")
             color_options = "".join(
                 f'<option value="{value}" {"selected" if value == color else ""}>{label}</option>'
-                for value, label in (
-                    ("red", "Rosso"),
-                    ("blue", "Blu"),
-                    ("green", "Verde"),
-                    ("orange", "Arancio"),
-                    ("purple", "Viola"),
-                    ("cyan", "Ciano"),
-                )
+                for value, label in QUICK_ACTION_COLOR_LABELS.items()
             )
             selected_target = (
                 f"{action.get('entity_id')}|{action.get('operation')}"
