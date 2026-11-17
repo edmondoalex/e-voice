@@ -120,7 +120,7 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
     )
     await session.commit()
     if outcome.status != "success":
-        return "Il comando non Ã¨ riuscito."
+        return "Il comando non è riuscito."
     action = "acceso" if operation == "power_on" else "spento"
     return f"Ho {action} {entity.voice_name or entity.display_name or entity.friendly_name}."
 
@@ -527,12 +527,12 @@ async def wear_management(
                         f'<option value="{target}" data-label="{html.escape(operation_label + " " + name, quote=True)}" '
                         f'data-icon="{domain_icons[entity.ha_domain]}" data-utterance="{html.escape(utterance, quote=True)}" '
                         f"{'selected' if target == selected_target else ''}>"
-                        f"{html.escape(domain_labels[entity.ha_domain])} â€” {html.escape(name)} â€” {html.escape(operation_label)}</option>"
+                        f"{html.escape(domain_labels[entity.ha_domain])} — {html.escape(name)} — {html.escape(operation_label)}</option>"
                     )
             legacy_utterance = str(action.get("utterance") or "")
             if legacy_utterance and not selected_target:
                 command_options.append(
-                    f'<option value="" selected>Comando precedente â€” {html.escape(legacy_utterance)}</option>'
+                    f'<option value="" selected>Comando precedente — {html.escape(legacy_utterance)}</option>'
                 )
             action_rows.append(
                 f'<div class=quick-row data-quick-slot="{slot}"><input data-quick-position type=number min=1 max=32 value="{slot}" aria-label="Posizione Wear">'
@@ -552,7 +552,7 @@ async def wear_management(
 <details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>I primi otto tasti sono sempre disponibili. Usa + per aggiungerne altri; dal nono in poi compaiono nell area launcher inferiore. Scegli un'icona standard oppure Custom MDI e inserisci, per esempio, mdi:gate.</p><div data-quick-rows>{quick_actions}</div><button type=button data-add-quick>+ Aggiungi tasto</button> <button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
 <label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
 <fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
-<label>PrioritÃ  minima <select data-severity>{options}</select></label>
+<label>Priorità minima <select data-severity>{options}</select></label>
 <label class=switch><input type=checkbox data-vibration {"checked" if preferences.get("vibration", True) else ""}> Vibrazione</label>
 <div class=quiet><label>Silenzioso dalle <input type=time data-quiet-start value="{html.escape(str(preferences.get("quiet_start") or ""))}"></label><label> alle <input type=time data-quiet-end value="{html.escape(str(preferences.get("quiet_end") or ""))}"></label></div>
 <div class=actions><button data-save="{item.id}">Salva preferenze</button><button data-test="{item.id}">Invia prova</button><button class=danger data-device="{item.id}">Revoca</button></div></article>'''
@@ -1040,7 +1040,7 @@ async def execute_quick_action(
         )
         await session.commit()
         if outcome.status != "success":
-            return {"status": "failed", "speech": "Il comando non Ã¨ riuscito."}
+            return {"status": "failed", "speech": "Il comando non è riuscito."}
         name = entity.voice_name or entity.display_name or entity.friendly_name or "dispositivo"
         spoken = {
             "power_on": "Ho acceso",

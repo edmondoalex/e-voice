@@ -350,6 +350,9 @@ async def test_wear_page_documents_private_installer_flow(session, seeded_domain
     assert "In attesa dell'associazione dall'orologio" in response.text
     assert "Orologio associato correttamente" in response.text
     assert "/bounded/wear/enrollments/" in response.text
+    assert "Priorità minima" in response.text
+    assert "Ã" not in response.text
+    assert "â€”" not in response.text
     assert 'data-quick-search type=search placeholder="Cerca dispositivo o azione"' in response.text
     assert "toLocaleLowerCase('it').includes(query)" in response.text
     await client.aclose()
