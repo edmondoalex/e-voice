@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import re
@@ -1017,6 +1018,34 @@ async def pending_notifications(
             for item in items
         ]
     }
+
+
+@router.get("/api/wear/v1/notifications/wait")
+async def wait_for_notifications(
+    context=wear_context_dependency,
+    session: Annotated[AsyncSession, session_dependency] = None,
+) -> dict[str, object]:
+    """Hold one efficient request until a notification is ready or the proxy-safe timeout expires."""
+    deadline = datetime.now(UTC) + timedelta(seconds=45)
+    while True:
+        items = await WearNotificationService(session).pending(context)
+        if items or datetime.now(UTC) >= deadline:
+            await session.commit()
+            return {
+                "notifications": [
+                    {
+                        "id": str(item.id),
+                        "event_key": item.event_key,
+                        "category": item.category,
+                        "severity": item.severity,
+                        "title": item.title,
+                        "body": item.body,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in items
+                ]
+            }
+        await asyncio.sleep(3)
 
 
 @router.post(

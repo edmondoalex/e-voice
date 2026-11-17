@@ -67,7 +67,7 @@ public final class MainActivity extends Activity {
     private SpeechRecognizer speechRecognizer; private String partialUtterance="";
     private Typeface mdiTypeface; private final Properties mdiCodepoints=new Properties();
     private final Handler stateHandler=new Handler(Looper.getMainLooper());
-    private final Runnable stateRefresh=new Runnable(){public void run(){if(!loadCredential().isEmpty())new Thread(()->{loadBootstrap();runOnUiThread(()->stateHandler.postDelayed(this,5000));}).start();}};
+    private final Runnable stateRefresh=new Runnable(){public void run(){if(!loadCredential().isEmpty())new Thread(()->{loadBootstrap();runOnUiThread(()->stateHandler.postDelayed(this,15000));}).start();}};
 
     @Override protected void onCreate(Bundle state){super.onCreate(state); getWindow().getDecorView().setBackgroundColor(Color.BLACK); loadMdiCatalog();
         LinearLayout content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(24,24,24,24);
@@ -117,7 +117,7 @@ public final class MainActivity extends Activity {
     private void show(String message){runOnUiThread(()->result.setText(message));}
     private void showAndSpeak(String message){runOnUiThread(()->{result.setText(message);speak(message);});}
     private void speak(String message){if(textToSpeech==null||!speechReady){pendingSpeech=message;return;}textToSpeech.speak(message,TextToSpeech.QUEUE_FLUSH,null,"ekonex_voice_reply");}
-    @Override protected void onResume(){super.onResume();stateHandler.removeCallbacks(stateRefresh);stateHandler.postDelayed(stateRefresh,5000);}
+    @Override protected void onResume(){super.onResume();stateHandler.removeCallbacks(stateRefresh);stateHandler.postDelayed(stateRefresh,15000);}
     @Override protected void onPause(){stateHandler.removeCallbacks(stateRefresh);super.onPause();}
     @Override protected void onDestroy(){stateHandler.removeCallbacks(stateRefresh);if(speechRecognizer!=null)speechRecognizer.destroy();if(textToSpeech!=null){textToSpeech.stop();textToSpeech.shutdown();}super.onDestroy();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acknowledgeNotification(intent);}
