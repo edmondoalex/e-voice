@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
@@ -7,6 +9,8 @@ from apps.cloud_api.app.wear_api import (
     _resolve_toggle,
     _state_visual,
     _wear_operations,
+    _wear_operations_for_entity,
+    _wear_success_speech,
 )
 
 
@@ -109,6 +113,18 @@ def test_toggle_is_official_for_stateful_entities():
     assert ("toggle", "Inverti stato") in _wear_operations("switch")
     assert ("toggle", "Inverti stato") in _wear_operations("cover")
     assert ("toggle", "Inverti stato") in _wear_operations("lock")
+
+
+def test_switch_backed_gate_uses_open_close_labels_but_power_operations():
+    entity = SimpleNamespace(ha_domain="switch", alexa_device_type="gate")
+
+    assert _wear_operations_for_entity(entity) == (
+        ("power_on", "Apri"),
+        ("power_off", "Chiudi"),
+        ("toggle", "Inverti stato"),
+    )
+    assert _wear_success_speech(entity, "power_on") == "Ho aperto"
+    assert _wear_success_speech(entity, "power_off") == "Ho chiuso"
 
 
 @pytest.mark.parametrize(

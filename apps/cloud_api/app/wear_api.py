@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .alexa_device_types import is_gate_override
 from .command_dispatch import (
     ActivateCommand,
     CommandDispatchService,
@@ -189,6 +190,29 @@ def _wear_operations(domain: str) -> tuple[tuple[str, str], ...]:
     if domain in WEAR_TOGGLE_DOMAINS:
         return (*operations, ("toggle", "Inverti stato"))
     return operations
+
+
+def _wear_operations_for_entity(entity: Entity) -> tuple[tuple[str, str], ...]:
+    if is_gate_override(entity):
+        return (
+            ("power_on", "Apri"),
+            ("power_off", "Chiudi"),
+            ("toggle", "Inverti stato"),
+        )
+    return _wear_operations(entity.ha_domain)
+
+
+def _wear_success_speech(entity: Entity, operation: str) -> str:
+    if is_gate_override(entity):
+        return "Ho aperto" if operation == "power_on" else "Ho chiuso"
+    return {
+        "power_on": "Ho acceso",
+        "power_off": "Ho spento",
+        "open": "Ho aperto",
+        "stop": "Ho fermato",
+        "close": "Ho chiuso",
+        "activate": "Ho attivato",
+    }[operation]
 
 
 def _resolve_toggle(domain: str, state_value: str | None) -> str:
@@ -520,7 +544,7 @@ async def wear_management(
                     or entity.friendly_name
                     or entity.ha_entity_id
                 )
-                for operation, operation_label in _wear_operations(entity.ha_domain):
+                for operation, operation_label in _wear_operations_for_entity(entity):
                     target = f"{entity.id}|{operation}"
                     utterance = f"{spoken_operations[operation]} {name}"
                     command_options.append(
@@ -1015,7 +1039,7 @@ async def execute_quick_action(
         if (
             entity is None
             or not entity.ha_registry_id
-            or operation not in {item[0] for item in _wear_operations(entity.ha_domain)}
+            or operation not in {item[0] for item in _wear_operations_for_entity(entity)}
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_unavailable")
         if operation == "toggle":
@@ -1042,14 +1066,7 @@ async def execute_quick_action(
         if outcome.status != "success":
             return {"status": "failed", "speech": "Il comando non è riuscito."}
         name = entity.voice_name or entity.display_name or entity.friendly_name or "dispositivo"
-        spoken = {
-            "power_on": "Ho acceso",
-            "power_off": "Ho spento",
-            "open": "Ho aperto",
-            "stop": "Ho fermato",
-            "close": "Ho chiuso",
-            "activate": "Ho attivato",
-        }[operation]
+        spoken = _wear_success_speech(entity, operation)
         return {"status": "answered", "speech": f"{spoken} {name}."}
     utterance = str(action.get("utterance") or "").strip()
     if not utterance:
