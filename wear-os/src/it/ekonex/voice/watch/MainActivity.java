@@ -6,10 +6,12 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.speech.RecognizerIntent;
@@ -18,11 +20,17 @@ import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.TypefaceSpan;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -32,6 +40,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -40,6 +49,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Properties;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -52,16 +62,19 @@ public final class MainActivity extends Activity {
     private static final String API="__EKONEX_WEAR_API_BASE__";
     private static final String PREFS="ekonex_wear";
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
-    private EditText code; private TextView result; private Button associate; private Button microphone; private GridLayout quickActions;
+    private EditText code; private TextView result; private Button associate; private Button microphone; private FrameLayout quickActions; private GridLayout extraActions;
     private TextToSpeech textToSpeech; private boolean speechReady; private String pendingSpeech;
     private SpeechRecognizer speechRecognizer; private String partialUtterance="";
+    private Typeface mdiTypeface; private final Properties mdiCodepoints=new Properties();
+    private final Handler stateHandler=new Handler(Looper.getMainLooper());
+    private final Runnable stateRefresh=new Runnable(){public void run(){if(!loadCredential().isEmpty())new Thread(()->{loadBootstrap();runOnUiThread(()->stateHandler.postDelayed(this,5000));}).start();}};
 
-    @Override protected void onCreate(Bundle state){super.onCreate(state); getWindow().getDecorView().setBackgroundColor(Color.BLACK);
+    @Override protected void onCreate(Bundle state){super.onCreate(state); getWindow().getDecorView().setBackgroundColor(Color.BLACK); loadMdiCatalog();
         LinearLayout content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(24,24,24,24);
         code=new EditText(this); code.setHint("Codice a 6 cifre"); code.setSingleLine(true); code.setInputType(InputType.TYPE_CLASS_NUMBER); code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)}); code.setTextColor(Color.WHITE); code.setHintTextColor(Color.GRAY); content.addView(code,new LinearLayout.LayoutParams(-1,-2));
         associate=new Button(this); associate.setText("Associa"); associate.setOnClickListener(v->claim()); content.addView(associate,new LinearLayout.LayoutParams(-1,-2));
-        microphone=new Button(this); microphone.setAllCaps(false); microphone.setText("Ekonex\ne-Voice"); microphone.setTextSize(11); microphone.setTextColor(Color.WHITE); microphone.setCompoundDrawablesWithIntrinsicBounds(0,getResources().getIdentifier("microphone","drawable",getPackageName()),0,0); microphone.setOnClickListener(v->listen());
-        quickActions=new GridLayout(this);quickActions.setColumnCount(3);quickActions.setRowCount(3);quickActions.setAlignmentMode(GridLayout.ALIGN_BOUNDS);content.addView(quickActions,new LinearLayout.LayoutParams(-1,dp(245)));
+        microphone=new Button(this); microphone.setAllCaps(false); microphone.setText("Ekonex"); microphone.setTextSize(9); microphone.setGravity(Gravity.CENTER); microphone.setPadding(dp(4),dp(5),dp(4),dp(4)); microphone.setCompoundDrawablePadding(dp(1)); microphone.setTextColor(Color.WHITE); microphone.setCompoundDrawablesWithIntrinsicBounds(0,getResources().getIdentifier("microphone","drawable",getPackageName()),0,0); microphone.setOnClickListener(v->listen());
+        quickActions=new FrameLayout(this);quickActions.setClipChildren(false);quickActions.setClipToPadding(false);content.addView(quickActions,new LinearLayout.LayoutParams(-1,dp(206))); extraActions=new GridLayout(this);extraActions.setColumnCount(4);extraActions.setAlignmentMode(GridLayout.ALIGN_BOUNDS);content.addView(extraActions,new LinearLayout.LayoutParams(-1,-2));
         result=text("Associa l'orologio da e-Control.",13); content.addView(result);
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true); scroll.addView(content); setContentView(scroll); refresh();
         if(SpeechRecognizer.isRecognitionAvailable(this)){speechRecognizer=SpeechRecognizer.createSpeechRecognizer(this);speechRecognizer.setRecognitionListener(new RecognitionListener(){
@@ -80,13 +93,17 @@ public final class MainActivity extends Activity {
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private TextView text(String value,float size){TextView view=new TextView(this); view.setText(value); view.setTextColor(Color.WHITE); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setPadding(0,6,0,6); return view;}
-    private GridLayout.LayoutParams cell(int row,int column){GridLayout.LayoutParams params=new GridLayout.LayoutParams(GridLayout.spec(row,1,1f),GridLayout.spec(column,1,1f));params.width=0;params.height=0;params.setGravity(Gravity.FILL);params.setMargins(dp(3),dp(3),dp(3),dp(3));return params;}
-    private void resetActionGrid(){quickActions.removeAllViews();GradientDrawable center=new GradientDrawable();center.setShape(GradientDrawable.OVAL);center.setColor(Color.rgb(20,25,29));center.setStroke(dp(2),Color.rgb(229,0,30));microphone.setBackground(center);microphone.setEnabled(!loadCredential().isEmpty());quickActions.addView(microphone,cell(1,1));}
+    private FrameLayout.LayoutParams radialCell(int size,int angle,int radius){FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(dp(size),dp(size),Gravity.CENTER);double radians=Math.toRadians(angle);params.leftMargin=(int)Math.round(Math.cos(radians)*dp(radius));params.topMargin=(int)Math.round(Math.sin(radians)*dp(radius));return params;}
+    private void resetActionGrid(){quickActions.removeAllViews();GradientDrawable center=new GradientDrawable();center.setShape(GradientDrawable.OVAL);center.setColor(Color.rgb(20,25,29));center.setStroke(dp(2),Color.rgb(229,0,30));microphone.setBackground(center);microphone.setEnabled(!loadCredential().isEmpty());quickActions.addView(microphone,radialCell(66,0,0));}
     private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE);resetActionGrid(); if(paired){result.setText("Carico i comandi rapidi...");enableNotifications();new Thread(this::loadBootstrap).start();}}
     private void loadBootstrap(){try{JSONObject bootstrap=get(API+"/bootstrap",loadCredential());JSONArray actions=bootstrap.optJSONArray("quick_actions");runOnUiThread(()->renderQuickActions(actions));}catch(Exception error){show("Orologio associato. Comandi rapidi non disponibili; il microfono resta attivo.");}}
-    private void renderQuickActions(JSONArray actions){resetActionGrid();if(actions==null||actions.length()==0){result.setText("Configura i comandi rapidi in e-Control.");return;}int[][] positions={{0,0},{0,2},{1,2},{2,2},{2,0},{1,0}};int rendered=0;for(int i=0;i<actions.length()&&rendered<positions.length;i++){JSONObject action=actions.optJSONObject(i);if(action==null)continue;int slot=action.optInt("slot",0);boolean confirmation=action.optBoolean("confirmation",false);boolean confirmationOnActivate=action.optBoolean("confirmation_on_activate",false)&&action.optBoolean("activating_action",false);String iconName=action.optString("icon");String visual=action.optString("state_visual","unknown");Button button=new Button(this);button.setAllCaps(false);button.setText(action.optString("label","Comando"));button.setTextColor(Color.WHITE);button.setTextSize(9);button.setGravity(Gravity.CENTER);applyStateIcon(button,iconName,visual);GradientDrawable background=new GradientDrawable();background.setShape(GradientDrawable.OVAL);background.setColor(actionColor(action.optString("color")));background.setStroke(dp(1),Color.WHITE);button.setBackground(background);int[] position=positions[rendered++];quickActions.addView(button,cell(position[0],position[1]));button.setOnClickListener(v->{if(confirmation||confirmationOnActivate)new AlertDialog.Builder(this).setTitle("Conferma comando").setMessage("Eseguire "+button.getText()+"?").setNegativeButton("Annulla",null).setPositiveButton("Esegui",(dialog,which)->executeQuickAction(slot,button)).show();else executeQuickAction(slot,button);});}result.setText("Pronto");}
-    private int stateIconResource(String iconName){String asset="light".equals(iconName)?"state_light":"blind".equals(iconName)?"state_blind":"lock".equals(iconName)?"state_lock":"power".equals(iconName)?"state_power":"climate".equals(iconName)?"state_climate":"music".equals(iconName)?"state_music":"state_scene";return getResources().getIdentifier(asset,"drawable",getPackageName());}
-    private void applyStateIcon(Button button,String iconName,String visual){int resource=stateIconResource(iconName);if(resource==0)return;Drawable drawable=getDrawable(resource).mutate();int color=Color.GRAY;if("light_on".equals(visual))color=Color.rgb(255,193,7);else if("cover_open".equals(visual))color=Color.rgb(73,211,242);else if("lock_closed".equals(visual))color=Color.rgb(35,190,95);else if("lock_open".equals(visual))color=Color.rgb(235,55,45);drawable.setTint(color);int size=(int)(28*getResources().getDisplayMetrics().density);drawable.setBounds(0,0,size,size);button.setCompoundDrawablePadding(12);button.setCompoundDrawables(drawable,null,null,null);}
+    private JSONObject actionForSlot(JSONArray actions,int slot){for(int i=0;i<actions.length();i++){JSONObject action=actions.optJSONObject(i);if(action!=null&&action.optInt("slot",0)==slot)return action;}return null;}
+    private Button actionButton(JSONObject action,int slot,int size){Button button=new Button(this);button.setAllCaps(false);button.setGravity(Gravity.CENTER);button.setPadding(dp(2),dp(3),dp(2),dp(2));button.setMaxLines(2);GradientDrawable background=new GradientDrawable();background.setShape(GradientDrawable.OVAL);if(action==null){button.setText("");button.setEnabled(false);background.setColor(Color.rgb(55,59,62));background.setStroke(dp(1),Color.rgb(105,112,116));}else{boolean confirmation=action.optBoolean("confirmation",false);boolean confirmationOnActivate=action.optBoolean("confirmation_on_activate",false)&&action.optBoolean("activating_action",false);String label=action.optString("label","Comando");button.setTextColor(Color.WHITE);button.setTextSize(size<=42?6:7);applyMdiIcon(button,action.optString("icon"),label,action.optString("state_visual","unknown"),size);background.setColor("unavailable".equals(action.optString("entity_state"))?Color.rgb(65,65,65):actionColor(action.optString("color")));background.setStroke(dp(1),Color.WHITE);button.setOnClickListener(v->{if(confirmation||confirmationOnActivate)new AlertDialog.Builder(this).setTitle("Conferma comando").setMessage("Eseguire "+label+"?").setNegativeButton("Annulla",null).setPositiveButton("Esegui",(dialog,which)->executeQuickAction(slot,button)).show();else executeQuickAction(slot,button);});}button.setBackground(background);return button;}
+    private void renderQuickActions(JSONArray actions){JSONArray configured=actions==null?new JSONArray():actions;resetActionGrid();extraActions.removeAllViews();int[] angles={-90,-45,0,45,90,135,180,225};for(int index=0;index<8;index++){int slot=index+1;quickActions.addView(actionButton(actionForSlot(configured,slot),slot,48),radialCell(48,angles[index],72));}for(int slot=9;slot<=32;slot++){JSONObject action=actionForSlot(configured,slot);if(action==null)continue;Button button=actionButton(action,slot,42);GridLayout.LayoutParams params=new GridLayout.LayoutParams();params.width=dp(42);params.height=dp(42);params.setMargins(dp(4),dp(3),dp(4),dp(3));extraActions.addView(button,params);}result.setText("");}
+    private void loadMdiCatalog(){try{int fontId=getResources().getIdentifier("mdi_webfont","font",getPackageName());int mapId=getResources().getIdentifier("mdi_codepoints","raw",getPackageName());mdiTypeface=getResources().getFont(fontId);try(InputStream input=getResources().openRawResource(mapId)){mdiCodepoints.load(input);}}catch(Exception error){mdiTypeface=Typeface.DEFAULT;}}
+    private String mdiName(String iconName){String value=iconName==null?"":iconName.trim().toLowerCase(Locale.ROOT);if(value.startsWith("mdi:"))return value.substring(4);if("light".equals(value))return "lightbulb";if("power".equals(value))return "power";if("climate".equals(value))return "thermostat";if("blind".equals(value))return "blinds";if("lock".equals(value))return "shield-home";if("music".equals(value))return "music";return "creation";}
+    private int stateIconColor(String visual){if("light_on".equals(visual))return Color.rgb(255,193,7);if("cover_open".equals(visual))return Color.rgb(73,211,242);if("lock_closed".equals(visual))return Color.rgb(35,190,95);if("lock_open".equals(visual))return Color.rgb(235,55,45);return Color.LTGRAY;}
+    private void applyMdiIcon(Button button,String iconName,String label,String visual,int size){String code=mdiCodepoints.getProperty(mdiName(iconName));if(code==null)code=mdiCodepoints.getProperty("help-circle-outline");String glyph=new String(Character.toChars(Integer.parseInt(code,16)));SpannableString rendered=new SpannableString(glyph+"\n"+label);rendered.setSpan(new TypefaceSpan(mdiTypeface),0,glyph.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);rendered.setSpan(new AbsoluteSizeSpan(size<=42?15:18,true),0,glyph.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);rendered.setSpan(new ForegroundColorSpan(stateIconColor(visual)),0,glyph.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);button.setText(rendered);}
     private int actionColor(String value){if("red".equals(value))return Color.rgb(190,35,35);if("green".equals(value))return Color.rgb(0,125,75);if("orange".equals(value))return Color.rgb(190,95,0);if("purple".equals(value))return Color.rgb(105,55,160);if("cyan".equals(value))return Color.rgb(0,120,145);return Color.rgb(25,95,190);}
     private void executeQuickAction(int slot,Button button){button.setEnabled(false);result.setText("Eseguo "+button.getText()+"...");new Thread(()->{try{JSONObject response=post(API+"/quick-actions/"+slot+"/execute",new JSONObject(),loadCredential());showAndSpeak(response.getString("speech"));Thread.sleep(1200);loadBootstrap();}catch(Exception error){show("Comando rapido non riuscito. Verifica connessione, stato e autorizzazioni.");}finally{runOnUiThread(()->button.setEnabled(true));}}).start();}
     private void enableNotifications(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_PERMISSION_REQUEST);return;}startForegroundService(new Intent(this,NotificationPollService.class));}
@@ -99,7 +116,9 @@ public final class MainActivity extends Activity {
     private void show(String message){runOnUiThread(()->result.setText(message));}
     private void showAndSpeak(String message){runOnUiThread(()->{result.setText(message);speak(message);});}
     private void speak(String message){if(textToSpeech==null||!speechReady){pendingSpeech=message;return;}textToSpeech.speak(message,TextToSpeech.QUEUE_FLUSH,null,"ekonex_voice_reply");}
-    @Override protected void onDestroy(){if(speechRecognizer!=null)speechRecognizer.destroy();if(textToSpeech!=null){textToSpeech.stop();textToSpeech.shutdown();}super.onDestroy();}
+    @Override protected void onResume(){super.onResume();stateHandler.removeCallbacks(stateRefresh);stateHandler.postDelayed(stateRefresh,5000);}
+    @Override protected void onPause(){stateHandler.removeCallbacks(stateRefresh);super.onPause();}
+    @Override protected void onDestroy(){stateHandler.removeCallbacks(stateRefresh);if(speechRecognizer!=null)speechRecognizer.destroy();if(textToSpeech!=null){textToSpeech.stop();textToSpeech.shutdown();}super.onDestroy();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acknowledgeNotification(intent);}
     private void acknowledgeNotification(Intent intent){String notificationId=intent.getStringExtra("notification_id");if(notificationId==null||notificationId.isEmpty())return;intent.removeExtra("notification_id");new Thread(()->{try{ackNotification(notificationId,loadCredential());}catch(Exception ignored){}}).start();}
     private void ackNotification(String notificationId,String token)throws Exception{HttpURLConnection connection=(HttpURLConnection)new URL(API+"/notifications/"+notificationId+"/ack").openConnection();try{connection.setRequestMethod("POST");connection.setConnectTimeout(6000);connection.setReadTimeout(12000);connection.setRequestProperty("Authorization","Bearer "+token);connection.setDoOutput(true);connection.getOutputStream().close();if(connection.getResponseCode()!=204)throw new IllegalStateException("HTTP "+connection.getResponseCode());}finally{connection.disconnect();}}

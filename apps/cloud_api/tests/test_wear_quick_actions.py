@@ -86,6 +86,24 @@ def test_quick_actions_accept_toggle():
     assert payload.actions[0].operation == "toggle"
 
 
+def test_quick_actions_accept_persistent_custom_mdi_and_extended_slot():
+    payload = QuickActionsRequest.model_validate(
+        {
+            "actions": [
+                {
+                    "slot": 32,
+                    "label": "Cancello",
+                    "utterance": "Apri cancello",
+                    "icon": "mdi:gate",
+                    "color": "green",
+                }
+            ]
+        }
+    )
+    assert payload.actions[0].slot == 32
+    assert payload.actions[0].icon == "mdi:gate"
+
+
 def test_toggle_is_official_for_stateful_entities():
     assert ("toggle", "Inverti stato") in _wear_operations("light")
     assert ("toggle", "Inverti stato") in _wear_operations("switch")

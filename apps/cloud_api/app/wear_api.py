@@ -120,7 +120,7 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
     )
     await session.commit()
     if outcome.status != "success":
-        return "Il comando non è riuscito."
+        return "Il comando non Ã¨ riuscito."
     action = "acceso" if operation == "power_on" else "spento"
     return f"Ho {action} {entity.voice_name or entity.display_name or entity.friendly_name}."
 
@@ -152,7 +152,33 @@ class NotificationPreferencesRequest(BaseModel):
     timezone: str = Field(default="Europe/Rome", pattern=r"^[A-Za-z_]+(?:/[A-Za-z_+-]+)+$")
 
 
-QUICK_ACTION_ICONS = {"light", "power", "climate", "blind", "lock", "scene", "music"}
+QUICK_ACTION_ICONS = {
+    "light",
+    "power",
+    "climate",
+    "blind",
+    "lock",
+    "scene",
+    "music",
+    "mdi:lightbulb",
+    "mdi:power",
+    "mdi:thermostat",
+    "mdi:blinds",
+    "mdi:lock",
+    "mdi:creation",
+    "mdi:music",
+    "mdi:home",
+    "mdi:garage",
+    "mdi:fan",
+    "mdi:water",
+    "mdi:shield-home",
+    "mdi:television",
+    "mdi:weather-sunny",
+    "mdi:bed",
+    "mdi:door",
+    "mdi:run",
+    "mdi:gate",
+}
 QUICK_ACTION_COLORS = {"red", "blue", "green", "orange", "purple", "cyan"}
 WEAR_TOGGLE_DOMAINS = {"light", "switch", "cover", "lock"}
 WEAR_EXTRA_OPERATIONS = {"lock": (("lock", "Blocca"), ("unlock", "Sblocca"))}
@@ -217,7 +243,7 @@ def _is_activating(domain: str, operation: str, state_value: str | None) -> bool
 
 class QuickActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    slot: int = Field(ge=1, le=6)
+    slot: int = Field(ge=1, le=32)
     label: str = Field(min_length=1, max_length=24)
     utterance: str | None = Field(default=None, min_length=1, max_length=160)
     entity_id: UUID | None = None
@@ -242,7 +268,9 @@ class QuickActionRequest(BaseModel):
     @field_validator("icon")
     @classmethod
     def valid_icon(cls, value: str) -> str:
-        if value not in QUICK_ACTION_ICONS:
+        if value not in QUICK_ACTION_ICONS and not re.fullmatch(
+            r"mdi:[a-z0-9][a-z0-9_-]{0,79}", value
+        ):
             raise ValueError("invalid_quick_action_icon")
         return value
 
@@ -256,7 +284,7 @@ class QuickActionRequest(BaseModel):
 
 class QuickActionsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    actions: list[QuickActionRequest] = Field(max_length=6)
+    actions: list[QuickActionRequest] = Field(max_length=32)
 
     @field_validator("actions")
     @classmethod
@@ -404,7 +432,7 @@ async def wear_management(
         "cover": "blind",
         "scene": "scene",
         "script": "scene",
-        "lock": "lock",
+        "lock": "mdi:lock",
     }
     spoken_operations = {
         "power_on": "Accendi",
@@ -452,16 +480,22 @@ async def wear_management(
             "lock": "Sicurezza",
             "scene": "Scenario",
             "music": "Musica",
+            "mdi:lock": "Serratura",
+            "mdi:garage": "Portone",
+            "mdi:gate": "Cancello",
         }
         action_rows = []
-        for slot in range(1, 7):
+        visible_slots = max(8, max(saved_actions, default=0))
+        for slot in range(1, visible_slots + 1):
             action = saved_actions.get(slot, {})
             icon = str(action.get("icon") or "scene")
-            color = str(action.get("color") or "blue")
+            standard_icon = icon if icon in icon_labels else "__custom__"
             icon_options = "".join(
-                f'<option value="{value}" {"selected" if value == icon else ""}>{label}</option>'
+                f'<option value="{value}" {"selected" if value == standard_icon else ""}>{label}</option>'
                 for value, label in icon_labels.items()
             )
+            icon_options += f'<option value="__custom__" {"selected" if standard_icon == "__custom__" else ""}>Custom MDI</option>'
+            color = str(action.get("color") or "blue")
             color_options = "".join(
                 f'<option value="{value}" {"selected" if value == color else ""}>{label}</option>'
                 for value, label in (
@@ -493,30 +527,32 @@ async def wear_management(
                         f'<option value="{target}" data-label="{html.escape(operation_label + " " + name, quote=True)}" '
                         f'data-icon="{domain_icons[entity.ha_domain]}" data-utterance="{html.escape(utterance, quote=True)}" '
                         f"{'selected' if target == selected_target else ''}>"
-                        f"{html.escape(domain_labels[entity.ha_domain])} — {html.escape(name)} — {html.escape(operation_label)}</option>"
+                        f"{html.escape(domain_labels[entity.ha_domain])} â€” {html.escape(name)} â€” {html.escape(operation_label)}</option>"
                     )
             legacy_utterance = str(action.get("utterance") or "")
             if legacy_utterance and not selected_target:
                 command_options.append(
-                    f'<option value="" selected>Comando precedente — {html.escape(legacy_utterance)}</option>'
+                    f'<option value="" selected>Comando precedente â€” {html.escape(legacy_utterance)}</option>'
                 )
             action_rows.append(
-                f'<div class=quick-row data-quick-slot="{slot}"><b>{slot}</b>'
+                f'<div class=quick-row data-quick-slot="{slot}"><input data-quick-position type=number min=1 max=32 value="{slot}" aria-label="Posizione Wear">'
                 f'<input data-quick-label maxlength=24 placeholder="Etichetta" value="{html.escape(str(action.get("label") or ""))}">'
                 f'<input data-quick-search type=search placeholder="Cerca dispositivo o azione" autocomplete=off>'
                 f"<select data-quick-command>{''.join(command_options)}</select>"
                 f'<input type=hidden data-quick-utterance value="{html.escape(legacy_utterance, quote=True)}">'
-                f"<select data-quick-icon>{icon_options}</select><select data-quick-color>{color_options}</select></div>"
+                f"<select data-quick-icon-standard>{icon_options}</select>"
+                f'<input data-quick-icon-custom placeholder="mdi:nome-icona" value="{html.escape(icon if standard_icon == "__custom__" else "", quote=True)}" {"" if standard_icon == "__custom__" else "hidden"}>'
+                f"<select data-quick-color>{color_options}</select></div>"
                 f"<div class=quick-confirm><label><input type=checkbox data-quick-confirmation {'checked' if action.get('confirmation', False) else ''}> Conferma sempre</label>"
                 f"<label><input type=checkbox data-quick-confirmation-on-activate {'checked' if action.get('confirmation_on_activate', False) else ''}> Conferma solo per accensione/apertura</label></div>"
             )
         quick_actions = "".join(action_rows)
         return f'''<article class=device-card data-preferences="{item.id}"><h2>{html.escape(item.display_name)}</h2>
 <p class=muted>{html.escape(", ".join(item.capabilities_json))}</p>
-<details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>Configura fino a sei tasti scegliendo un dispositivo e un'azione realmente disponibili. Per luci e interruttori puoi scegliere Inverti stato: lo stesso tasto spegne quando il dispositivo risulta acceso e accende quando risulta spento. Se lo stato non e disponibile, il comando viene fermato. Il colore selezionato riguarda l'aspetto del tasto sul Wear.</p>{quick_actions}<button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
+<details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>I primi otto tasti sono sempre disponibili. Usa + per aggiungerne altri; dal nono in poi compaiono nell area launcher inferiore. Scegli un'icona standard oppure Custom MDI e inserisci, per esempio, mdi:gate.</p><div data-quick-rows>{quick_actions}</div><button type=button data-add-quick>+ Aggiungi tasto</button> <button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
 <label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
 <fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
-<label>Priorità minima <select data-severity>{options}</select></label>
+<label>PrioritÃ  minima <select data-severity>{options}</select></label>
 <label class=switch><input type=checkbox data-vibration {"checked" if preferences.get("vibration", True) else ""}> Vibrazione</label>
 <div class=quiet><label>Silenzioso dalle <input type=time data-quiet-start value="{html.escape(str(preferences.get("quiet_start") or ""))}"></label><label> alle <input type=time data-quiet-end value="{html.escape(str(preferences.get("quiet_end") or ""))}"></label></div>
 <div class=actions><button data-save="{item.id}">Salva preferenze</button><button data-test="{item.id}">Invia prova</button><button class=danger data-device="{item.id}">Revoca</button></div></article>'''
@@ -525,7 +561,7 @@ async def wear_management(
     capabilities = ",".join(sorted(CAPABILITIES))
     page = f"""<!doctype html><html lang=it><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Google Wear</title>
-<style>:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-row{{display:grid;grid-template-columns:28px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row{{grid-template-columns:28px 1fr}}.quick-row input,.quick-row select{{grid-column:2}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
+<style>:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-row{{display:grid;grid-template-columns:70px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px minmax(170px,1fr) 120px;gap:9px;align-items:center;margin:10px 0}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row{{grid-template-columns:28px 1fr}}.quick-row input,.quick-row select{{grid-column:2}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
 <h1>Google Wear</h1><p>Orologi legati a questo utente e a questo impianto.</p>
 <details class=installer-guide><summary>Installazione privata APK <span class=badge>Solo installatore</span></summary>
 <p>Questa procedura serve per installazioni private prima della distribuzione tramite Google Play. Non deve essere eseguita dal cliente finale.</p>
@@ -548,8 +584,13 @@ try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollment
 <script>document.querySelectorAll('[data-device]').forEach(button=>button.onclick=async()=>{{if(!confirm('Revocare questo orologio?'))return;try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.device,{{method:'DELETE',headers:{{'X-Ekonex-CSRF':csrf}}}});if(response.status===401||response.status===403)throw new Error('session_expired');if(response.ok)location.reload();else result.textContent='Revoca non riuscita'}}catch(error){{actionError(error,'Revoca non riuscita')}}}});</script>
 <script>document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito'}}catch(error){{actionError(error,'Invio prova non riuscito')}}}});</script>
 <script>document.querySelectorAll('[data-save]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),start=card.querySelector('[data-quiet-start]').value,end=card.querySelector('[data-quiet-end]').value;if((start&&!end)||(!start&&end)){{result.textContent='Compila entrambi gli orari silenziosi oppure lasciali vuoti.';return}}const body={{enabled:card.querySelector('[data-enabled]').checked,categories:[...card.querySelectorAll('[data-category]:checked')].map(x=>x.value),minimum_severity:card.querySelector('[data-severity]').value,vibration:card.querySelector('[data-vibration]').checked,quiet_start:start||null,quiet_end:end||null,timezone:'Europe/Rome'}};try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.save+'/notification-preferences',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(body)}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Preferenze salvate.':'Salvataggio non riuscito'}}catch(error){{actionError(error,'Salvataggio non riuscito')}}}});</script>
-<script>document.querySelectorAll('[data-quick-command]').forEach(select=>{{const row=select.closest('[data-quick-slot]'),search=row.querySelector('[data-quick-search]'),allOptions=[...select.options].map(option=>option.cloneNode(true));select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),icon=row.querySelector('[data-quick-icon]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)icon.value=option.dataset.icon;utterance.value=option.dataset.utterance||''}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value;select.replaceChildren(...allOptions.filter((option,index)=>index===0||!query||option.textContent.toLocaleLowerCase('it').includes(query)).map(option=>option.cloneNode(true)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}}}});</script>
-<script>document.querySelectorAll('[data-save-quick]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),actions=[];for(const row of card.querySelectorAll('[data-quick-slot]')){{const label=row.querySelector('[data-quick-label]').value.trim(),utterance=row.querySelector('[data-quick-utterance]').value.trim(),target=row.querySelector('[data-quick-command]').value;if(!label&&!target&&!utterance)continue;if(!label||(!target&&!utterance)){{result.textContent='Scegli dispositivo e azione e inserisci l etichetta del tasto.';return}}const parts=target?target.split('|'):[null,null],confirmations=row.nextElementSibling;actions.push({{slot:Number(row.dataset.quickSlot),label,utterance:utterance||null,entity_id:parts[0],operation:parts[1],icon:row.querySelector('[data-quick-icon]').value,color:row.querySelector('[data-quick-color]').value,confirmation:confirmations.querySelector('[data-quick-confirmation]').checked,confirmation_on_activate:confirmations.querySelector('[data-quick-confirmation-on-activate]').checked}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveQuick+'/quick-actions',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{actions}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Comandi rapidi salvati. Saranno visibili al prossimo avvio dell app Wear.':'Salvataggio comandi rapidi non riuscito'}}catch(error){{actionError(error,'Salvataggio comandi rapidi non riuscito')}}}});</script>
+<script>
+function setQuickIcon(row,value){{const standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),known=[...standard.options].some(option=>option.value===value&&value!=='__custom__');standard.value=known?value:'__custom__';custom.hidden=known;if(!known)custom.value=value||''}}
+function initQuickRow(row){{const select=row.querySelector('[data-quick-command]'),search=row.querySelector('[data-quick-search]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),allOptions=[...select.options].map(option=>option.cloneNode(true));standard.onchange=()=>{{custom.hidden=standard.value!=='__custom__';if(!custom.hidden)custom.focus()}};select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)setQuickIcon(row,option.dataset.icon);utterance.value=option.dataset.utterance||''}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value;select.replaceChildren(...allOptions.filter((option,index)=>index===0||!query||option.textContent.toLocaleLowerCase('it').includes(query)).map(option=>option.cloneNode(true)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}}}}
+document.querySelectorAll('[data-quick-slot]').forEach(initQuickRow);
+</script>
+<script>document.querySelectorAll('[data-add-quick]').forEach(button=>button.onclick=()=>{{const rows=button.closest('.quick-actions').querySelector('[data-quick-rows]'),existing=[...rows.querySelectorAll('[data-quick-slot]')];if(existing.length>=32)return;const source=existing[existing.length-1],confirmation=source.nextElementSibling,row=source.cloneNode(true),checks=confirmation.cloneNode(true),slot=existing.length+1;row.dataset.quickSlot=slot;row.querySelector('[data-quick-position]').value=slot;row.querySelectorAll('input:not([data-quick-position])').forEach(input=>input.value='');row.querySelectorAll('select').forEach(select=>select.selectedIndex=0);checks.querySelectorAll('input').forEach(input=>input.checked=false);rows.append(row,checks);setQuickIcon(row,'scene');initQuickRow(row)}});</script>
+<script>document.querySelectorAll('[data-save-quick]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),actions=[];for(const row of card.querySelectorAll('[data-quick-slot]')){{const label=row.querySelector('[data-quick-label]').value.trim(),utterance=row.querySelector('[data-quick-utterance]').value.trim(),target=row.querySelector('[data-quick-command]').value;if(!label&&!target&&!utterance)continue;if(!label||(!target&&!utterance)){{result.textContent='Scegli dispositivo e azione e inserisci l etichetta del tasto.';return}}const standard=row.querySelector('[data-quick-icon-standard]').value,custom=row.querySelector('[data-quick-icon-custom]').value.trim(),icon=standard==='__custom__'?custom:standard;if(!icon){{result.textContent='Inserisci il nome dell icona Custom MDI.';return}}const parts=target?target.split('|'):[null,null],confirmations=row.nextElementSibling;actions.push({{slot:Number(row.querySelector('[data-quick-position]').value),label,utterance:utterance||null,entity_id:parts[0],operation:parts[1],icon,color:row.querySelector('[data-quick-color]').value,confirmation:confirmations.querySelector('[data-quick-confirmation]').checked,confirmation_on_activate:confirmations.querySelector('[data-quick-confirmation-on-activate]').checked}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveQuick+'/quick-actions',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{actions}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Comandi rapidi salvati. Saranno visibili al prossimo avvio dell app Wear.':'Salvataggio comandi rapidi non riuscito'}}catch(error){{actionError(error,'Salvataggio comandi rapidi non riuscito')}}}});</script>
 </body></html>"""
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
@@ -936,7 +977,7 @@ async def execute_quick_action(
     context=wear_context_dependency,
     session: Annotated[AsyncSession, session_dependency] = None,
 ) -> dict[str, str]:
-    if slot < 1 or slot > 6:
+    if slot < 1 or slot > 32:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "quick_action_not_found")
     try:
         context.require("command.execute")
@@ -999,7 +1040,7 @@ async def execute_quick_action(
         )
         await session.commit()
         if outcome.status != "success":
-            return {"status": "failed", "speech": "Il comando non è riuscito."}
+            return {"status": "failed", "speech": "Il comando non Ã¨ riuscito."}
         name = entity.voice_name or entity.display_name or entity.friendly_name or "dispositivo"
         spoken = {
             "power_on": "Ho acceso",
