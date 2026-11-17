@@ -13,17 +13,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .command_dispatch import CommandDispatchService, PowerCommand
+from .command_dispatch import ActivateCommand, CommandDispatchService, CoverCommand, PowerCommand
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
 from .domain.models import Entity, Installation, WearDevice, WearEnrollment
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
-from .installation_bound_api import _frame_policy, _ui_csrf, bound_context_dependency
+from .installation_bound_api import UI_OPERATIONS, _frame_policy, _ui_csrf, bound_context_dependency
 from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
 from .wear_notifications import WearNotificationService
 
@@ -154,10 +154,21 @@ class QuickActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     slot: int = Field(ge=1, le=6)
     label: str = Field(min_length=1, max_length=24)
-    utterance: str = Field(min_length=1, max_length=160)
+    utterance: str | None = Field(default=None, min_length=1, max_length=160)
+    entity_id: UUID | None = None
+    operation: str | None = Field(default=None, pattern=r"^(power_on|power_off|open|stop|close|activate)$")
     icon: str = Field(default="scene")
     color: str = Field(default="blue")
     confirmation: bool = False
+
+    @model_validator(mode="after")
+    def valid_target(self):
+        direct = self.entity_id is not None or self.operation is not None
+        if direct and (self.entity_id is None or self.operation is None):
+            raise ValueError("incomplete_quick_action_target")
+        if not direct and not self.utterance:
+            raise ValueError("missing_quick_action_target")
+        return self
 
     @field_validator("icon")
     @classmethod
@@ -281,6 +292,42 @@ async def wear_management(
             .order_by(WearDevice.created_at.desc())
         )
     ).all()
+    command_entities = (
+        await session.scalars(
+            select(Entity)
+            .where(
+                Entity.installation_id == context.effective_installation_id,
+                Entity.deleted_at.is_(None),
+                Entity.available.is_(True),
+                Entity.ha_registry_id.is_not(None),
+                Entity.ha_domain.in_(tuple(UI_OPERATIONS)),
+            )
+            .order_by(Entity.ha_domain, Entity.voice_name, Entity.display_name, Entity.friendly_name)
+        )
+    ).all()
+
+    domain_labels = {
+        "light": "Luce",
+        "switch": "Interruttore",
+        "cover": "Tapparella/tenda",
+        "scene": "Scenario",
+        "script": "Script",
+    }
+    domain_icons = {
+        "light": "light",
+        "switch": "power",
+        "cover": "blind",
+        "scene": "scene",
+        "script": "scene",
+    }
+    spoken_operations = {
+        "power_on": "Accendi",
+        "power_off": "Spegni",
+        "open": "Apri",
+        "stop": "Stop",
+        "close": "Chiudi",
+        "activate": "Attiva",
+    }
 
     def device_card(item: WearDevice) -> str:
         preferences = item.notification_preferences_json or {}
@@ -337,17 +384,40 @@ async def wear_management(
                     ("cyan", "Ciano"),
                 )
             )
+            selected_target = (
+                f'{action.get("entity_id")}|{action.get("operation")}'
+                if action.get("entity_id") and action.get("operation")
+                else ""
+            )
+            command_options = ['<option value="">Scegli dispositivo e azione</option>']
+            for entity in command_entities:
+                name = entity.voice_name or entity.display_name or entity.friendly_name or entity.ha_entity_id
+                for operation, operation_label in UI_OPERATIONS.get(entity.ha_domain, ()):
+                    target = f"{entity.id}|{operation}"
+                    utterance = f'{spoken_operations[operation]} {name}'
+                    command_options.append(
+                        f'<option value="{target}" data-label="{html.escape(operation_label + " " + name, quote=True)}" '
+                        f'data-icon="{domain_icons[entity.ha_domain]}" data-utterance="{html.escape(utterance, quote=True)}" '
+                        f'{"selected" if target == selected_target else ""}>'
+                        f'{html.escape(domain_labels[entity.ha_domain])} — {html.escape(name)} — {html.escape(operation_label)}</option>'
+                    )
+            legacy_utterance = str(action.get("utterance") or "")
+            if legacy_utterance and not selected_target:
+                command_options.append(
+                    f'<option value="" selected>Comando precedente — {html.escape(legacy_utterance)}</option>'
+                )
             action_rows.append(
                 f'<div class=quick-row data-quick-slot="{slot}"><b>{slot}</b>'
                 f'<input data-quick-label maxlength=24 placeholder="Etichetta" value="{html.escape(str(action.get("label") or ""))}">'
-                f'<input data-quick-utterance maxlength=160 placeholder="Comando, es. Accendi luce ufficio" value="{html.escape(str(action.get("utterance") or ""))}">'
+                f'<select data-quick-command>{"".join(command_options)}</select>'
+                f'<input type=hidden data-quick-utterance value="{html.escape(legacy_utterance, quote=True)}">'
                 f"<select data-quick-icon>{icon_options}</select><select data-quick-color>{color_options}</select></div>"
                 f"<label class=quick-confirm><input type=checkbox data-quick-confirmation {'checked' if action.get('confirmation', False) else ''}> Richiedi conferma sul Wear</label>"
             )
         quick_actions = "".join(action_rows)
         return f'''<article class=device-card data-preferences="{item.id}"><h2>{html.escape(item.display_name)}</h2>
 <p class=muted>{html.escape(", ".join(item.capabilities_json))}</p>
-<details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>Configura fino a sei tasti. Lascia vuota l'etichetta per non mostrare lo slot.</p>{quick_actions}<button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
+<details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>Configura fino a sei tasti scegliendo un dispositivo e un'azione realmente disponibili. Per lo stesso dispositivo puoi creare, ad esempio, un tasto Accendi e uno Spegni. Il colore selezionato riguarda l'aspetto del tasto sul Wear.</p>{quick_actions}<button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
 <label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
 <fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
 <label>Priorità minima <select data-severity>{options}</select></label>
@@ -359,7 +429,7 @@ async def wear_management(
     capabilities = ",".join(sorted(CAPABILITIES))
     page = f"""<!doctype html><html lang=it><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Google Wear</title>
-<style>body{{font:16px system-ui;background:#101619;color:#f4f7f8;margin:0;padding:24px}}button,select,input{{padding:10px 14px;border:1px solid #41cbea;border-radius:10px;background:#142126;color:#fff}}button{{font-weight:700}}code{{font-size:18px;color:#41cbea}}.device-card,.installer-guide{{max-width:1050px;margin:18px 0;padding:22px;border:1px solid #314149;border-radius:18px;background:#151c20}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:#1d2427}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:#29383e;color:#9ee9f4;font-size:12px;vertical-align:middle}}.muted{{color:#9db2bc}}fieldset,.quick-actions{{margin:16px 0;border:1px solid #314149;border-radius:12px;padding:14px}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-row{{display:grid;grid-template-columns:28px minmax(120px,1fr) minmax(240px,2fr) 130px 120px;gap:8px;align-items:center;margin:8px 0}}.danger{{border-color:#d92d20;color:#ffb4ac}}@media(max-width:760px){{.quick-row{{grid-template-columns:28px 1fr}}.quick-row input,.quick-row select{{grid-column:2}}}}</style></head><body>
+<style>:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-row{{display:grid;grid-template-columns:28px minmax(150px,1fr) minmax(320px,2.2fr) 130px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:760px){{body{{padding:14px}}.quick-row{{grid-template-columns:28px 1fr}}.quick-row input,.quick-row select{{grid-column:2}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
 <h1>Google Wear</h1><p>Orologi legati a questo utente e a questo impianto.</p>
 <details class=installer-guide><summary>Installazione privata APK <span class=badge>Solo installatore</span></summary>
 <p>Questa procedura serve per installazioni private prima della distribuzione tramite Google Play. Non deve essere eseguita dal cliente finale.</p>
@@ -382,7 +452,8 @@ try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollment
 <script>document.querySelectorAll('[data-device]').forEach(button=>button.onclick=async()=>{{if(!confirm('Revocare questo orologio?'))return;try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.device,{{method:'DELETE',headers:{{'X-Ekonex-CSRF':csrf}}}});if(response.status===401||response.status===403)throw new Error('session_expired');if(response.ok)location.reload();else result.textContent='Revoca non riuscita'}}catch(error){{actionError(error,'Revoca non riuscita')}}}});</script>
 <script>document.querySelectorAll('[data-test]').forEach(button=>button.onclick=async()=>{{try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.test+'/notifications/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Notifica di prova accodata.':'Invio prova non riuscito'}}catch(error){{actionError(error,'Invio prova non riuscito')}}}});</script>
 <script>document.querySelectorAll('[data-save]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),start=card.querySelector('[data-quiet-start]').value,end=card.querySelector('[data-quiet-end]').value;if((start&&!end)||(!start&&end)){{result.textContent='Compila entrambi gli orari silenziosi oppure lasciali vuoti.';return}}const body={{enabled:card.querySelector('[data-enabled]').checked,categories:[...card.querySelectorAll('[data-category]:checked')].map(x=>x.value),minimum_severity:card.querySelector('[data-severity]').value,vibration:card.querySelector('[data-vibration]').checked,quiet_start:start||null,quiet_end:end||null,timezone:'Europe/Rome'}};try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.save+'/notification-preferences',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(body)}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Preferenze salvate.':'Salvataggio non riuscito'}}catch(error){{actionError(error,'Salvataggio non riuscito')}}}});</script>
-<script>document.querySelectorAll('[data-save-quick]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),actions=[];for(const row of card.querySelectorAll('[data-quick-slot]')){{const label=row.querySelector('[data-quick-label]').value.trim(),utterance=row.querySelector('[data-quick-utterance]').value.trim();if(!label&&!utterance)continue;if(!label||!utterance){{result.textContent='Ogni comando rapido deve avere sia etichetta sia comando.';return}}actions.push({{slot:Number(row.dataset.quickSlot),label,utterance,icon:row.querySelector('[data-quick-icon]').value,color:row.querySelector('[data-quick-color]').value,confirmation:row.nextElementSibling.querySelector('[data-quick-confirmation]').checked}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveQuick+'/quick-actions',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{actions}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Comandi rapidi salvati. Saranno visibili al prossimo avvio dell app Wear.':'Salvataggio comandi rapidi non riuscito'}}catch(error){{actionError(error,'Salvataggio comandi rapidi non riuscito')}}}});</script>
+<script>document.querySelectorAll('[data-quick-command]').forEach(select=>select.onchange=()=>{{const row=select.closest('[data-quick-slot]'),option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),icon=row.querySelector('[data-quick-icon]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)icon.value=option.dataset.icon;utterance.value=option.dataset.utterance||''}});</script>
+<script>document.querySelectorAll('[data-save-quick]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),actions=[];for(const row of card.querySelectorAll('[data-quick-slot]')){{const label=row.querySelector('[data-quick-label]').value.trim(),utterance=row.querySelector('[data-quick-utterance]').value.trim(),target=row.querySelector('[data-quick-command]').value;if(!label&&!target&&!utterance)continue;if(!label||(!target&&!utterance)){{result.textContent='Scegli dispositivo e azione e inserisci l etichetta del tasto.';return}}const parts=target?target.split('|'):[null,null];actions.push({{slot:Number(row.dataset.quickSlot),label,utterance:utterance||null,entity_id:parts[0],operation:parts[1],icon:row.querySelector('[data-quick-icon]').value,color:row.querySelector('[data-quick-color]').value,confirmation:row.nextElementSibling.querySelector('[data-quick-confirmation]').checked}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveQuick+'/quick-actions',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{actions}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Comandi rapidi salvati. Saranno visibili al prossimo avvio dell app Wear.':'Salvataggio comandi rapidi non riuscito'}}catch(error){{actionError(error,'Salvataggio comandi rapidi non riuscito')}}}});</script>
 </body></html>"""
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
@@ -521,9 +592,32 @@ async def update_quick_actions(
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    direct_actions = [item for item in payload.actions if item.entity_id is not None]
+    if direct_actions:
+        entity_ids = {item.entity_id for item in direct_actions}
+        entities = {
+            item.id: item
+            for item in (
+                await session.scalars(
+                    select(Entity).where(
+                        Entity.id.in_(entity_ids),
+                        Entity.installation_id == context.effective_installation_id,
+                        Entity.deleted_at.is_(None),
+                        Entity.available.is_(True),
+                        Entity.ha_registry_id.is_not(None),
+                    )
+                )
+            ).all()
+        }
+        for action in direct_actions:
+            entity = entities.get(action.entity_id)
+            if entity is None or action.operation not in {
+                operation for operation, _label in UI_OPERATIONS.get(entity.ha_domain, ())
+            }:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "quick_action_target_invalid")
     preferences = dict(device.notification_preferences_json or {})
     preferences["quick_actions"] = [
-        item.model_dump() for item in sorted(payload.actions, key=lambda item: item.slot)
+        item.model_dump(mode="json") for item in sorted(payload.actions, key=lambda item: item.slot)
     ]
     device.notification_preferences_json = preferences
     await session.commit()
@@ -724,4 +818,51 @@ async def execute_quick_action(
     action = next((item for item in actions if int(item.get("slot", 0)) == slot), None)
     if action is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "quick_action_not_found")
-    return await ask(AskRequest(utterance=str(action["utterance"])), context, session)
+    if action.get("entity_id") and action.get("operation"):
+        try:
+            entity_id = UUID(str(action["entity_id"]))
+        except ValueError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_invalid") from None
+        entity = await session.scalar(
+            select(Entity).where(
+                Entity.id == entity_id,
+                Entity.installation_id == context.installation_id,
+                Entity.deleted_at.is_(None),
+                Entity.available.is_(True),
+            )
+        )
+        operation = str(action["operation"])
+        if (
+            entity is None
+            or not entity.ha_registry_id
+            or operation not in {item[0] for item in UI_OPERATIONS.get(entity.ha_domain, ())}
+        ):
+            raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_unavailable")
+        if operation in {"power_on", "power_off"}:
+            command = PowerCommand(operation=operation)
+        elif operation in {"open", "stop", "close"}:
+            command = CoverCommand(operation=operation)
+        elif operation == "activate":
+            command = ActivateCommand(operation="activate")
+        else:
+            raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_invalid")
+        outcome = await CommandDispatchService(session, sessions).dispatch(
+            context.installation_id, entity.ha_registry_id, command
+        )
+        await session.commit()
+        if outcome.status != "success":
+            return {"status": "failed", "speech": "Il comando non è riuscito."}
+        name = entity.voice_name or entity.display_name or entity.friendly_name or "dispositivo"
+        spoken = {
+            "power_on": "Ho acceso",
+            "power_off": "Ho spento",
+            "open": "Ho aperto",
+            "stop": "Ho fermato",
+            "close": "Ho chiuso",
+            "activate": "Ho attivato",
+        }[operation]
+        return {"status": "answered", "speech": f"{spoken} {name}."}
+    utterance = str(action.get("utterance") or "").strip()
+    if not utterance:
+        raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_invalid")
+    return await ask(AskRequest(utterance=utterance), context, session)
