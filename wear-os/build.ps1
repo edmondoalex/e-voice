@@ -7,6 +7,9 @@ param(
     [string]$OutputName = ''
 )
 $ErrorActionPreference = 'Stop'
+$releaseVersion = '0.1.2'
+$releaseCode = '3'
+$officialCertificateSha256 = '157257dbaf141e76044e3dc071cba5d23be42fbf052a2d9ceb8ba228ebc7a6e4'
 $apiBase = switch ($Environment) {
     'Production' { 'https://voice.e-control.tech/api/wear/v1' }
     'Laboratory' { 'https://voice-lab.e-control.tech/api/wear/v1' }
@@ -25,9 +28,20 @@ $env:JAVA_HOME=$JdkRoot; $env:PATH=(Join-Path $JdkRoot 'bin')+';'+$env:PATH
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $classes,$dex,$compiled,$generated
 New-Item -ItemType Directory -Force -Path $classes,$dex,$compiled,$generated | Out-Null
 $unsigned=Join-Path $build 'unsigned.apk'; $aligned=Join-Path $build 'aligned.apk'
-if (-not $OutputName) { $OutputName = "ekonex-wear-0.1.0-$($Environment.ToLowerInvariant()).apk" }
+if (-not $OutputName) { $OutputName = "ekonex-wear-$releaseVersion-$($Environment.ToLowerInvariant()).apk" }
 if ([IO.Path]::GetFileName($OutputName) -ne $OutputName -or [IO.Path]::GetExtension($OutputName) -ne '.apk') { throw 'OutputName deve essere un nome file .apk senza percorso.' }
-$output=Join-Path $build $OutputName; $keystore=if($KeystorePath){$KeystorePath}else{Join-Path $build 'debug.keystore'}
+$output=Join-Path $build $OutputName
+if ($Environment -eq 'Production' -and -not $KeystorePath) {
+    throw 'La build Production richiede -KeystorePath con la chiave ufficiale Ekonex.'
+}
+$keystore=if($KeystorePath){$KeystorePath}else{Join-Path $build 'laboratory-debug.keystore'}
+if ($Environment -eq 'Production' -and -not (Test-Path $keystore)) {
+    throw "Chiave ufficiale Ekonex non trovata: $keystore"
+}
+$manifestText=Get-Content -Raw (Join-Path $project 'AndroidManifest.xml')
+if ($manifestText -notmatch "android:versionCode=`"$releaseCode`"" -or $manifestText -notmatch "android:versionName=`"$([regex]::Escape($releaseVersion))`"") {
+    throw "Versione manifest inattesa: attese $releaseVersion / code $releaseCode."
+}
 & $aapt2 compile --dir (Join-Path $project 'res') -o $compiled
 if($LASTEXITCODE){throw 'Compilazione risorse Android non riuscita.'}
 $resources=@(Get-ChildItem $compiled -Filter '*.flat' | ForEach-Object FullName)
@@ -54,6 +68,13 @@ if(-not(Test-Path $keystore)){
 & $apksigner sign --ks $keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out $output $aligned
 if($LASTEXITCODE){throw 'Firma APK non riuscita.'}; & $apksigner verify --verbose $output
 if($LASTEXITCODE){throw 'Verifica firma non riuscita.'}
+$certificateOutput = (& $apksigner verify --print-certs $output | Out-String)
+if ($Environment -eq 'Production' -and $certificateOutput -notmatch [regex]::Escape($officialCertificateSha256)) {
+    throw 'Certificato APK Production non compatibile con le installazioni Ekonex Wear esistenti.'
+}
 Write-Output "Environment=$Environment"
 Write-Output "ApiBase=$apiBase"
+Write-Output "VersionName=$releaseVersion"
+Write-Output "VersionCode=$releaseCode"
+if ($Environment -eq 'Production') { Write-Output "CertificateSha256=$officialCertificateSha256" }
 Write-Output $output
