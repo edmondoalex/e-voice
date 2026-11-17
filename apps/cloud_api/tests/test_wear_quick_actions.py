@@ -10,6 +10,7 @@ from apps.cloud_api.app.wear_api import (
     _is_activating,
     _resolve_toggle,
     _state_visual,
+    _wear_entity_command,
     _wear_operations,
     _wear_operations_for_entity,
     _wear_success_speech,
@@ -167,6 +168,18 @@ def test_switch_backed_gate_uses_open_close_labels_but_power_operations():
     )
     assert _wear_success_speech(entity, "power_on") == "Ho aperto"
     assert _wear_success_speech(entity, "power_off") == "Ho chiuso"
+
+
+def test_voice_open_close_gate_uses_native_switch_power_command():
+    entity = SimpleNamespace(ha_domain="switch", alexa_device_type="gate")
+
+    open_command, open_operation = _wear_entity_command(entity, "open")
+    close_command, close_operation = _wear_entity_command(entity, "close")
+
+    assert open_command.operation == "power_on"
+    assert open_operation == "power_on"
+    assert close_command.operation == "power_off"
+    assert close_operation == "power_off"
 
 
 @pytest.mark.parametrize(

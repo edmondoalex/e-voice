@@ -82,15 +82,37 @@ def _voice_tokens(value: str) -> set[str]:
     }
 
 
+def _wear_entity_command(entity: Entity, requested: str):
+    if requested in {"open", "close"} and is_gate_override(entity):
+        operation = "power_on" if requested == "open" else "power_off"
+        return PowerCommand(operation=operation), operation
+    if requested in {"open", "close", "stop"}:
+        return CoverCommand(operation=requested), requested
+    return PowerCommand(operation=requested), requested
+
+
 async def _wear_power_command(session: AsyncSession, context, utterance: str) -> str | None:
     words = _voice_tokens(utterance)
-    operation = "power_on" if "accendi" in words else "power_off" if "spegni" in words else None
-    if operation is None:
+    requested = (
+        "power_on"
+        if "accendi" in words
+        else "power_off"
+        if "spegni" in words
+        else "open"
+        if "apri" in words
+        else "close"
+        if "chiudi" in words
+        else "stop"
+        if words & {"ferma", "fermo", "stop"}
+        else None
+    )
+    if requested is None:
         return None
     context.require("command.execute")
-    target = words - {"accendi", "spegni", "luce"}
+    target = words - {"accendi", "spegni", "apri", "chiudi", "ferma", "fermo", "stop", "luce"}
     if not target:
         return "Dimmi quale dispositivo vuoi comandare."
+    domains = ("light", "switch") if requested in {"power_on", "power_off"} else ("cover", "switch")
     entities = list(
         (
             await session.scalars(
@@ -98,11 +120,18 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
                     Entity.installation_id == context.installation_id,
                     Entity.deleted_at.is_(None),
                     Entity.available.is_(True),
-                    Entity.ha_domain.in_(("light", "switch")),
+                    Entity.ha_domain.in_(domains),
                 )
             )
         ).all()
     )
+    if requested in {"open", "close", "stop"}:
+        entities = [
+            entity
+            for entity in entities
+            if entity.ha_domain == "cover"
+            or (requested != "stop" and is_gate_override(entity))
+        ]
     ranked = []
     for entity in entities:
         names = (entity.voice_name, entity.display_name, entity.friendly_name)
@@ -117,13 +146,22 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
     entity = ranked[0][1]
     if not entity.ha_registry_id:
         return "Il dispositivo non dispone di un identificativo di comando."
+    command, operation = _wear_entity_command(entity, requested)
     outcome = await CommandDispatchService(session, sessions).dispatch(
-        context.installation_id, entity.ha_registry_id, PowerCommand(operation=operation)
+        context.installation_id, entity.ha_registry_id, command
     )
     await session.commit()
     if outcome.status != "success":
         return "Il comando non è riuscito."
-    action = "acceso" if operation == "power_on" else "spento"
+    action = {
+        "power_on": "acceso",
+        "power_off": "spento",
+        "open": "aperto",
+        "close": "chiuso",
+        "stop": "fermato",
+    }[operation]
+    if is_gate_override(entity) and operation in {"power_on", "power_off"}:
+        action = "aperto" if operation == "power_on" else "chiuso"
     return f"Ho {action} {entity.voice_name or entity.display_name or entity.friendly_name}."
 
 
