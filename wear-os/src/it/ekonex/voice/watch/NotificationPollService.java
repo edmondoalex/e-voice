@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.app.AlarmManager;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -43,6 +44,14 @@ public final class NotificationPollService extends Service {
     @Override public int onStartCommand(Intent intent,int flags,int startId){handler.removeCallbacksAndMessages(null);handler.post(this::poll);return START_STICKY;}
     @Override public IBinder onBind(Intent intent){return null;}
     @Override public void onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy();}
+    @Override public void onTaskRemoved(Intent rootIntent){scheduleRestart();super.onTaskRemoved(rootIntent);}
+
+    private void scheduleRestart(){
+        Intent restart=new Intent(this,NotificationServiceReceiver.class).setAction(NotificationServiceReceiver.ACTION_RESTART);
+        PendingIntent pending=PendingIntent.getBroadcast(this,1002,restart,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        AlarmManager alarm=getSystemService(AlarmManager.class);
+        if(alarm!=null)alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,System.currentTimeMillis()+5000L,pending);
+    }
 
     private void createChannels(){NotificationManager manager=getSystemService(NotificationManager.class);manager.createNotificationChannel(new NotificationChannel(STATUS_CHANNEL,"Servizio notifiche Ekonex",NotificationManager.IMPORTANCE_LOW));NotificationChannel events=new NotificationChannel(EVENT_CHANNEL,"Notifiche Ekonex",NotificationManager.IMPORTANCE_HIGH);events.enableVibration(true);events.setVibrationPattern(new long[]{0,250,150,250});manager.createNotificationChannel(events);}
     private PendingIntent openApp(){Intent intent=new Intent(this,MainActivity.class);intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);return PendingIntent.getActivity(this,0,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
