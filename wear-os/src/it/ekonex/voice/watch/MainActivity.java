@@ -1,10 +1,12 @@
 package it.ekonex.voice.watch;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
@@ -24,6 +26,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -47,7 +50,7 @@ public final class MainActivity extends Activity {
     private static final String API="__EKONEX_WEAR_API_BASE__";
     private static final String PREFS="ekonex_wear";
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
-    private EditText code; private TextView result; private Button associate; private Button microphone;
+    private EditText code; private TextView result; private Button associate; private Button microphone; private LinearLayout quickActions;
     private TextToSpeech textToSpeech; private boolean speechReady; private String pendingSpeech;
     private SpeechRecognizer speechRecognizer; private String partialUtterance="";
 
@@ -56,7 +59,8 @@ public final class MainActivity extends Activity {
         TextView title=text("Ekonex Wear",23); content.addView(title);
         code=new EditText(this); code.setHint("Codice a 6 cifre"); code.setSingleLine(true); code.setInputType(InputType.TYPE_CLASS_NUMBER); code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)}); code.setTextColor(Color.WHITE); code.setHintTextColor(Color.GRAY); content.addView(code,new LinearLayout.LayoutParams(-1,-2));
         associate=new Button(this); associate.setText("Associa"); associate.setOnClickListener(v->claim()); content.addView(associate,new LinearLayout.LayoutParams(-1,-2));
-        microphone=new Button(this); microphone.setText("Parla con e-Voice"); microphone.setOnClickListener(v->listen()); content.addView(microphone,new LinearLayout.LayoutParams(-1,-2));
+        microphone=new Button(this); microphone.setText("🎙  Parla con e-Voice"); microphone.setTextSize(17); microphone.setOnClickListener(v->listen()); content.addView(microphone,new LinearLayout.LayoutParams(-1,-2));
+        quickActions=new LinearLayout(this);quickActions.setOrientation(LinearLayout.VERTICAL);content.addView(quickActions,new LinearLayout.LayoutParams(-1,-2));
         result=text("Associa l'orologio da e-Control.",15); content.addView(result);
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true); scroll.addView(content); setContentView(scroll); refresh();
         if(SpeechRecognizer.isRecognitionAvailable(this)){speechRecognizer=SpeechRecognizer.createSpeechRecognizer(this);speechRecognizer.setRecognitionListener(new RecognitionListener(){
@@ -74,7 +78,12 @@ public final class MainActivity extends Activity {
         acknowledgeNotification(getIntent());
     }
     private TextView text(String value,float size){TextView view=new TextView(this); view.setText(value); view.setTextColor(Color.WHITE); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setPadding(0,10,0,10); return view;}
-    private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE); microphone.setEnabled(paired); if(paired){result.setText("Orologio associato. Tocca Parla con e-Voice.");enableNotifications();}}
+    private void refresh(){boolean paired=!loadCredential().isEmpty(); code.setVisibility(paired?View.GONE:View.VISIBLE); associate.setVisibility(paired?View.GONE:View.VISIBLE); microphone.setEnabled(paired);quickActions.removeAllViews(); if(paired){result.setText("Orologio associato. Carico i comandi rapidi...");enableNotifications();new Thread(this::loadBootstrap).start();}}
+    private void loadBootstrap(){try{JSONObject bootstrap=get(API+"/bootstrap",loadCredential());JSONArray actions=bootstrap.optJSONArray("quick_actions");runOnUiThread(()->renderQuickActions(actions));}catch(Exception error){show("Orologio associato. Comandi rapidi non disponibili; il microfono resta attivo.");}}
+    private void renderQuickActions(JSONArray actions){quickActions.removeAllViews();if(actions==null||actions.length()==0){result.setText("Orologio associato. Configura i comandi rapidi in e-Control.");return;}TextView heading=text("Comandi rapidi",18);quickActions.addView(heading);for(int i=0;i<actions.length();i++){JSONObject action=actions.optJSONObject(i);if(action==null)continue;int slot=action.optInt("slot",0);boolean confirmation=action.optBoolean("confirmation",false);Button button=new Button(this);button.setAllCaps(false);button.setText(icon(action.optString("icon"))+"  "+action.optString("label","Comando"));button.setTextColor(Color.WHITE);button.setTextSize(16);GradientDrawable background=new GradientDrawable();background.setColor(actionColor(action.optString("color")));background.setCornerRadius(28);background.setStroke(2,Color.WHITE);button.setBackground(background);LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.setMargins(0,7,0,7);quickActions.addView(button,params);button.setOnClickListener(v->{if(confirmation)new AlertDialog.Builder(this).setTitle("Conferma comando").setMessage("Eseguire "+button.getText()+"?").setNegativeButton("Annulla",null).setPositiveButton("Esegui",(dialog,which)->executeQuickAction(slot,button)).show();else executeQuickAction(slot,button);});}result.setText("Pronto.");}
+    private String icon(String value){if("light".equals(value))return"💡";if("power".equals(value))return"⏻";if("climate".equals(value))return"🌡";if("blind".equals(value))return"▤";if("lock".equals(value))return"🔒";if("music".equals(value))return"♫";return"★";}
+    private int actionColor(String value){if("red".equals(value))return Color.rgb(190,35,35);if("green".equals(value))return Color.rgb(0,125,75);if("orange".equals(value))return Color.rgb(190,95,0);if("purple".equals(value))return Color.rgb(105,55,160);if("cyan".equals(value))return Color.rgb(0,120,145);return Color.rgb(25,95,190);}
+    private void executeQuickAction(int slot,Button button){button.setEnabled(false);result.setText("Eseguo "+button.getText()+"...");new Thread(()->{try{JSONObject response=post(API+"/quick-actions/"+slot+"/execute",new JSONObject(),loadCredential());showAndSpeak(response.getString("speech"));}catch(Exception error){show("Comando rapido non riuscito. Verifica connessione e autorizzazioni.");}finally{runOnUiThread(()->button.setEnabled(true));}}).start();}
     private void enableNotifications(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_PERMISSION_REQUEST);return;}startForegroundService(new Intent(this,NotificationPollService.class));}
     private void claim(){String value=code.getText().toString().trim(); if(!value.matches("\\d{6}")){result.setText("Inserisci le 6 cifre.");return;} associate.setEnabled(false); result.setText("Associazione in corso..."); new Thread(()->requestClaim(value)).start();}
     private void requestClaim(String value){try{JSONObject body=new JSONObject().put("code",value).put("display_name",android.os.Build.MODEL); JSONObject response=post(API+"/enrollments/claim",body,null); saveCredential(response.getString("credential")); runOnUiThread(()->{code.setText("");associate.setEnabled(true);refresh();});}catch(Exception error){runOnUiThread(()->{associate.setEnabled(true);result.setText("Associazione non riuscita. Genera un nuovo codice in e-Control.");});}}
@@ -90,6 +99,7 @@ public final class MainActivity extends Activity {
     private void acknowledgeNotification(Intent intent){String notificationId=intent.getStringExtra("notification_id");if(notificationId==null||notificationId.isEmpty())return;intent.removeExtra("notification_id");new Thread(()->{try{ackNotification(notificationId,loadCredential());}catch(Exception ignored){}}).start();}
     private void ackNotification(String notificationId,String token)throws Exception{HttpURLConnection connection=(HttpURLConnection)new URL(API+"/notifications/"+notificationId+"/ack").openConnection();try{connection.setRequestMethod("POST");connection.setConnectTimeout(6000);connection.setReadTimeout(12000);connection.setRequestProperty("Authorization","Bearer "+token);connection.setDoOutput(true);connection.getOutputStream().close();if(connection.getResponseCode()!=204)throw new IllegalStateException("HTTP "+connection.getResponseCode());}finally{connection.disconnect();}}
     private JSONObject post(String endpoint,JSONObject body,String token)throws Exception{HttpURLConnection connection=(HttpURLConnection)new URL(endpoint).openConnection(); try{connection.setRequestMethod("POST");connection.setConnectTimeout(6000);connection.setReadTimeout(12000);connection.setRequestProperty("Content-Type","application/json; charset=utf-8");if(token!=null)connection.setRequestProperty("Authorization","Bearer "+token);connection.setDoOutput(true);try(OutputStream output=connection.getOutputStream()){output.write(body.toString().getBytes(StandardCharsets.UTF_8));}int status=connection.getResponseCode();if(status!=200)throw new IllegalStateException("HTTP "+status);StringBuilder value=new StringBuilder();try(BufferedReader reader=new BufferedReader(new InputStreamReader(connection.getInputStream(),StandardCharsets.UTF_8))){String line;while((line=reader.readLine())!=null&&value.length()<16384)value.append(line);}return new JSONObject(value.toString());}finally{connection.disconnect();}}
+    private JSONObject get(String endpoint,String token)throws Exception{HttpURLConnection connection=(HttpURLConnection)new URL(endpoint).openConnection();try{connection.setRequestMethod("GET");connection.setConnectTimeout(6000);connection.setReadTimeout(12000);connection.setRequestProperty("Authorization","Bearer "+token);int status=connection.getResponseCode();if(status!=200)throw new IllegalStateException("HTTP "+status);StringBuilder value=new StringBuilder();try(BufferedReader reader=new BufferedReader(new InputStreamReader(connection.getInputStream(),StandardCharsets.UTF_8))){String line;while((line=reader.readLine())!=null&&value.length()<32768)value.append(line);}return new JSONObject(value.toString());}finally{connection.disconnect();}}
     private SecretKey key()throws Exception{KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);if(store.containsAlias(KEY_ALIAS))return((KeyStore.SecretKeyEntry)store.getEntry(KEY_ALIAS,null)).getSecretKey();KeyGenerator generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder(KEY_ALIAS,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return generator.generateKey();}
     private void saveCredential(String value)throws Exception{Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());String iv=Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP);String encrypted=Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString("iv",iv).putString("credential",encrypted).apply();}
     private String loadCredential(){try{String iv=getSharedPreferences(PREFS,MODE_PRIVATE).getString("iv","");String encrypted=getSharedPreferences(PREFS,MODE_PRIVATE).getString("credential","");if(iv.isEmpty()||encrypted.isEmpty())return"";Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(iv,Base64.NO_WRAP)));return new String(cipher.doFinal(Base64.decode(encrypted,Base64.NO_WRAP)),StandardCharsets.UTF_8);}catch(Exception error){return"";}}

@@ -7,8 +7,8 @@ param(
     [string]$OutputName = ''
 )
 $ErrorActionPreference = 'Stop'
-$releaseVersion = '0.1.2'
-$releaseCode = '3'
+$releaseVersion = '0.1.3'
+$releaseCode = '4'
 $officialCertificateSha256 = '157257dbaf141e76044e3dc071cba5d23be42fbf052a2d9ceb8ba228ebc7a6e4'
 $apiBase = switch ($Environment) {
     'Production' { 'https://voice.e-control.tech/api/wear/v1' }
@@ -55,7 +55,7 @@ Get-ChildItem (Join-Path $project 'src\it\ekonex\voice\watch') -Filter '*.java' 
     $sources += $source
 }
 if (-not ($sources | ForEach-Object { Get-Content -Raw $_ } | Select-String -SimpleMatch $apiBase)) { throw 'Placeholder endpoint Wear mancante.' }
-& (Join-Path $JdkRoot 'bin\javac.exe') --release 11 -cp $androidJar -d $classes $sources
+& (Join-Path $JdkRoot 'bin\javac.exe') -encoding UTF-8 --release 11 -cp $androidJar -d $classes $sources
 if($LASTEXITCODE){throw 'javac non riuscito.'}
 $classFiles=@(Get-ChildItem $classes -Recurse -Filter '*.class' | ForEach-Object FullName)
 & $d8 --min-api 30 --lib $androidJar --output $dex $classFiles
