@@ -11,7 +11,9 @@ deve incrementare entrambi i valori: una versione gia distribuita non viene
 mai ricostruita o riutilizzata.
 
 Su Windows la build di produzione richiede esplicitamente la chiave stabile:
-`./build.ps1 -Environment Production -KeystorePath <percorso-chiave>`. Il
+`./build.ps1 -Environment Production`. La chiave stabile viene letta da
+`%USERPROFILE%\.ekonex\signing\wear-production.keystore`; il percorso puo
+essere sostituito esplicitamente con `-KeystorePath <percorso-chiave>`. Il
 processo rifiuta una firma diversa dal certificato originale Ekonex, cosi gli
 aggiornamenti conservano associazione e preferenze. La `0.1.1`/code 2 e
 ritirata per firma incompatibile e non deve essere distribuita.

@@ -1,7 +1,7 @@
 param(
     [string]$SdkRoot = (Join-Path $env:LOCALAPPDATA 'EkonexAndroidSdk'),
     [string]$JdkRoot = $env:JAVA_HOME,
-    [string]$KeystorePath = '',
+    [string]$KeystorePath = (Join-Path $env:USERPROFILE '.ekonex\signing\wear-production.keystore'),
     [ValidateSet('Production', 'Laboratory')]
     [string]$Environment = 'Production',
     [string]$OutputName = ''
@@ -31,9 +31,6 @@ $unsigned=Join-Path $build 'unsigned.apk'; $aligned=Join-Path $build 'aligned.ap
 if (-not $OutputName) { $OutputName = "ekonex-wear-$releaseVersion-$($Environment.ToLowerInvariant()).apk" }
 if ([IO.Path]::GetFileName($OutputName) -ne $OutputName -or [IO.Path]::GetExtension($OutputName) -ne '.apk') { throw 'OutputName deve essere un nome file .apk senza percorso.' }
 $output=Join-Path $build $OutputName
-if ($Environment -eq 'Production' -and -not $KeystorePath) {
-    throw 'La build Production richiede -KeystorePath con la chiave ufficiale Ekonex.'
-}
 $keystore=if($KeystorePath){$KeystorePath}else{Join-Path $build 'laboratory-debug.keystore'}
 if ($Environment -eq 'Production' -and -not (Test-Path $keystore)) {
     throw "Chiave ufficiale Ekonex non trovata: $keystore"
