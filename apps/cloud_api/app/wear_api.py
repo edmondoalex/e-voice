@@ -24,6 +24,7 @@ from .command_dispatch import (
     CoverCommand,
     DomainActionCommand,
     PowerCommand,
+    PressCommand,
 )
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
@@ -236,7 +237,10 @@ QUICK_ACTION_COLOR_LABELS = {
 }
 QUICK_ACTION_COLORS = set(QUICK_ACTION_COLOR_LABELS)
 WEAR_TOGGLE_DOMAINS = {"light", "switch", "cover", "lock"}
-WEAR_EXTRA_OPERATIONS = {"lock": (("lock", "Blocca"), ("unlock", "Sblocca"))}
+WEAR_EXTRA_OPERATIONS = {
+    "lock": (("lock", "Blocca"), ("unlock", "Sblocca")),
+    "button": (("press", "Premi"),),
+}
 
 
 def _wear_operations(domain: str) -> tuple[tuple[str, str], ...]:
@@ -266,6 +270,7 @@ def _wear_success_speech(entity: Entity, operation: str) -> str:
         "stop": "Ho fermato",
         "close": "Ho chiuso",
         "activate": "Ho attivato",
+        "press": "Ho premuto",
     }[operation]
 
 
@@ -316,7 +321,7 @@ def _is_activating(domain: str, operation: str, state_value: str | None) -> bool
             operation = _resolve_toggle(domain, state_value)
         except ValueError:
             return False
-    return operation in {"power_on", "open", "unlock"}
+    return operation in {"power_on", "open", "unlock", "press"}
 
 
 class QuickActionRequest(BaseModel):
@@ -327,7 +332,7 @@ class QuickActionRequest(BaseModel):
     entity_id: UUID | None = None
     operation: str | None = Field(
         default=None,
-        pattern=r"^(power_on|power_off|toggle|open|stop|close|activate|lock|unlock)$",
+        pattern=r"^(power_on|power_off|toggle|open|stop|close|activate|lock|unlock|press)$",
     )
     icon: str = Field(default="scene")
     color: str = Field(default="blue")
@@ -503,6 +508,7 @@ async def wear_management(
         "scene": "Scenario",
         "script": "Script",
         "lock": "Serratura/portone",
+        "button": "Pulsante",
     }
     domain_icons = {
         "light": "light",
@@ -511,6 +517,7 @@ async def wear_management(
         "scene": "scene",
         "script": "scene",
         "lock": "mdi:lock",
+        "button": "mdi:gesture-tap-button",
     }
     spoken_operations = {
         "power_on": "Accendi",
@@ -522,6 +529,7 @@ async def wear_management(
         "activate": "Attiva",
         "lock": "Blocca",
         "unlock": "Sblocca",
+        "press": "Premi",
     }
 
     def device_card(item: WearDevice) -> str:
@@ -1091,6 +1099,8 @@ async def execute_quick_action(
             command = CoverCommand(operation=operation)
         elif operation == "activate":
             command = ActivateCommand(operation="activate")
+        elif operation == "press":
+            command = PressCommand(operation="press")
         elif operation in {"lock", "unlock"}:
             command = DomainActionCommand(operation=operation)
         else:
