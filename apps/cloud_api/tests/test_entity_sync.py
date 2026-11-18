@@ -109,6 +109,21 @@ async def test_inventory_removes_nul_characters_before_database_write(
     assert entity.attributes_json == {"raw": "AB", "nested": ["CD"]}
 
 
+async def test_reconnect_snapshot_reuses_preloaded_entities_without_per_item_lookup(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [item(state="on")])
+
+    async def unexpected_lookup(*args: object, **kwargs: object) -> None:
+        raise AssertionError("full sync must not query each preloaded entity")
+
+    monkeypatch.setattr(service, "_by_registry", unexpected_lookup)
+    await service.apply_full(2, [item(state="off")])
+
+
 async def test_cover_device_class_survives_inventory_database_and_discovery(
     session: AsyncSession, seeded_domain: object
 ) -> None:

@@ -124,9 +124,14 @@ class EkonexVoiceConnection:
                 )
                 self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, error_code
                 return
-            except EkonexVoiceCannotConnect:
+            except EkonexVoiceCannotConnect as error:
                 self.state, self.last_error_code = ConnectionState.BACKING_OFF, "cannot_connect"
                 self.retry_count += 1
+                _LOGGER.warning(
+                    "Connector session closed (%s, websocket_code=%s); retrying",
+                    error,
+                    websocket.close_code if websocket is not None else None,
+                )
                 delay = self._random_value() * BACKOFF_SCHEDULE[backoff_index]
                 self.next_retry_delay = delay
                 await self._sleep(delay)

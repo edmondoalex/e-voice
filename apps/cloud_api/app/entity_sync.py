@@ -44,6 +44,12 @@ class EntitySyncService:
             for entity in existing_before
             if entity.deleted_at is None
         }
+        entity_by_registry = {
+            entity.ha_registry_id: entity
+            for entity in existing_before
+            if entity.ha_registry_id is not None
+        }
+        entity_by_entity_id = {entity.ha_entity_id: entity for entity in existing_before}
         previous_values: list[tuple[UUID, str | None, bool]] = []
         previous_media_ids = set(
             (
@@ -63,7 +69,14 @@ class EntitySyncService:
             previous = previous_by_registry.get(registry_id) or previous_by_entity_id.get(
                 str(item["entity_id"])
             )
-            entity = await self._upsert(item)
+            entity = await self._upsert(
+                item,
+                known_entity=entity_by_registry.get(registry_id)
+                or entity_by_entity_id.get(str(item["entity_id"])),
+                lookup_complete=True,
+            )
+            entity_by_registry[registry_id] = entity
+            entity_by_entity_id[str(item["entity_id"])] = entity
             if previous is not None and (
                 previous[1] != entity.state or previous[2] != entity.available
             ):
@@ -353,9 +366,17 @@ class EntitySyncService:
         )
         return result.one_or_none()
 
-    async def _upsert(self, item: dict[str, object]) -> Entity:
-        entity = await self._by_registry(str(item["registry_id"]))
-        if entity is None:
+    async def _upsert(
+        self,
+        item: dict[str, object],
+        *,
+        known_entity: Entity | None = None,
+        lookup_complete: bool = False,
+    ) -> Entity:
+        entity = known_entity
+        if entity is None and not lookup_complete:
+            entity = await self._by_registry(str(item["registry_id"]))
+        if entity is None and not lookup_complete:
             result = await self._session.scalars(
                 select(Entity).where(
                     Entity.installation_id == self._installation.id,
