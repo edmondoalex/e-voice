@@ -197,15 +197,14 @@ async def test_reconnect_drains_old_command_and_old_cleanup_preserves_new_sessio
         registry.replace(installation_id, SessionHandle(second_session, second))
     )
     await asyncio.sleep(0)
-    assert not reconnect.done()
+    await reconnect
+    assert (await pending).status == "stale_session"
     result = CommandResultPayload(
         session_id=first_session,
         command_id=command_id,
         status="success",
     )
-    assert await registry.resolve(installation_id, first_session, result)
-    assert (await pending).status == "success"
-    await reconnect
+    assert not await registry.resolve(installation_id, first_session, result)
     await registry.remove(installation_id, first_session)
     assert registry._sessions[installation_id].session_id == second_session
     assert not registry._pending

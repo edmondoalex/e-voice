@@ -151,7 +151,7 @@ class EkonexVoiceClient:
                     url,
                     headers={"Authorization": f"Bearer {self._connector_credential}"},
                     max_msg_size=65_536,
-                    heartbeat=20,
+                    heartbeat=None,
                 )
         except TimeoutError as error:
             raise EkonexVoiceCannotConnect("cloud_unavailable") from error

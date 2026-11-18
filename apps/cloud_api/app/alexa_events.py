@@ -574,6 +574,50 @@ async def reconcile_discovery_safely(
         await gateway.close()
 
 
+def schedule_state_reporting(installation_id: UUID, entity_ids: list[UUID]) -> None:
+    """Report Alexa state outside the connector receive loop."""
+    task = asyncio.create_task(_report_state_safely(installation_id, entity_ids))
+    task.add_done_callback(_log_state_reporting_error)
+
+
+def _log_state_reporting_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("alexa_state_reporting_failed", exc_info=task.exception())
+
+
+async def _report_state_safely(installation_id: UUID, entity_ids: list[UUID]) -> None:
+    from .alexa import SUPPORTED_DOMAINS
+    from .database import async_session_factory
+
+    async with async_session_factory() as session:
+        installation = await session.get(Installation, installation_id)
+        if installation is None:
+            return
+        entities = list(
+            (
+                await session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == installation_id,
+                        Entity.id.in_(entity_ids),
+                    )
+                )
+            ).all()
+        )
+        gateway = AlexaEventGateway(session)
+        try:
+            for entity in entities:
+                if entity.ha_domain in SUPPORTED_DOMAINS:
+                    await gateway.report_entity(entity)
+            await gateway.reconcile_discovery(installation)
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Alexa proactive reporting failed installation_id=%s", installation_id
+            )
+        finally:
+            await gateway.close()
+
+
 def schedule_discovery_reconciliation(installation_id: UUID) -> None:
     """Reconcile Alexa without blocking the Connector receive loop."""
     task = asyncio.create_task(_reconcile_discovery_after_sync(installation_id))
