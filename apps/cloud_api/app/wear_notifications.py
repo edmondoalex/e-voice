@@ -123,6 +123,67 @@ class WearNotificationService:
                     device.fcm_token_updated_at = None
         return created
 
+    async def enqueue_for_device(
+        self,
+        *,
+        device: WearDevice,
+        event_key: str,
+        category: str,
+        severity: str,
+        title: str,
+        body: str,
+    ) -> int:
+        """Queue one event only for its configured Wear identity."""
+        if (
+            not event_key.strip()
+            or len(event_key) > 120
+            or not category.strip()
+            or len(category) > 64
+            or severity not in SEVERITIES
+            or not title.strip()
+            or len(title) > 120
+            or not body.strip()
+            or len(body) > 500
+            or device.revoked_at is not None
+            or "notification.receive" not in device.capabilities_json
+        ):
+            raise WearDenied
+        preferences = _preferences(device)
+        minimum = str(preferences["minimum_severity"])
+        if (
+            not preferences["enabled"]
+            or category not in preferences["categories"]
+            or SEVERITY_LEVEL[severity] < SEVERITY_LEVEL.get(minimum, 0)
+        ):
+            return 0
+        existing = await self.session.scalar(
+            select(WearNotification.id).where(
+                WearNotification.device_id == device.id,
+                WearNotification.event_key == event_key,
+            )
+        )
+        if existing is not None:
+            return 0
+        self.session.add(
+            WearNotification(
+                device_id=device.id,
+                tenant_id=device.tenant_id,
+                installation_id=device.installation_id,
+                event_key=event_key,
+                category=category,
+                severity=severity,
+                title=title.strip(),
+                body=body.strip(),
+            )
+        )
+        await self.session.flush()
+        if device.fcm_token_encrypted:
+            result = await WearFcmSender().send_wake(device.fcm_token_encrypted, event_key)
+            if result is False:
+                device.fcm_token_encrypted = None
+                device.fcm_token_updated_at = None
+        return 1
+
     async def pending(self, context: WearContext, limit: int = 20) -> list[WearNotification]:
         context.require("notification.receive")
         now = datetime.now(UTC)

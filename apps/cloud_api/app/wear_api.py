@@ -11,7 +11,7 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, Response
@@ -213,6 +213,30 @@ class NotificationPreferencesRequest(BaseModel):
     quiet_start: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     quiet_end: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     timezone: str = Field(default="Europe/Rome", pattern=r"^[A-Za-z_]+(?:/[A-Za-z_+-]+)+$")
+
+
+class NotificationRuleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    id: UUID | None = None
+    enabled: bool = True
+    entity_id: UUID
+    trigger: str = Field(pattern=r"^(any_change|becomes|available|unavailable)$")
+    target_state: str | None = Field(default=None, max_length=255)
+    category: str
+    severity: str = Field(pattern=r"^(info|warning|critical)$")
+    title: str | None = Field(default=None, max_length=120)
+    body: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def target_required(self):
+        if self.trigger == "becomes" and not self.target_state:
+            raise ValueError("notification_rule_target_required")
+        return self
+
+
+class NotificationRulesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rules: list[NotificationRuleRequest] = Field(max_length=64)
 
 
 QUICK_ACTION_STANDARD_ICONS = {
@@ -601,6 +625,19 @@ async def wear_management(
         ),
     )
 
+    notification_entities = list(
+        (
+            await session.scalars(
+                select(Entity)
+                .where(
+                    Entity.installation_id == context.effective_installation_id,
+                    Entity.deleted_at.is_(None),
+                )
+                .order_by(Entity.ha_domain, Entity.voice_name, Entity.display_name)
+            )
+        ).all()
+    )
+
     domain_labels = {
         "light": "Luce",
         "switch": "Interruttore",
@@ -730,9 +767,44 @@ async def wear_management(
                 f"<label><input type=checkbox data-quick-confirmation-on-activate {'checked' if action.get('confirmation_on_activate', False) else ''}> Conferma solo per accensione/apertura</label></div></div>"
             )
         quick_actions = "".join(action_rows)
+        entity_options = "".join(
+            f'<option value="{entity.id}">{html.escape(entity.voice_name or entity.display_name or entity.friendly_name or entity.ha_entity_id)} ({html.escape(entity.ha_domain)})</option>'
+            for entity in notification_entities
+        )
+        rule_rows = []
+        for rule in preferences.get("notification_rules", []):
+            selected_entity = str(rule.get("entity_id") or "")
+            options_for_rule = entity_options.replace(
+                f'value="{selected_entity}"', f'value="{selected_entity}" selected'
+            )
+            trigger = str(rule.get("trigger") or "any_change")
+            triggers = "".join(
+                f'<option value="{value}" {"selected" if value == trigger else ""}>{label}</option>'
+                for value, label in (("any_change", "Qualsiasi cambio"), ("becomes", "Diventa stato"), ("unavailable", "Non disponibile"), ("available", "Torna disponibile"))
+            )
+            category = str(rule.get("category") or "system")
+            categories_for_rule = "".join(
+                f'<option value="{value}" {"selected" if value == category else ""}>{label}</option>'
+                for value, label in (("security", "Sicurezza"), ("climate", "Clima"), ("energy", "Energia"), ("routines", "Routine"), ("maintenance", "Manutenzione"), ("system", "Sistema"))
+            )
+            severity_value = str(rule.get("severity") or "info")
+            severities = "".join(
+                f'<option value="{value}" {"selected" if value == severity_value else ""}>{label}</option>'
+                for value, label in (("info", "Informazione"), ("warning", "Avviso"), ("critical", "Critica"))
+            )
+            rule_rows.append(
+                f'<div class=notification-rule data-rule-id="{html.escape(str(rule.get("id") or ""))}"><label><input type=checkbox data-rule-enabled {"checked" if rule.get("enabled", True) else ""}> Attiva</label>'
+                f'<select data-rule-entity><option value="">Scegli entità</option>{options_for_rule}</select><select data-rule-trigger>{triggers}</select>'
+                f'<input data-rule-state placeholder="Stato, es. open/on" value="{html.escape(str(rule.get("target_state") or ""), quote=True)}">'
+                f'<select data-rule-category>{categories_for_rule}</select><select data-rule-severity>{severities}</select>'
+                f'<input data-rule-title maxlength=120 placeholder="Titolo automatico" value="{html.escape(str(rule.get("title") or ""), quote=True)}">'
+                f'<input data-rule-body maxlength=500 placeholder="Testo automatico" value="{html.escape(str(rule.get("body") or ""), quote=True)}"><button type=button data-remove-rule>Rimuovi</button></div>'
+            )
+        notification_rules = "".join(rule_rows)
         return f'''<article class=device-card data-preferences="{item.id}"><h2>{html.escape(item.display_name)}</h2>
 <p class=muted>{html.escape(", ".join(item.capabilities_json))}</p>
 <details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>I primi otto tasti sono sempre disponibili. Usa + per aggiungerne altri; dal nono in poi compaiono nell area launcher inferiore. Scegli un'icona standard oppure Custom MDI e inserisci, per esempio, mdi:gate.</p><div data-quick-rows>{quick_actions}</div><button type=button data-add-quick>+ Aggiungi tasto</button> <button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
+<details class=notification-rules open data-entity-options="{html.escape(entity_options, quote=True)}"><summary>Regole notifiche automatiche</summary><p class=muted>Scegli l'entità e quando avvisare questo orologio. Titolo e testo vuoti vengono compilati automaticamente.</p><div data-rule-rows>{notification_rules}</div><button type=button data-add-rule>+ Aggiungi regola</button> <button data-save-rules="{item.id}">Salva regole</button></details>
 <label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
 <fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
 <label>Priorità minima <select data-severity>{options}</select></label>
@@ -744,7 +816,7 @@ async def wear_management(
     capabilities = ",".join(sorted(CAPABILITIES))
     page = f"""<!doctype html><html lang=it><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Google Wear</title>
-<style>@font-face{{font-family:EkonexMDI;src:url('/bounded/wear/mdi-font') format('truetype');font-display:block}}:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-item{{border-radius:12px;transition:background .15s,opacity .15s}}.quick-item.dragging{{opacity:.55;background:#31434a}}.quick-row{{display:grid;grid-template-columns:96px 52px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px minmax(170px,1fr) 120px 120px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-order{{height:44px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:11px;background:var(--field);cursor:grab;user-select:none}}.quick-order:active{{cursor:grabbing}}.quick-handle{{width:22px;height:22px;color:var(--muted);flex:none}}.quick-preview{{width:46px;height:46px;border-radius:50%;border:3px solid #fff;background:#195fbe;display:grid;place-items:center;box-shadow:0 0 8px #0008}}.quick-preview span{{font:27px EkonexMDI;color:#d3d3d3;line-height:1}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row{{grid-template-columns:52px 52px 1fr}}.quick-row input,.quick-row select{{grid-column:3}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
+<style>@font-face{{font-family:EkonexMDI;src:url('/bounded/wear/mdi-font') format('truetype');font-display:block}}:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary,.notification-rules summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions,.notification-rules{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.notification-rule{{display:grid;grid-template-columns:auto minmax(210px,2fr) 160px 160px 135px 135px minmax(170px,1fr) minmax(210px,2fr) auto;gap:8px;align-items:center;margin:10px 0}}.quick-item{{border-radius:12px;transition:background .15s,opacity .15s}}.quick-item.dragging{{opacity:.55;background:#31434a}}.quick-row{{display:grid;grid-template-columns:96px 52px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px minmax(170px,1fr) 120px 120px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-order{{height:44px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:11px;background:var(--field);cursor:grab;user-select:none}}.quick-order:active{{cursor:grabbing}}.quick-handle{{width:22px;height:22px;color:var(--muted);flex:none}}.quick-preview{{width:46px;height:46px;border-radius:50%;border:3px solid #fff;background:#195fbe;display:grid;place-items:center;box-shadow:0 0 8px #0008}}.quick-preview span{{font:27px EkonexMDI;color:#d3d3d3;line-height:1}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row,.notification-rule{{grid-template-columns:1fr}}.quick-row input,.quick-row select{{grid-column:auto}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
 <h1>Google Wear</h1><p>Orologi legati a questo utente e a questo impianto.</p>
 <details class=installer-guide><summary>Installazione privata APK <span class=badge>Solo installatore</span></summary>
 <p>Questa procedura serve per installazioni private prima della distribuzione tramite Google Play. Non deve essere eseguita dal cliente finale.</p>
@@ -780,6 +852,11 @@ document.querySelectorAll('.quick-item').forEach(initQuickItem);
 </script>
 <script>document.querySelectorAll('[data-add-quick]').forEach(button=>button.onclick=()=>{{const rows=button.closest('.quick-actions').querySelector('[data-quick-rows]'),existing=[...rows.querySelectorAll('.quick-item')];if(existing.length>=32)return;const item=existing[existing.length-1].cloneNode(true),row=item.querySelector('[data-quick-slot]');row.querySelectorAll('input').forEach(input=>{{if(input.type==='checkbox')input.checked=false;else input.value=''}});row.querySelectorAll('select').forEach(select=>select.selectedIndex=0);rows.append(item);renumberQuickRows(rows);setQuickIcon(row,'scene');initQuickRow(row);initQuickItem(item)}});</script>
 <script>document.querySelectorAll('[data-save-quick]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),actions=[];for(const row of card.querySelectorAll('[data-quick-slot]')){{const label=row.querySelector('[data-quick-label]').value.trim(),utterance=row.querySelector('[data-quick-utterance]').value.trim(),target=row.querySelector('[data-quick-command]').value;if(!label&&!target&&!utterance)continue;if(!label||(!target&&!utterance)){{result.textContent='Scegli dispositivo e azione e inserisci l etichetta del tasto.';return}}const standard=row.querySelector('[data-quick-icon-standard]').value,custom=row.querySelector('[data-quick-icon-custom]').value.trim(),icon=standard==='__custom__'?custom:standard;if(!icon){{result.textContent='Inserisci il nome dell icona Custom MDI.';return}}const parts=target?target.split('|'):[null,null],confirmations=row.closest('.quick-item').querySelector('.quick-confirm');actions.push({{slot:Number(row.querySelector('[data-quick-position]').textContent),label,utterance:utterance||null,entity_id:parts[0],operation:parts[1],icon,color:row.querySelector('[data-quick-color]').value,border_color:row.querySelector('[data-quick-border-color]').value,icon_color:row.querySelector('[data-quick-icon-color]').value,confirmation:confirmations.querySelector('[data-quick-confirmation]').checked,confirmation_on_activate:confirmations.querySelector('[data-quick-confirmation-on-activate]').checked}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveQuick+'/quick-actions',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{actions}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Comandi rapidi salvati. Saranno visibili sul Wear entro 15 secondi.':'Salvataggio comandi rapidi non riuscito'}}catch(error){{actionError(error,'Salvataggio comandi rapidi non riuscito')}}}});</script>
+<script>
+function bindRuleRemoval(scope){{scope.querySelectorAll('[data-remove-rule]').forEach(button=>button.onclick=()=>button.closest('.notification-rule').remove())}}
+document.querySelectorAll('.notification-rules').forEach(section=>{{bindRuleRemoval(section);section.querySelector('[data-add-rule]').onclick=()=>{{const row=document.createElement('div');row.className='notification-rule';row.innerHTML='<label><input type=checkbox data-rule-enabled checked> Attiva</label><select data-rule-entity><option value="">Scegli entità</option>'+section.dataset.entityOptions+'</select><select data-rule-trigger><option value="any_change">Qualsiasi cambio</option><option value="becomes">Diventa stato</option><option value="unavailable">Non disponibile</option><option value="available">Torna disponibile</option></select><input data-rule-state placeholder="Stato, es. open/on"><select data-rule-category><option value="security">Sicurezza</option><option value="climate">Clima</option><option value="energy">Energia</option><option value="routines">Routine</option><option value="maintenance">Manutenzione</option><option value="system" selected>Sistema</option></select><select data-rule-severity><option value="info">Informazione</option><option value="warning">Avviso</option><option value="critical">Critica</option></select><input data-rule-title maxlength=120 placeholder="Titolo automatico"><input data-rule-body maxlength=500 placeholder="Testo automatico"><button type=button data-remove-rule>Rimuovi</button>';section.querySelector('[data-rule-rows]').append(row);bindRuleRemoval(row)}}}});
+document.querySelectorAll('[data-save-rules]').forEach(button=>button.onclick=async()=>{{const section=button.closest('.notification-rules'),rules=[];for(const row of section.querySelectorAll('.notification-rule')){{const entity_id=row.querySelector('[data-rule-entity]').value,trigger=row.querySelector('[data-rule-trigger]').value,target_state=row.querySelector('[data-rule-state]').value.trim()||null;if(!entity_id){{result.textContent='Scegli un entità per ogni regola.';return}}if(trigger==='becomes'&&!target_state){{result.textContent='Inserisci lo stato da rilevare.';return}}rules.push({{id:row.dataset.ruleId||null,enabled:row.querySelector('[data-rule-enabled]').checked,entity_id,trigger,target_state,category:row.querySelector('[data-rule-category]').value,severity:row.querySelector('[data-rule-severity]').value,title:row.querySelector('[data-rule-title]').value.trim()||null,body:row.querySelector('[data-rule-body]').value.trim()||null}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveRules+'/notification-rules',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{rules}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Regole automatiche salvate.':'Salvataggio regole non riuscito';if(response.ok)setTimeout(()=>location.reload(),500)}}catch(error){{actionError(error,'Salvataggio regole non riuscito')}}}});
+</script>
 </body></html>"""
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
@@ -891,6 +968,7 @@ async def update_notification_preferences(
         "quiet_end": payload.quiet_end,
         "timezone": payload.timezone,
         "quick_actions": existing.get("quick_actions", []),
+        "notification_rules": existing.get("notification_rules", []),
     }
     await session.commit()
     return {"device_id": str(device.id), "preferences": device.notification_preferences_json}
@@ -952,6 +1030,53 @@ async def update_quick_actions(
     return {"device_id": str(device.id), "quick_actions": preferences["quick_actions"]}
 
 
+@router.patch("/bounded/wear/devices/{device_id}/notification-rules")
+async def update_notification_rules(
+    device_id: UUID,
+    payload: NotificationRulesRequest,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    x_ekonex_csrf: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    context.require("use")
+    if x_ekonex_csrf != _ui_csrf(context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    if any(item.category not in NOTIFICATION_CATEGORIES for item in payload.rules):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    entity_ids = {item.entity_id for item in payload.rules}
+    valid_ids = set(
+        (
+            await session.scalars(
+                select(Entity.id).where(
+                    Entity.id.in_(entity_ids),
+                    Entity.installation_id == context.effective_installation_id,
+                    Entity.deleted_at.is_(None),
+                )
+            )
+        ).all()
+    )
+    if valid_ids != entity_ids:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "notification_rule_entity_invalid")
+    preferences = dict(device.notification_preferences_json or {})
+    preferences["notification_rules"] = [
+        {**item.model_dump(mode="json"), "id": str(item.id or uuid4())} for item in payload.rules
+    ]
+    device.notification_preferences_json = preferences
+    await session.commit()
+    return {"device_id": str(device.id), "notification_rules": preferences["notification_rules"]}
+
+
 @router.post("/bounded/wear/devices/{device_id}/notifications/test")
 async def create_test_notification(
     device_id: UUID,
@@ -974,9 +1099,8 @@ async def create_test_notification(
     )
     if device is None or "notification.receive" not in device.capabilities_json:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
-    created = await WearNotificationService(session).enqueue_for_installation(
-        tenant_id=context.tenant_id,
-        installation_id=context.effective_installation_id,
+    created = await WearNotificationService(session).enqueue_for_device(
+        device=device,
         event_key=f"wear-test:{device.id}:{datetime.now(UTC).isoformat()}",
         category="system",
         severity="info",

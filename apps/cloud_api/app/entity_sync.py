@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,11 +165,13 @@ class EntitySyncService:
         if revision != self._installation.sync_revision + 1:
             raise StaleSyncError
         changed_entities: list[Entity] = []
+        previous_values: list[tuple[UUID, str | None, bool]] = []
         for item in items:
             entity = await self._by_registry(str(item["registry_id"]))
             if entity is None or entity.deleted_at is not None:
                 raise StaleSyncError
             previous_state, previous_available = entity.state, entity.available
+            previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
@@ -195,6 +198,9 @@ class EntitySyncService:
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
+        from .wear_notification_rules import schedule_wear_rule_evaluation
+
+        schedule_wear_rule_evaluation(self._installation.id, previous_values)
         from .media_api import _enrich_echo_players, _groups, _player
         from .media_realtime import media_events
 
