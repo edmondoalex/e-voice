@@ -174,7 +174,8 @@ class EntityInventorySynchronizer:
                         await started.wait()
                 except TimeoutError:
                     _LOGGER.warning(
-                        "Home Assistant start event not observed; sending preserved registry inventory"
+                        "Home Assistant start event not observed; "
+                        "sending preserved registry inventory"
                     )
             await self._send_full()
         finally:
