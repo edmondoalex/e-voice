@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' version '8.7.3'; id 'com.google.gms.google-services' version '4.6.0' }
 android {
  namespace 'it.ekonex.voice.watch'; compileSdk 35
- defaultConfig { applicationId 'it.ekonex.voice.watch'; minSdk 30; targetSdk 35; versionCode 18; versionName '0.1.17'; buildConfigField 'String','EKONEX_API_BASE','"https://voice.e-control.tech/api/wear/v1"' }
+ defaultConfig { applicationId 'it.ekonex.voice.watch'; minSdk 30; targetSdk 35; versionCode 19; versionName '0.1.18'; buildConfigField 'String','EKONEX_API_BASE','"https://voice.e-control.tech/api/wear/v1"' }
  buildFeatures { buildConfig true }
  sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs=['src']; res.srcDirs=['res'] } }
  buildTypes { release { minifyEnabled false } }
