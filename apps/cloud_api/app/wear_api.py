@@ -534,6 +534,15 @@ async def wear_mdi_glyph(
     _context: Annotated[BoundContext, bound_context_dependency],
 ) -> dict[str, str]:
     normalized = name.removeprefix("mdi:").strip().lower()
+    normalized = {
+        "light": "lightbulb",
+        "power": "power",
+        "climate": "thermostat",
+        "blind": "blinds",
+        "lock": "shield-home",
+        "music": "music",
+        "scene": "creation",
+    }.get(normalized, normalized)
     codepoint = MDI_CODEPOINTS.get(normalized) or MDI_CODEPOINTS["help-circle-outline"]
     return {"glyph": chr(int(codepoint, 16))}
 
