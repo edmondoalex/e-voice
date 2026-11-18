@@ -111,9 +111,9 @@ class EntitySyncService:
             len(seen),
             tombstoned,
         )
-        from .alexa_events import reconcile_discovery_safely
+        from .alexa_events import schedule_discovery_reconciliation
 
-        await reconcile_discovery_safely(self._session, self._installation)
+        schedule_discovery_reconciliation(self._installation.id)
         from .media_realtime import media_events
 
         media_events.publish(
@@ -154,9 +154,9 @@ class EntitySyncService:
                 await self._upsert(item)
         self._installation.sync_revision = revision
         await self._session.commit()
-        from .alexa_events import reconcile_discovery_safely
+        from .alexa_events import schedule_discovery_reconciliation
 
-        await reconcile_discovery_safely(self._session, self._installation)
+        schedule_discovery_reconciliation(self._installation.id)
         from .media_realtime import media_events
 
         media_events.publish(

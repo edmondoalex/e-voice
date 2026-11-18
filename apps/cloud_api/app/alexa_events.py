@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from cryptography.fernet import Fernet
@@ -572,3 +572,23 @@ async def reconcile_discovery_safely(
         return None
     finally:
         await gateway.close()
+
+
+def schedule_discovery_reconciliation(installation_id: UUID) -> None:
+    """Reconcile Alexa without blocking the Connector receive loop."""
+    task = asyncio.create_task(_reconcile_discovery_after_sync(installation_id))
+    task.add_done_callback(_log_reconciliation_error)
+
+
+def _log_reconciliation_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("alexa_discovery_reconciliation_failed", exc_info=task.exception())
+
+
+async def _reconcile_discovery_after_sync(installation_id: UUID) -> None:
+    from .database import async_session_factory
+
+    async with async_session_factory() as session:
+        installation = await session.get(Installation, installation_id)
+        if installation is not None:
+            await reconcile_discovery_safely(session, installation)

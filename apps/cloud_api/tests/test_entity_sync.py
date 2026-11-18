@@ -2,7 +2,7 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -158,10 +158,12 @@ async def test_inventory_commit_triggers_proactive_discovery_reconciliation(
         seeded_domain.installation_a_id,  # type: ignore[attr-defined]
     )
     assert installation is not None
-    reconcile = AsyncMock(return_value=0)
-    monkeypatch.setattr("apps.cloud_api.app.alexa_events.reconcile_discovery_safely", reconcile)
+    reconcile = MagicMock()
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa_events.schedule_discovery_reconciliation", reconcile
+    )
     await EntitySyncService(session, installation).apply_full(1, [item()])
-    reconcile.assert_awaited_once_with(session, installation)
+    reconcile.assert_called_once_with(installation.id)
 
 
 async def test_laboratory_state_sync_never_reports_to_alexa(
