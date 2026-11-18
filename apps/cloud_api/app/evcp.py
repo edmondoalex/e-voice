@@ -272,7 +272,14 @@ class ConnectorSessionRegistry:
                     self._sessions.pop(installation_id, None)
                 self._sessions[installation_id] = handle
                 self._transitioning.discard(installation_id)
-            await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+            try:
+                async with asyncio.timeout(1.0):
+                    await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+            except TimeoutError:
+                logger.warning(
+                    "Timed out closing replaced connector session installation_id=%s",
+                    installation_id,
+                )
             diagnostic = _session_diagnostic(
                 installation_id,
                 handle,
