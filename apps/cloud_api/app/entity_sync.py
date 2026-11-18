@@ -27,6 +27,24 @@ class EntitySyncService:
     async def apply_full(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision <= self._installation.sync_revision:
             raise StaleSyncError
+        existing_before = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(Entity.installation_id == self._installation.id)
+                )
+            ).all()
+        )
+        previous_by_registry = {
+            entity.ha_registry_id: (entity.id, entity.state, entity.available)
+            for entity in existing_before
+            if entity.ha_registry_id is not None and entity.deleted_at is None
+        }
+        previous_by_entity_id = {
+            entity.ha_entity_id: (entity.id, entity.state, entity.available)
+            for entity in existing_before
+            if entity.deleted_at is None
+        }
+        previous_values: list[tuple[UUID, str | None, bool]] = []
         previous_media_ids = set(
             (
                 await self._session.scalars(
@@ -40,8 +58,16 @@ class EntitySyncService:
         )
         seen: set[str] = set()
         for item in items:
-            seen.add(str(item["registry_id"]))
-            await self._upsert(item)
+            registry_id = str(item["registry_id"])
+            seen.add(registry_id)
+            previous = previous_by_registry.get(registry_id) or previous_by_entity_id.get(
+                str(item["entity_id"])
+            )
+            entity = await self._upsert(item)
+            if previous is not None and (
+                previous[1] != entity.state or previous[2] != entity.available
+            ):
+                previous_values.append(previous)
         existing = await self._session.scalars(
             select(Entity).where(Entity.installation_id == self._installation.id)
         )
@@ -62,6 +88,10 @@ class EntitySyncService:
         self._installation.sync_revision = revision
         self._installation.inventory_synced_at = now
         await self._session.commit()
+        if previous_values:
+            from .wear_notification_rules import schedule_wear_rule_evaluation
+
+            schedule_wear_rule_evaluation(self._installation.id, previous_values)
         logger.debug(
             "Full entity inventory committed: revision=%d active=%d tombstoned=%d",
             revision,

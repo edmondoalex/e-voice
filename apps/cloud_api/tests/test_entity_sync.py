@@ -64,6 +64,27 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     assert not entity.available
 
 
+async def test_reconnect_snapshot_evaluates_rules_only_for_existing_state_changes(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    scheduled: list[tuple[object, list[tuple[object, str | None, bool]]]] = []
+    monkeypatch.setattr(
+        "apps.cloud_api.app.wear_notification_rules.schedule_wear_rule_evaluation",
+        lambda installation_id, changes: scheduled.append((installation_id, changes)),
+    )
+
+    await service.apply_full(1, [item(state="on")])
+    assert scheduled == []
+
+    await service.apply_full(2, [item(state="off")])
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == installation.id
+    assert scheduled[0][1][0][1:] == ("on", True)
+
+
 async def test_inventory_removes_nul_characters_before_database_write(
     session: AsyncSession, seeded_domain: object
 ) -> None:
