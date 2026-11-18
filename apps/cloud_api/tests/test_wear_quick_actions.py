@@ -174,6 +174,13 @@ def test_switch_backed_gate_uses_open_close_labels_but_power_operations():
     assert _wear_success_speech(entity, "power_off") == "Ho chiuso"
 
 
+def test_lock_operations_have_success_speech():
+    entity = SimpleNamespace(ha_domain="lock", alexa_device_type=None)
+
+    assert _wear_success_speech(entity, "unlock") == "Ho aperto"
+    assert _wear_success_speech(entity, "lock") == "Ho chiuso"
+
+
 def test_voice_open_close_gate_uses_native_switch_power_command():
     entity = SimpleNamespace(ha_domain="switch", alexa_device_type="gate")
 

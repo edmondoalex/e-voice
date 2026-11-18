@@ -327,6 +327,8 @@ def _wear_success_speech(entity: Entity, operation: str) -> str:
         "close": "Ho chiuso",
         "activate": "Ho attivato",
         "press": "Ho premuto",
+        "unlock": "Ho aperto",
+        "lock": "Ho chiuso",
     }[operation]
 
 
