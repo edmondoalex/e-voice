@@ -7,8 +7,8 @@ param(
     [string]$OutputName = ''
 )
 $ErrorActionPreference = 'Stop'
-$releaseVersion = '0.1.9'
-$releaseCode = '10'
+$releaseVersion = '0.1.10'
+$releaseCode = '11'
 $officialCertificateSha256 = '157257dbaf141e76044e3dc071cba5d23be42fbf052a2d9ceb8ba228ebc7a6e4'
 $apiBase = switch ($Environment) {
     'Production' { 'https://voice.e-control.tech/api/wear/v1' }
