@@ -36,6 +36,7 @@ class EntitySyncService:
                 )
             ).all()
         )
+        active_before = sum(entity.deleted_at is None for entity in existing_before)
         previous_by_registry = {
             entity.ha_registry_id: (entity.id, entity.state, entity.available)
             for entity in existing_before
@@ -88,8 +89,20 @@ class EntitySyncService:
         )
         now = datetime.now(UTC)
         tombstoned = 0
+        allow_tombstones = active_before < 100 or len(seen) >= active_before // 2
+        if not allow_tombstones:
+            logger.warning(
+                "Preserving existing inventory after suspicious partial snapshot: "
+                "previous=%d incoming=%d",
+                active_before,
+                len(seen),
+            )
         for entity in existing:
-            if entity.ha_registry_id not in seen and entity.deleted_at is None:
+            if (
+                allow_tombstones
+                and entity.ha_registry_id not in seen
+                and entity.deleted_at is None
+            ):
                 previous_state, previous_available = entity.state, entity.available
                 entity.deleted_at = now
                 entity.available = False

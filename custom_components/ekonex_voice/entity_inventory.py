@@ -11,6 +11,7 @@ from typing import Any
 from aiohttp import ClientConnectionError, ClientWebSocketResponse
 from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
+    EVENT_HOMEASSISTANT_STARTED,
     EVENT_STATE_CHANGED,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -94,6 +95,7 @@ class EntityInventorySynchronizer:
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self._initial_sync_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
         self.last_full_revision: int | None = None
         self.last_full_entity_count: int | None = None
@@ -148,14 +150,40 @@ class EntityInventorySynchronizer:
         self._unsubscribers.append(
             self._hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed)
         )
-        await self._send_full()
+        if self._hass.is_running:
+            await self._send_full()
+        else:
+            self._initial_sync_task = self._hass.async_create_background_task(
+                self._send_full_when_started(),
+                "ekonex_voice_initial_inventory",
+                eager_start=True,
+            )
+
+    async def _send_full_when_started(self) -> None:
+        started = asyncio.Event()
+
+        @callback
+        def _started(_: Event[Any]) -> None:
+            started.set()
+
+        unsubscribe = self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
+        try:
+            if not self._hass.is_running:
+                await started.wait()
+            await self._send_full()
+        finally:
+            unsubscribe()
 
     async def async_stop(self) -> None:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        tasks = tuple(task for task in (self._flush_task, self._resync_task) if task is not None)
-        self._flush_task = self._resync_task = None
+        tasks = tuple(
+            task
+            for task in (self._flush_task, self._resync_task, self._initial_sync_task)
+            if task is not None
+        )
+        self._flush_task = self._resync_task = self._initial_sync_task = None
         self._websocket = None
         self._session_id = None
         for task in tasks:
