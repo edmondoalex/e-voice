@@ -175,7 +175,9 @@ class EntitySyncService:
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
-            entity.attributes_json = _sanitize_json(attributes) if isinstance(attributes, dict) else {}
+            entity.attributes_json = (
+                _sanitize_json(attributes) if isinstance(attributes, dict) else {}
+            )
             _store_device_metadata(entity, item)
             if entity.ha_domain == "media_player":
                 entity.attributes_json["_experiences"] = _experiences(item)
