@@ -174,7 +174,6 @@ class EntitySyncService:
             previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
-            entity.control_exposed = bool(item.get("control_exposed", True))
             attributes = item.get("attributes", {})
             entity.attributes_json = attributes if isinstance(attributes, dict) else {}
             _store_device_metadata(entity, item)
@@ -358,7 +357,9 @@ class EntitySyncService:
         entity.supported_features = supported_features if isinstance(supported_features, int) else 0
         entity.state = _optional(item, "state")
         entity.available = bool(item.get("available", True))
-        entity.control_exposed = bool(item.get("control_exposed", True))
+        incoming_exposed = bool(item.get("control_exposed", True))
+        if is_new or incoming_exposed:
+            entity.control_exposed = incoming_exposed
         attributes = item.get("attributes", {})
         entity.attributes_json = attributes if isinstance(attributes, dict) else {}
         _store_device_metadata(entity, item)
