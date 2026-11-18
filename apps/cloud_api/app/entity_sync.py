@@ -26,7 +26,9 @@ class EntitySyncService:
 
     async def apply_full(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision <= self._installation.sync_revision:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"full_revision_not_new:{revision}<={self._installation.sync_revision}"
+            )
         existing_before = list(
             (
                 await self._session.scalars(
@@ -126,7 +128,9 @@ class EntitySyncService:
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"delta_revision_gap:{revision}!={self._installation.sync_revision + 1}"
+            )
         previous_media_ids = set(
             (
                 await self._session.scalars(
@@ -206,13 +210,17 @@ class EntitySyncService:
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
         if revision != self._installation.sync_revision + 1:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"state_revision_gap:{revision}!={self._installation.sync_revision + 1}"
+            )
         changed_entities: list[Entity] = []
         previous_values: list[tuple[UUID, str | None, bool]] = []
         for item in items:
             entity = await self._by_registry(str(item["registry_id"]))
             if entity is None or entity.deleted_at is not None:
-                raise StaleSyncError
+                raise StaleSyncError(
+                    f"state_entity_missing:{str(item['registry_id'])[:80]}"
+                )
             previous_state, previous_available = entity.state, entity.available
             previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")

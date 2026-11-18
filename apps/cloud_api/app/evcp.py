@@ -1009,9 +1009,11 @@ async def connector_websocket(
                 return
             try:
                 await _apply_entity_sync(database, installation, installation_id, message)
-            except StaleSyncError:
+            except StaleSyncError as error:
                 logger.warning(
-                    "Entity synchronization rejected: stale revision=%d", message.payload.revision
+                    "Entity synchronization rejected: stale revision=%d reason=%s",
+                    message.payload.revision,
+                    error,
                 )
                 await _safe_close(websocket, 4009, "STALE_REVISION")
                 return
