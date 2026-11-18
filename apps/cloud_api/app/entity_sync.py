@@ -217,12 +217,16 @@ class EntitySyncService:
         previous_values: list[tuple[UUID, str | None, bool]] = []
         for item in items:
             entity = await self._by_registry(str(item["registry_id"]))
+            is_new_or_reappeared = entity is None or entity.deleted_at is not None
+            if is_new_or_reappeared:
+                entity = await self._upsert(item)
             if entity is None or entity.deleted_at is not None:
                 raise StaleSyncError(
                     f"state_entity_missing:{str(item['registry_id'])[:80]}"
                 )
             previous_state, previous_available = entity.state, entity.available
-            previous_values.append((entity.id, previous_state, previous_available))
+            if not is_new_or_reappeared:
+                previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})

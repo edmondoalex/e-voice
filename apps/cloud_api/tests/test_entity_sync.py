@@ -124,6 +124,28 @@ async def test_reconnect_snapshot_reuses_preloaded_entities_without_per_item_loo
     await service.apply_full(2, [item(state="off")])
 
 
+async def test_state_update_adds_entity_created_after_full_inventory(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [])
+
+    created = {
+        **item(registry_id="registry-created-after-full", state="on"),
+        "entity_id": "binary_sensor.created_after_full",
+        "domain": "binary_sensor",
+    }
+    await service.apply_state(2, [created])
+
+    entity = await service._by_registry("registry-created-after-full")
+    assert entity is not None
+    assert entity.ha_entity_id == "binary_sensor.created_after_full"
+    assert entity.state == "on"
+    assert entity.deleted_at is None
+
+
 async def test_cover_device_class_survives_inventory_database_and_discovery(
     session: AsyncSession, seeded_domain: object
 ) -> None:
