@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import websockets as starlette_websockets
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from .connector_compatibility import (
@@ -30,6 +31,13 @@ from .database import get_database_session
 from .domain.models import AuditEvent, ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
+
+_websocket_disconnected = getattr(starlette_websockets, "WebSocketDisconnected", None)
+WEBSOCKET_DISCONNECT_EXCEPTIONS = (
+    (WebSocketDisconnect, _websocket_disconnected)
+    if isinstance(_websocket_disconnected, type)
+    else (WebSocketDisconnect,)
+)
 
 PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 1_048_576
@@ -1028,7 +1036,7 @@ async def connector_websocket(
     except (ValidationError, ValueError):
         logger.warning("Connector EVCP message rejected: invalid schema or batch sequence")
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
-    except WebSocketDisconnect:
+    except WEBSOCKET_DISCONNECT_EXCEPTIONS:
         pass
     finally:
         if registered:
