@@ -16,6 +16,27 @@ from .wear_notifications import WearNotificationService
 logger = logging.getLogger(__name__)
 
 
+def render_wear_rule_message(
+    rule: dict[str, object], entity: Entity, previous_state: str | None = None
+) -> tuple[str, str]:
+    name = entity.voice_name or entity.display_name or entity.friendly_name or entity.ha_entity_id
+    value = entity.state or ("disponibile" if entity.available else "non disponibile")
+    replacements = {
+        "{nome}": name,
+        "{valore}": value,
+        "{valore_precedente}": previous_state or "—",
+        "{id}": entity.ha_entity_id,
+    }
+
+    def render(template: object, fallback: str, limit: int) -> str:
+        result = str(template or fallback)
+        for marker, replacement in replacements.items():
+            result = result.replace(marker, replacement)
+        return result[:limit]
+
+    return render(rule.get("title"), name, 120), render(rule.get("body"), f"{name}: {value}", 500)
+
+
 def schedule_wear_rule_evaluation(
     installation_id: UUID, changes: list[tuple[UUID, str | None, bool]]
 ) -> None:
@@ -95,22 +116,17 @@ async def evaluate_wear_notification_rules(
             )
             if not matched:
                 continue
-            name = (
-                entity.voice_name
-                or entity.display_name
-                or entity.friendly_name
-                or entity.ha_entity_id
-            )
             state_text = new_state or ("disponibile" if entity.available else "non disponibile")
             observed_at = entity.updated_at or entity.last_changed_at
             event_stamp = observed_at.isoformat() if observed_at else state_text
+            title, body = render_wear_rule_message(rule, entity, old_state)
             created += await service.enqueue_for_device(
                 device=device,
                 event_key=f"wear-rule:{str(rule.get('id'))[:36]}:{event_stamp}"[:120],
                 category=str(rule.get("category") or "system"),
                 severity=str(rule.get("severity") or "info"),
-                title=str(rule.get("title") or name)[:120],
-                body=str(rule.get("body") or f"{name}: {state_text}")[:500],
+                title=title,
+                body=body,
             )
     await session.commit()
     return created

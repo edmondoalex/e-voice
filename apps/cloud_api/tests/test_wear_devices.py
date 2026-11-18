@@ -324,7 +324,7 @@ async def test_notification_rule_creates_event_only_on_matching_transition(sessi
                 "category": "security",
                 "severity": "warning",
                 "title": "Luce cucina",
-                "body": None,
+                "body": "{nome}: da {valore_precedente} a {valore} ({id})",
             }
         ],
     }
@@ -347,4 +347,4 @@ async def test_notification_rule_creates_event_only_on_matching_transition(sessi
     assert item is not None
     assert item.device_id == device.id
     assert item.title == "Luce cucina"
-    assert item.body == "Kitchen: on"
+    assert item.body == "Kitchen: da off a on (light.kitchen)"

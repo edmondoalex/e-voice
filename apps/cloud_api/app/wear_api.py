@@ -36,6 +36,7 @@ from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
 from .installation_bound_api import UI_OPERATIONS, _frame_policy, _ui_csrf, bound_context_dependency
 from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
+from .wear_notification_rules import render_wear_rule_message
 from .wear_notifications import WearNotificationService
 
 router = APIRouter(tags=["wear"])
@@ -815,13 +816,13 @@ async def wear_management(
                 f'<input data-rule-state placeholder="Stato, es. open/on" value="{html.escape(str(rule.get("target_state") or ""), quote=True)}">'
                 f'<select data-rule-category>{categories_for_rule}</select><select data-rule-severity>{severities}</select>'
                 f'<input data-rule-title maxlength=120 placeholder="Titolo automatico" value="{html.escape(str(rule.get("title") or ""), quote=True)}">'
-                f'<input data-rule-body maxlength=500 placeholder="Testo automatico" value="{html.escape(str(rule.get("body") or ""), quote=True)}"><button type=button data-remove-rule>Rimuovi</button></div>'
+                f'<input data-rule-body maxlength=500 placeholder="Testo: {{valore}}" value="{html.escape(str(rule.get("body") or ""), quote=True)}"><button type=button data-test-rule>Prova</button><button type=button data-remove-rule>Rimuovi</button></div>'
             )
         notification_rules = "".join(rule_rows)
         return f'''<article class=device-card data-preferences="{item.id}"><h2>{html.escape(item.display_name)}</h2>
 <p class=muted>{html.escape(", ".join(item.capabilities_json))}</p>
 <details class=quick-actions open><summary>Comandi rapidi</summary><p class=muted>I primi otto tasti sono sempre disponibili. Usa + per aggiungerne altri; dal nono in poi compaiono nell area launcher inferiore. Scegli un'icona standard oppure Custom MDI e inserisci, per esempio, mdi:gate.</p><div data-quick-rows>{quick_actions}</div><button type=button data-add-quick>+ Aggiungi tasto</button> <button data-save-quick="{item.id}">Salva comandi rapidi</button></details>
-<details class=notification-rules open data-entity-options="{html.escape(entity_options, quote=True)}"><summary>Regole notifiche automatiche</summary><p class=muted>Scegli l'entità e quando avvisare questo orologio. Titolo e testo vuoti vengono compilati automaticamente.</p><div data-rule-rows>{notification_rules}</div><button type=button data-add-rule>+ Aggiungi regola</button> <button data-save-rules="{item.id}">Salva regole</button> <button type=button data-test="{item.id}">Prova notifica</button></details>
+<details class=notification-rules open data-device-id="{item.id}" data-entity-options="{html.escape(entity_options, quote=True)}"><summary>Regole notifiche automatiche</summary><p class=muted>Nel titolo e nel testo puoi usare {{nome}}, {{valore}}, {{valore_precedente}} e {{id}}. Titolo e testo vuoti vengono compilati automaticamente.</p><div data-rule-rows>{notification_rules}</div><button type=button data-add-rule>+ Aggiungi regola</button> <button data-save-rules="{item.id}">Salva regole</button></details>
 <label class=switch><input type=checkbox data-enabled {"checked" if preferences.get("enabled", True) else ""}> Notifiche attive</label>
 <fieldset><legend>Categorie</legend><div class=categories>{categories}</div></fieldset>
 <label>Priorità minima <select data-severity>{options}</select></label>
@@ -872,8 +873,9 @@ document.querySelectorAll('.quick-item').forEach(initQuickItem);
 <script>
 function ruleRows(scope){{return scope.matches&&scope.matches('.notification-rule')?[scope]:[...scope.querySelectorAll('.notification-rule')]}}
 function ruleEntityOptions(section){{if(section._entityOptions)return section._entityOptions;const source=document.createElement('select');source.innerHTML=section.dataset.entityOptions;section._entityOptions=[...source.options].map(option=>({{value:option.value,text:option.textContent}}));return section._entityOptions}}
-function bindRuleRemoval(scope){{ruleRows(scope).forEach(row=>{{const remove=row.querySelector('[data-remove-rule]');if(remove)remove.onclick=()=>row.remove();const search=row.querySelector('[data-rule-search]'),select=row.querySelector('[data-rule-entity]'),section=row.closest('.notification-rules'),options=ruleEntityOptions(section),normalize=value=>value.toLocaleLowerCase('it').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim();const filter=()=>{{const query=normalize(search.value),words=query.split(' ').filter(Boolean),current=select.value,matches=query.length<2?[]:options.filter(option=>words.every(word=>normalize(option.text+' '+option.value).includes(word))).slice(0,200);select.replaceChildren(new Option(query.length<2?'Digita almeno 2 caratteri':matches.length+' risultati',''),...matches.map(option=>new Option(option.text,option.value)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=matches.length===1?1:0;search.setAttribute('aria-label',matches.length+' risultati')}};search.addEventListener('input',filter);search.addEventListener('search',filter);if(search.value)filter()}})}}
-document.querySelectorAll('.notification-rules').forEach(section=>{{bindRuleRemoval(section);section.querySelector('[data-add-rule]').onclick=()=>{{const row=document.createElement('div');row.className='notification-rule';row.innerHTML='<label><input type=checkbox data-rule-enabled checked> Attiva</label><input data-rule-search type=search placeholder="Cerca nome, area, tipo o ID" autocomplete=off><select data-rule-entity><option value="">Digita almeno 2 caratteri</option></select><select data-rule-trigger><option value="any_change">Qualsiasi cambio</option><option value="becomes">Diventa stato</option><option value="unavailable">Non disponibile</option><option value="available">Torna disponibile</option></select><input data-rule-state placeholder="Stato, es. open/on"><select data-rule-category><option value="security">Sicurezza</option><option value="climate">Clima</option><option value="energy">Energia</option><option value="routines">Routine</option><option value="maintenance">Manutenzione</option><option value="system" selected>Sistema</option></select><select data-rule-severity><option value="info">Informazione</option><option value="warning">Avviso</option><option value="critical">Critica</option></select><input data-rule-title maxlength=120 placeholder="Titolo automatico"><input data-rule-body maxlength=500 placeholder="Testo automatico"><button type=button data-remove-rule>Rimuovi</button>';section.querySelector('[data-rule-rows]').append(row);bindRuleRemoval(row)}}}});
+function rulePayload(row){{return {{id:row.dataset.ruleId||null,enabled:row.querySelector('[data-rule-enabled]').checked,entity_id:row.querySelector('[data-rule-entity]').value,trigger:row.querySelector('[data-rule-trigger]').value,target_state:row.querySelector('[data-rule-state]').value.trim()||null,category:row.querySelector('[data-rule-category]').value,severity:row.querySelector('[data-rule-severity]').value,title:row.querySelector('[data-rule-title]').value.trim()||null,body:row.querySelector('[data-rule-body]').value.trim()||null}}}}
+function bindRuleRemoval(scope){{ruleRows(scope).forEach(row=>{{const remove=row.querySelector('[data-remove-rule]');if(remove)remove.onclick=()=>row.remove();const search=row.querySelector('[data-rule-search]'),select=row.querySelector('[data-rule-entity]'),section=row.closest('.notification-rules'),options=ruleEntityOptions(section),normalize=value=>value.toLocaleLowerCase('it').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim();const filter=()=>{{const query=normalize(search.value),words=query.split(' ').filter(Boolean),current=select.value,matches=query.length<2?[]:options.filter(option=>words.every(word=>normalize(option.text+' '+option.value).includes(word))).slice(0,200);select.replaceChildren(new Option(query.length<2?'Digita almeno 2 caratteri':matches.length+' risultati',''),...matches.map(option=>new Option(option.text,option.value)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=matches.length===1?1:0;search.setAttribute('aria-label',matches.length+' risultati')}};search.addEventListener('input',filter);search.addEventListener('search',filter);if(search.value)filter();const test=row.querySelector('[data-test-rule]');if(test)test.onclick=async()=>{{const payload=rulePayload(row);if(!payload.entity_id){{result.textContent='Scegli prima l entità da provare.';return}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+section.dataset.deviceId+'/notification-rules/test',{{method:'POST',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(payload)}}),value=await response.json();result.textContent=response.ok&&value.created?'Notifica della regola inviata.':response.ok?'Notifica non inviata: controlla preferenze e categoria.':'Prova della regola non riuscita'}}catch(error){{actionError(error,'Prova della regola non riuscita')}}}}}})}}
+document.querySelectorAll('.notification-rules').forEach(section=>{{bindRuleRemoval(section);section.querySelector('[data-add-rule]').onclick=()=>{{const row=document.createElement('div');row.className='notification-rule';row.innerHTML='<label><input type=checkbox data-rule-enabled checked> Attiva</label><input data-rule-search type=search placeholder="Cerca nome, area, tipo o ID" autocomplete=off><select data-rule-entity><option value="">Digita almeno 2 caratteri</option></select><select data-rule-trigger><option value="any_change">Qualsiasi cambio</option><option value="becomes">Diventa stato</option><option value="unavailable">Non disponibile</option><option value="available">Torna disponibile</option></select><input data-rule-state placeholder="Stato, es. open/on"><select data-rule-category><option value="security">Sicurezza</option><option value="climate">Clima</option><option value="energy">Energia</option><option value="routines">Routine</option><option value="maintenance">Manutenzione</option><option value="system" selected>Sistema</option></select><select data-rule-severity><option value="info">Informazione</option><option value="warning">Avviso</option><option value="critical">Critica</option></select><input data-rule-title maxlength=120 placeholder="Titolo automatico"><input data-rule-body maxlength=500 placeholder="Testo: {{valore}}"><button type=button data-test-rule>Prova</button><button type=button data-remove-rule>Rimuovi</button>';section.querySelector('[data-rule-rows]').append(row);bindRuleRemoval(row)}}}});
 document.querySelectorAll('[data-save-rules]').forEach(button=>button.onclick=async()=>{{const section=button.closest('.notification-rules'),rules=[];for(const row of section.querySelectorAll('.notification-rule')){{const entity_id=row.querySelector('[data-rule-entity]').value,trigger=row.querySelector('[data-rule-trigger]').value,target_state=row.querySelector('[data-rule-state]').value.trim()||null;if(!entity_id){{result.textContent='Scegli un entità per ogni regola.';return}}if(trigger==='becomes'&&!target_state){{result.textContent='Inserisci lo stato da rilevare.';return}}rules.push({{id:row.dataset.ruleId||null,enabled:row.querySelector('[data-rule-enabled]').checked,entity_id,trigger,target_state,category:row.querySelector('[data-rule-category]').value,severity:row.querySelector('[data-rule-severity]').value,title:row.querySelector('[data-rule-title]').value.trim()||null,body:row.querySelector('[data-rule-body]').value.trim()||null}})}}try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.saveRules+'/notification-rules',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify({{rules}})}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Regole automatiche salvate.':'Salvataggio regole non riuscito';if(response.ok)setTimeout(()=>location.reload(),500)}}catch(error){{actionError(error,'Salvataggio regole non riuscito')}}}});
 </script>
 </body></html>"""
@@ -1125,6 +1127,49 @@ async def create_test_notification(
         severity="info",
         title=payload.title,
         body=payload.body,
+    )
+    await session.commit()
+    return {"created": created}
+
+
+@router.post("/bounded/wear/devices/{device_id}/notification-rules/test")
+async def create_rule_test_notification(
+    device_id: UUID,
+    payload: NotificationRuleRequest,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+    x_ekonex_csrf: Annotated[str | None, Header()] = None,
+) -> dict[str, int]:
+    context.require("use")
+    if x_ekonex_csrf != _ui_csrf(context):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.user_id == context.user_id,
+            WearDevice.installation_id == context.effective_installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
+    entity = await session.scalar(
+        select(Entity).where(
+            Entity.id == payload.entity_id,
+            Entity.installation_id == context.effective_installation_id,
+            Entity.deleted_at.is_(None),
+        )
+    )
+    if device is None or entity is None or "notification.receive" not in device.capabilities_json:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    rule = payload.model_dump(mode="json")
+    title, body = render_wear_rule_message(rule, entity)
+    created = await WearNotificationService(session).enqueue_for_device(
+        device=device,
+        event_key=f"wear-rule-test:{device.id}:{datetime.now(UTC).isoformat()}",
+        category=payload.category,
+        severity=payload.severity,
+        title=title,
+        body=body,
     )
     await session.commit()
     return {"created": created}
