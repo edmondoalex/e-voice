@@ -128,12 +128,14 @@ def test_quick_actions_accept_persistent_custom_mdi_and_extended_slot():
                     "utterance": "Apri cancello",
                     "icon": "mdi:gate",
                     "color": "green",
+                    "border_color": "amber",
                 }
             ]
         }
     )
     assert payload.actions[0].slot == 32
     assert payload.actions[0].icon == "mdi:gate"
+    assert payload.actions[0].border_color == "amber"
 
 
 def test_standard_icon_catalog_includes_scenes_lights_and_alarm():
