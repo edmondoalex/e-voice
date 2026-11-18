@@ -1042,7 +1042,14 @@ async def connector_websocket(
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
     except WEBSOCKET_DISCONNECT_EXCEPTIONS:
         pass
-    except Exception:
+    except Exception as error:
+        logger.error(
+            "connector_session_exception installation_id=%s session_id=%s type=%s error=%r",
+            installation_id,
+            session_id,
+            type(error).__name__,
+            error,
+        )
         logger.exception(
             "Unexpected connector session failure installation_id=%s session_id=%s",
             installation_id,
