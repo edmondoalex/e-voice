@@ -175,7 +175,7 @@ class EntitySyncService:
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
             attributes = item.get("attributes", {})
-            entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+            entity.attributes_json = _sanitize_json(attributes) if isinstance(attributes, dict) else {}
             _store_device_metadata(entity, item)
             if entity.ha_domain == "media_player":
                 entity.attributes_json["_experiences"] = _experiences(item)
@@ -187,7 +187,7 @@ class EntitySyncService:
             )
             updated = item.get("last_updated_at")
             if updated:
-                entity.attributes_json["_last_updated_at"] = str(updated)[:64]
+                entity.attributes_json["_last_updated_at"] = _clean_text(updated)[:64]
             entity.last_seen_at = datetime.now(UTC)
             await StateHistoryService(self._session).record_change(
                 entity,
@@ -361,7 +361,7 @@ class EntitySyncService:
         if is_new or incoming_exposed:
             entity.control_exposed = incoming_exposed
         attributes = item.get("attributes", {})
-        entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+        entity.attributes_json = _sanitize_json(attributes) if isinstance(attributes, dict) else {}
         _store_device_metadata(entity, item)
         if entity.ha_domain == "media_player":
             entity.attributes_json["_experiences"] = _experiences(item)
@@ -371,7 +371,7 @@ class EntitySyncService:
         )
         updated = item.get("last_updated_at")
         if updated:
-            entity.attributes_json["_last_updated_at"] = str(updated)[:64]
+            entity.attributes_json["_last_updated_at"] = _clean_text(updated)[:64]
         entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
         if is_new:
             previous_state, previous_available = None, not entity.available
@@ -386,7 +386,22 @@ class EntitySyncService:
 
 def _optional(item: dict[str, object], key: str) -> str | None:
     value = item.get(key)
-    return str(value)[:255] if value is not None else None
+    return _clean_text(value)[:255] if value is not None else None
+
+
+def _clean_text(value: object) -> str:
+    """Remove NUL characters that PostgreSQL text and JSONB cannot store."""
+    return str(value).replace("\x00", "")
+
+
+def _sanitize_json(value: object) -> object:
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, list):
+        return [_sanitize_json(item) for item in value]
+    if isinstance(value, dict):
+        return {_clean_text(key): _sanitize_json(item) for key, item in value.items()}
+    return value
 
 
 def _experiences(item: dict[str, object]) -> list[str]:
@@ -400,7 +415,7 @@ def _store_device_metadata(entity: Entity, item: dict[str, object]) -> None:
     for key in ("manufacturer", "model", "platform"):
         value = item.get(key)
         if value is not None:
-            entity.attributes_json[f"_{key}"] = str(value)[:255]
+            entity.attributes_json[f"_{key}"] = _clean_text(value)[:255]
 
 
 def _resource_revision(entity: Entity) -> int:

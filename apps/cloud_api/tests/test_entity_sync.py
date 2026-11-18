@@ -64,6 +64,30 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     assert not entity.available
 
 
+async def test_inventory_removes_nul_characters_before_database_write(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    nul_item = {
+        **item(registry_id="registry-nul-state", state="\x00V000033"),
+        "entity_id": "sensor.software_version_master",
+        "domain": "sensor",
+        "friendly_name": "Software\x00 Version Master",
+        "attributes": {"raw": "A\x00B", "nested": ["C\x00D"]},
+    }
+
+    await EntitySyncService(session, installation).apply_full(1, [nul_item])
+    await session.commit()
+
+    entity = (
+        await session.scalars(select(Entity).where(Entity.ha_registry_id == "registry-nul-state"))
+    ).one()
+    assert entity.state == "V000033"
+    assert entity.friendly_name == "Software Version Master"
+    assert entity.attributes_json == {"raw": "AB", "nested": ["CD"]}
+
+
 async def test_cover_device_class_survives_inventory_database_and_discovery(
     session: AsyncSession, seeded_domain: object
 ) -> None:
