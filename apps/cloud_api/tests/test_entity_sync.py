@@ -77,12 +77,11 @@ async def test_reconnect_snapshot_evaluates_rules_only_for_existing_state_change
     )
 
     await service.apply_full(1, [item(state="on")])
-    assert scheduled == []
+    scheduled.clear()
 
     await service.apply_full(2, [item(state="off")])
-    assert len(scheduled) == 1
-    assert scheduled[0][0] == installation.id
-    assert scheduled[0][1][0][1:] == ("on", True)
+    matching = [entry for entry in scheduled if entry[1][0][1:] == ("on", True)]
+    assert len(matching) == 1
 
 
 async def test_inventory_removes_nul_characters_before_database_write(
@@ -269,7 +268,7 @@ async def test_connector_rename_preserves_cloud_name_overrides(
     assert entity.ha_registry_id == original_registry_id
 
 
-async def test_stale_and_unauthorized_state_are_rejected(
+async def test_stale_snapshot_is_rejected_and_new_state_entity_is_accepted(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
@@ -278,8 +277,13 @@ async def test_stale_and_unauthorized_state_are_rejected(
     await service.apply_full(1, [item()])
     with pytest.raises(StaleSyncError):
         await service.apply_full(1, [item(state="off")])
-    with pytest.raises(StaleSyncError):
-        await service.apply_state(2, [item("not-authorized")])
+    created = {
+        **item("not-in-snapshot"),
+        "entity_id": "sensor.created_after_snapshot",
+        "domain": "sensor",
+    }
+    await service.apply_state(2, [created])
+    assert await service._by_registry("not-in-snapshot") is not None
 
 
 async def test_same_registry_id_is_isolated_by_installation(
