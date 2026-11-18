@@ -9,6 +9,7 @@ import html
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
@@ -38,6 +39,22 @@ from .wear_notifications import WearNotificationService
 
 router = APIRouter(tags=["wear"])
 session_dependency = Depends(get_database_session)
+
+_MDI_ASSET_DIR = Path(__file__).with_name("assets") / "wear"
+_MDI_FONT_PATH = _MDI_ASSET_DIR / "mdi_webfont.ttf"
+_MDI_CODEPOINTS_PATH = _MDI_ASSET_DIR / "mdi_codepoints.properties"
+
+
+def _mdi_codepoints() -> dict[str, str]:
+    result: dict[str, str] = {}
+    for line in _MDI_CODEPOINTS_PATH.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.startswith("#"):
+            name, codepoint = line.split("=", 1)
+            result[name.strip()] = codepoint.strip()
+    return result
+
+
+MDI_CODEPOINTS = _mdi_codepoints()
 
 
 class EnrollmentRequest(BaseModel):
@@ -502,6 +519,25 @@ async def enrollment_status(
     return EnrollmentStatusResponse(claimed=True, device_name=device_name)
 
 
+@router.get("/bounded/wear/mdi-font")
+async def wear_mdi_font() -> Response:
+    return Response(
+        _MDI_FONT_PATH.read_bytes(),
+        media_type="font/ttf",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/bounded/wear/mdi-glyph/{name}")
+async def wear_mdi_glyph(
+    name: str,
+    _context: Annotated[BoundContext, bound_context_dependency],
+) -> dict[str, str]:
+    normalized = name.removeprefix("mdi:").strip().lower()
+    codepoint = MDI_CODEPOINTS.get(normalized) or MDI_CODEPOINTS["help-circle-outline"]
+    return {"glyph": chr(int(codepoint, 16))}
+
+
 @router.get("/bounded/wear", response_class=HTMLResponse)
 async def wear_management(
     context: Annotated[BoundContext, bound_context_dependency],
@@ -664,6 +700,7 @@ async def wear_management(
                 f'<div class=quick-item draggable=true><div class=quick-row data-quick-slot="{slot}"><div class=quick-order title="Trascina per riordinare">'
                 f'<svg class=quick-handle viewBox="0 0 24 24" aria-hidden=true><path fill="currentColor" d="M7 5h2v2H7V5zm8 0h2v2h-2V5zM7 11h2v2H7v-2zm8 0h2v2h-2v-2zM7 17h2v2H7v-2zm8 0h2v2h-2v-2z"></path></svg>'
                 f'<span data-quick-position>{slot}</span></div>'
+                f'<div class=quick-preview title="Anteprima tasto"><span data-quick-preview-icon aria-hidden=true></span></div>'
                 f'<input data-quick-label maxlength=24 placeholder="Etichetta" value="{html.escape(str(action.get("label") or ""))}">'
                 f'<input data-quick-search type=search placeholder="Cerca dispositivo o azione" autocomplete=off>'
                 f"<select data-quick-command>{''.join(command_options)}</select>"
@@ -691,7 +728,7 @@ async def wear_management(
     capabilities = ",".join(sorted(CAPABILITIES))
     page = f"""<!doctype html><html lang=it><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Google Wear</title>
-<style>:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-item{{border-radius:12px;transition:background .15s,opacity .15s}}.quick-item.dragging{{opacity:.55;background:#31434a}}.quick-row{{display:grid;grid-template-columns:96px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px minmax(170px,1fr) 120px 120px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-order{{height:44px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:11px;background:var(--field);cursor:grab;user-select:none}}.quick-order:active{{cursor:grabbing}}.quick-handle{{width:22px;height:22px;color:var(--muted);flex:none}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row{{grid-template-columns:52px 1fr}}.quick-row input,.quick-row select{{grid-column:2}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
+<style>@font-face{{font-family:EkonexMDI;src:url('/bounded/wear/mdi-font') format('truetype');font-display:block}}:root{{--page:#384044;--panel:#1f1f1f;--panel-soft:#25292b;--field:#111;--border:#55d6e8;--line:#465158;--accent:#49d3f2;--active:#3d8ca2;--text:#f7f7f7;--muted:#b9c9d1;--danger:#ef3027}}*{{box-sizing:border-box}}body{{font:16px system-ui;background:var(--page);color:var(--text);margin:0;padding:28px}}button,select,input{{padding:11px 14px;border:1px solid var(--border);border-radius:11px;background:var(--field);color:var(--text)}}button{{font-weight:700;cursor:pointer}}button:hover{{background:var(--active)}}code{{font-size:18px;color:var(--accent)}}h1{{margin-top:0}}.device-card,.installer-guide{{width:100%;margin:18px 0;padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}}.device-card h2{{margin-top:0}}.installer-guide summary,.quick-actions summary{{cursor:pointer;font-size:20px;font-weight:750}}.installer-guide ol{{line-height:1.55}}.installer-guide .warning{{padding:12px;border-left:4px solid #f4b942;background:var(--panel-soft)}}.badge{{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:var(--active);color:#fff;font-size:12px;vertical-align:middle}}.muted{{color:var(--muted)}}fieldset,.quick-actions{{margin:16px 0;border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel)}}.categories,.actions,.quiet{{display:flex;gap:14px;flex-wrap:wrap;align-items:center}}.categories label,.switch{{display:flex;gap:8px;align-items:center;padding:8px}}.actions{{margin-top:18px}}.quick-item{{border-radius:12px;transition:background .15s,opacity .15s}}.quick-item.dragging{{opacity:.55;background:#31434a}}.quick-row{{display:grid;grid-template-columns:96px 52px minmax(150px,1fr) minmax(210px,1.4fr) minmax(320px,2.2fr) 130px minmax(170px,1fr) 120px 120px 120px;gap:9px;align-items:center;margin:10px 0}}.quick-order{{height:44px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:11px;background:var(--field);cursor:grab;user-select:none}}.quick-order:active{{cursor:grabbing}}.quick-handle{{width:22px;height:22px;color:var(--muted);flex:none}}.quick-preview{{width:46px;height:46px;border-radius:50%;border:3px solid #fff;background:#195fbe;display:grid;place-items:center;box-shadow:0 0 8px #0008}}.quick-preview span{{font:27px EkonexMDI;color:#d3d3d3;line-height:1}}.quick-confirm{{display:flex;align-items:center;gap:8px;margin:0 0 12px 38px}}.danger{{border-color:var(--danger);color:#ffb4ac}}.danger:hover{{background:#6f1713}}@media(max-width:980px){{body{{padding:14px}}.quick-row{{grid-template-columns:52px 52px 1fr}}.quick-row input,.quick-row select{{grid-column:3}}.quick-confirm{{margin-left:38px}}}}</style></head><body>
 <h1>Google Wear</h1><p>Orologi legati a questo utente e a questo impianto.</p>
 <details class=installer-guide><summary>Installazione privata APK <span class=badge>Solo installatore</span></summary>
 <p>Questa procedura serve per installazioni private prima della distribuzione tramite Google Play. Non deve essere eseguita dal cliente finale.</p>
@@ -716,7 +753,9 @@ try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollment
 <script>document.querySelectorAll('[data-save]').forEach(button=>button.onclick=async()=>{{const card=button.closest('[data-preferences]'),start=card.querySelector('[data-quiet-start]').value,end=card.querySelector('[data-quiet-end]').value;if((start&&!end)||(!start&&end)){{result.textContent='Compila entrambi gli orari silenziosi oppure lasciali vuoti.';return}}const body={{enabled:card.querySelector('[data-enabled]').checked,categories:[...card.querySelectorAll('[data-category]:checked')].map(x=>x.value),minimum_severity:card.querySelector('[data-severity]').value,vibration:card.querySelector('[data-vibration]').checked,quiet_start:start||null,quiet_end:end||null,timezone:'Europe/Rome'}};try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/devices/'+button.dataset.save+'/notification-preferences',{{method:'PATCH',headers:{{'Content-Type':'application/json','X-Ekonex-CSRF':csrf}},body:JSON.stringify(body)}});if(response.status===401||response.status===403)throw new Error('session_expired');result.textContent=response.ok?'Preferenze salvate.':'Salvataggio non riuscito'}}catch(error){{actionError(error,'Salvataggio non riuscito')}}}});</script>
 <script>
 function setQuickIcon(row,value){{const standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),known=[...standard.options].some(option=>option.value===value&&value!=='__custom__');standard.value=known?value:'__custom__';custom.hidden=known;if(!known)custom.value=value||''}}
-function initQuickRow(row){{const select=row.querySelector('[data-quick-command]'),search=row.querySelector('[data-quick-search]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),allOptions=[...select.options].map(option=>option.cloneNode(true));standard.onchange=()=>{{custom.hidden=standard.value!=='__custom__';if(!custom.hidden)custom.focus()}};select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)setQuickIcon(row,option.dataset.icon);utterance.value=option.dataset.utterance||''}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value;select.replaceChildren(...allOptions.filter((option,index)=>index===0||!query||option.textContent.toLocaleLowerCase('it').includes(query)).map(option=>option.cloneNode(true)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}}}}
+const quickColors={{red:'#be2323',green:'#007d4b',orange:'#be5f00',purple:'#6937a0',cyan:'#007891',yellow:'#f5cd2d',pink:'#cd377d',white:'#e1e6eb',gray:'#555c62',teal:'#00877d',lime:'#9bcd37',amber:'#f5a523',blue:'#195fbe',state:'#d3d3d3'}};
+async function updateQuickPreview(row){{const preview=row.querySelector('.quick-preview'),glyph=preview.querySelector('[data-quick-preview-icon]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),icon=standard.value==='__custom__'?custom.value.trim():standard.value;preview.style.background=quickColors[row.querySelector('[data-quick-color]').value]||quickColors.blue;preview.style.borderColor=quickColors[row.querySelector('[data-quick-border-color]').value]||quickColors.white;glyph.style.color=quickColors[row.querySelector('[data-quick-icon-color]').value]||quickColors.state;if(!icon){{glyph.textContent='';return}}try{{const response=await fetch('/bounded/wear/mdi-glyph/'+encodeURIComponent(icon),{{cache:'force-cache'}}),value=await response.json();if(response.ok&&value.glyph)glyph.textContent=value.glyph}}catch(error){{glyph.textContent='?'}}}}
+function initQuickRow(row){{const select=row.querySelector('[data-quick-command]'),search=row.querySelector('[data-quick-search]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),allOptions=[...select.options].map(option=>option.cloneNode(true));standard.onchange=()=>{{custom.hidden=standard.value!=='__custom__';if(!custom.hidden)custom.focus();updateQuickPreview(row)}};custom.oninput=()=>updateQuickPreview(row);row.querySelector('[data-quick-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-border-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-icon-color]').onchange=()=>updateQuickPreview(row);select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)setQuickIcon(row,option.dataset.icon);utterance.value=option.dataset.utterance||'';updateQuickPreview(row)}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value;select.replaceChildren(...allOptions.filter((option,index)=>index===0||!query||option.textContent.toLocaleLowerCase('it').includes(query)).map(option=>option.cloneNode(true)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}};updateQuickPreview(row)}}
 function renumberQuickRows(rows){{[...rows.querySelectorAll('.quick-item')].forEach((item,index)=>{{const row=item.querySelector('[data-quick-slot]'),slot=index+1;row.dataset.quickSlot=slot;row.querySelector('[data-quick-position]').textContent=slot}})}}
 let draggedQuickItem=null;
 function initQuickItem(item){{item.ondragstart=event=>{{draggedQuickItem=item;item.classList.add('dragging');event.dataTransfer.effectAllowed='move'}};item.ondragend=()=>{{item.classList.remove('dragging');draggedQuickItem=null}};item.ondragover=event=>{{event.preventDefault();event.dataTransfer.dropEffect='move'}};item.ondrop=event=>{{event.preventDefault();if(!draggedQuickItem||draggedQuickItem===item)return;const rows=item.parentElement,items=[...rows.querySelectorAll('.quick-item')],from=items.indexOf(draggedQuickItem),to=items.indexOf(item);rows.insertBefore(draggedQuickItem,from<to?item.nextSibling:item);renumberQuickRows(rows)}}}}
@@ -731,7 +770,7 @@ document.querySelectorAll('.quick-item').forEach(initQuickItem);
     response.headers["Referrer-Policy"] = "no-referrer"
     frame_ancestors, _same_site = _frame_policy()
     response.headers["Content-Security-Policy"] = (
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src 'self'; "
         f"connect-src 'self'; frame-ancestors {frame_ancestors}"
     )
     return response
