@@ -254,25 +254,20 @@ class ConnectorSessionRegistry:
                     )
                     return diagnostic
                 self._transitioning.add(installation_id)
-                draining = [
-                    pending
-                    for key, pending in self._pending.items()
-                    if key[0] == installation_id
-                    and pending.session_id == previous.session_id
-                    and pending.sent
-                    and not pending.future.done()
-                ]
-            try:
-                if draining:
-                    await asyncio.gather(
-                        *(asyncio.shield(pending.future) for pending in draining),
-                        return_exceptions=True,
-                    )
-            except asyncio.CancelledError:
-                async with self._lock:
-                    self._transitioning.discard(installation_id)
-                raise
-            async with self._lock:
+                for key, pending in list(self._pending.items()):
+                    if (
+                        key[0] == installation_id
+                        and pending.session_id == previous.session_id
+                        and not pending.future.done()
+                    ):
+                        pending.future.set_result(
+                            CommandResultPayload(
+                                session_id=previous.session_id,
+                                command_id=key[1],
+                                status="stale_session",
+                                error_code="STALE_SESSION",
+                            )
+                        )
                 if self._sessions.get(installation_id) is previous:
                     self._sessions.pop(installation_id, None)
                 self._sessions[installation_id] = handle
