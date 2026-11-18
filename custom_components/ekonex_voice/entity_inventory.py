@@ -169,7 +169,13 @@ class EntityInventorySynchronizer:
         unsubscribe = self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
         try:
             if not self._hass.is_running:
-                await started.wait()
+                try:
+                    async with asyncio.timeout(30):
+                        await started.wait()
+                except TimeoutError:
+                    _LOGGER.warning(
+                        "Home Assistant start event not observed; sending preserved registry inventory"
+                    )
             await self._send_full()
         finally:
             unsubscribe()
