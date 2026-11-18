@@ -26,14 +26,6 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .entity_inventory import EntityInventorySynchronizer
 
 COMMAND_TIMEOUT_SECONDS = 8.0
-NON_BLOCKING_ACTUATOR_DOMAINS = {
-    "button",
-    "cover",
-    "input_boolean",
-    "light",
-    "lock",
-    "switch",
-}
 RESULT_CACHE_SIZE = 256
 MAX_ANNOUNCEMENT_LENGTH = 500
 CONTROL4_COMMAND_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_/-]{0,126}[a-z0-9])?$")
@@ -240,21 +232,12 @@ class EkonexVoiceCommandExecutor:
         )
         started = perf_counter()
         try:
-            blocking = entry.domain not in NON_BLOCKING_ACTUATOR_DOMAINS
-            if blocking:
-                async with asyncio.timeout(self._timeout):
-                    await self._hass.services.async_call(
-                        domain,
-                        service,
-                        {"entity_id": entry.entity_id, **data},
-                        blocking=True,
-                    )
-            else:
+            async with asyncio.timeout(self._timeout):
                 await self._hass.services.async_call(
                     domain,
                     service,
                     {"entity_id": entry.entity_id, **data},
-                    blocking=False,
+                    blocking=True,
                 )
         except TimeoutError:
             diagnostics.append(

@@ -297,32 +297,11 @@ def _serialize(hass: HomeAssistant, entry: er.RegistryEntry | None) -> dict[str,
     if entry is None or entry.disabled:
         return None
     state = hass.states.get(entry.entity_id)
+    if state is None:
+        return None
     device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
     area_id = entry.area_id or (device.area_id if device else None)
     area = ar.async_get(hass).async_get_area(area_id) if area_id else None
-    if state is None:
-        return {
-            "registry_id": entry.id,
-            "entity_id": entry.entity_id,
-            "domain": entry.domain,
-            "icon": _bound(getattr(entry, "icon", None) or getattr(entry, "original_icon", None)),
-            "friendly_name": _bound(entry.name or entry.original_name or entry.entity_id),
-            "area_id": area_id,
-            "area_name": _bound(area.name if area else None),
-            "device_id": entry.device_id,
-            "device_name": _bound(device.name_by_user or device.name if device else None),
-            "manufacturer": _bound(device.manufacturer if device else None),
-            "model": _bound(device.model if device else None),
-            "platform": _bound(entry.platform),
-            "device_class": _bound(entry.device_class or entry.original_device_class),
-            "supported_features": 0,
-            "state": None,
-            "available": False,
-            "attributes": {},
-            "last_changed_at": None,
-            "last_updated_at": None,
-            "removed": False,
-        }
     return {
         "registry_id": entry.id,
         "entity_id": entry.entity_id,
