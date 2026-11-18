@@ -276,28 +276,40 @@ class EntitySyncService:
         from .media_api import _enrich_echo_players, _groups, _player
         from .media_realtime import media_events
 
-        media_players = list(
-            (
-                await self._session.scalars(
-                    select(Entity).where(
-                        Entity.installation_id == self._installation.id,
-                        Entity.ha_domain == "media_player",
-                        Entity.deleted_at.is_(None),
-                    )
-                )
-            ).all()
+        media_relevant = any(
+            entity.ha_domain == "media_player"
+            or (
+                entity.ha_domain == "switch"
+                and entity.ha_entity_id.endswith(("_do_not_disturb", "_non_disturbare"))
+            )
+            for entity in changed_entities
         )
-        current_groups = _groups(media_players, self._installation.id)
-        all_entities = list(
-            (
-                await self._session.scalars(
-                    select(Entity).where(
-                        Entity.installation_id == self._installation.id,
-                        Entity.deleted_at.is_(None),
+        media_players: list[Entity] = []
+        current_groups: list[dict[str, object]] = []
+        all_entities: list[Entity] = []
+        if media_relevant:
+            media_players = list(
+                (
+                    await self._session.scalars(
+                        select(Entity).where(
+                            Entity.installation_id == self._installation.id,
+                            Entity.ha_domain == "media_player",
+                            Entity.deleted_at.is_(None),
+                        )
                     )
-                )
-            ).all()
-        )
+                ).all()
+            )
+            current_groups = _groups(media_players, self._installation.id)
+            all_entities = list(
+                (
+                    await self._session.scalars(
+                        select(Entity).where(
+                            Entity.installation_id == self._installation.id,
+                            Entity.deleted_at.is_(None),
+                        )
+                    )
+                ).all()
+            )
         group_by_member = {
             member: group for group in current_groups for member in group["member_registry_ids"]
         }

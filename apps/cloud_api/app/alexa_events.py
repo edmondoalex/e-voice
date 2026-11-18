@@ -608,7 +608,6 @@ async def _report_state_safely(installation_id: UUID, entity_ids: list[UUID]) ->
             for entity in entities:
                 if entity.ha_domain in SUPPORTED_DOMAINS:
                     await gateway.report_entity(entity)
-            await gateway.reconcile_discovery(installation)
         except Exception:
             await session.rollback()
             logger.exception(

@@ -158,14 +158,35 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
             if entity.ha_domain == "cover"
             or (requested != "stop" and is_gate_override(entity))
         ]
+    device = await session.get(WearDevice, context.device_id)
+    quick_labels: dict[UUID, str] = {}
+    if device is not None:
+        for action in (device.notification_preferences_json or {}).get("quick_actions", []):
+            try:
+                action_entity_id = UUID(str(action.get("entity_id", "")))
+            except ValueError:
+                continue
+            label = str(action.get("label") or "").strip()
+            if label:
+                quick_labels[action_entity_id] = label
     ranked = []
     for entity in entities:
-        names = (entity.voice_name, entity.display_name, entity.friendly_name)
-        score = max(
-            (len(target & (_voice_tokens(name) - {"luce"})) for name in names if name), default=0
+        names = (
+            quick_labels.get(entity.id),
+            entity.voice_name,
+            entity.display_name,
+            entity.friendly_name,
         )
-        if score:
-            ranked.append((score, entity))
+        scores = []
+        for index, name in enumerate(names):
+            if not name:
+                continue
+            name_tokens = _voice_tokens(name) - {"luce"}
+            overlap = len(target & name_tokens)
+            if overlap:
+                scores.append((target == name_tokens, overlap, -index, -len(name_tokens)))
+        if scores:
+            ranked.append((max(scores), entity))
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked or (len(ranked) > 1 and ranked[0][0] == ranked[1][0]):
         return "Non trovo un solo dispositivo autorizzato con quel nome."
