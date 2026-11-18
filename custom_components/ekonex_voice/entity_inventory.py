@@ -285,9 +285,9 @@ class EntityInventorySynchronizer:
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:
             return None
-        if not self.is_exposed(entry):
-            return None
         item = _serialize(self._hass, entry)
+        if item is not None:
+            item["control_exposed"] = self.is_exposed(entry)
         if item is not None and entry.domain == "media_player":
             item["experiences"] = self._media_experiences.get(entry.id, [])
         return item

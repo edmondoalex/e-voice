@@ -450,6 +450,7 @@ class Entity(TimestampMixin, Base):
     attributes_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     media_source_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
+    control_exposed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

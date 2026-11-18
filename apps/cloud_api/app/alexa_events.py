@@ -251,6 +251,7 @@ class AlexaEventGateway:
                     select(Entity).where(
                         Entity.installation_id == installation.id,
                         Entity.deleted_at.is_(None),
+                        Entity.control_exposed.is_(True),
                         Entity.ha_domain.in_(SUPPORTED_DOMAINS),
                     )
                 )

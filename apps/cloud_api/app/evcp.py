@@ -77,6 +77,7 @@ class EntityItem(StrictModel):
     supported_features: int = Field(default=0, ge=0)
     state: str | None = Field(default=None, max_length=255)
     available: bool
+    control_exposed: bool = True
     attributes: dict[str, JsonScalar | list[JsonScalar]] = Field(default_factory=dict)
     experiences: list[Literal["watch", "listen"]] = Field(default_factory=list, max_length=2)
     last_changed_at: datetime | None = None

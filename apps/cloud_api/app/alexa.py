@@ -112,6 +112,8 @@ def _media_inputs(entity: Entity) -> list[dict[str, object]]:
 
 def alexa_entity_eligible(entity: Entity) -> bool:
     """Return whether an entity has a safe, publishable Alexa representation."""
+    if not entity.control_exposed:
+        return False
     if entity.ha_domain not in SUPPORTED_DOMAINS:
         return False
     if entity.ha_domain == "cover":
