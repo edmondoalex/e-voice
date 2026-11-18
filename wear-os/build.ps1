@@ -1,7 +1,7 @@
 param(
     [string]$SdkRoot = (Join-Path $env:LOCALAPPDATA 'EkonexAndroidSdk'),
     [string]$KeystorePath = (Join-Path $env:USERPROFILE '.ekonex\signing\wear-production.keystore'),
-    [string]$OutputName = 'ekonex-wear-0.1.15-production.apk'
+    [string]$OutputName = 'ekonex-wear-0.1.16-production.apk'
 )
 $ErrorActionPreference = 'Stop'
 $officialCertificateSha256 = '157257dbaf141e76044e3dc071cba5d23be42fbf052a2d9ceb8ba228ebc7a6e4'
@@ -25,8 +25,8 @@ try {
     if ($LASTEXITCODE -or ($verification -join "`n") -notmatch $officialCertificateSha256) {
         throw 'Certificato APK non compatibile con le installazioni Ekonex Wear esistenti.'
     }
-    Write-Output 'VersionName=0.1.15'
-    Write-Output 'VersionCode=16'
+    Write-Output 'VersionName=0.1.16'
+    Write-Output 'VersionCode=17'
     Write-Output "CertificateSha256=$officialCertificateSha256"
     Write-Output $output
 } finally { Pop-Location }
