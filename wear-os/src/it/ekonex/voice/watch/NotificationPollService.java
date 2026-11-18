@@ -29,7 +29,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public final class NotificationPollService extends Service {
-    private static final String API="__EKONEX_WEAR_API_BASE__";
+    private static final String API=BuildConfig.EKONEX_API_BASE;
     private static final String PREFS="ekonex_wear";
     private static final String KEY_ALIAS="ekonex_wear_device_v1";
     private static final String STATUS_CHANNEL="ekonex_wear_status";
@@ -37,6 +37,7 @@ public final class NotificationPollService extends Service {
     private static final long RECONNECT_INTERVAL_MS=1000L;
     private static final long FAILURE_RETRY_INTERVAL_MS=60000L;
     private static final long MAX_RETRY_INTERVAL_MS=900000L;
+    private static final long FCM_FALLBACK_INTERVAL_MS=900000L;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private volatile boolean polling;
     private int consecutiveFailures;
@@ -51,14 +52,15 @@ public final class NotificationPollService extends Service {
         Intent restart=new Intent(this,NotificationServiceReceiver.class).setAction(NotificationServiceReceiver.ACTION_RESTART);
         PendingIntent pending=PendingIntent.getBroadcast(this,1002,restart,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         AlarmManager alarm=getSystemService(AlarmManager.class);
-        if(alarm!=null)alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,System.currentTimeMillis()+60000L,pending);
+        if(alarm!=null)alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,System.currentTimeMillis()+FCM_FALLBACK_INTERVAL_MS,pending);
     }
 
     private void createChannels(){NotificationManager manager=getSystemService(NotificationManager.class);manager.createNotificationChannel(new NotificationChannel(STATUS_CHANNEL,"Servizio notifiche Ekonex",NotificationManager.IMPORTANCE_LOW));NotificationChannel events=new NotificationChannel(EVENT_CHANNEL,"Notifiche Ekonex",NotificationManager.IMPORTANCE_HIGH);events.enableVibration(true);events.setVibrationPattern(new long[]{0,250,150,250});manager.createNotificationChannel(events);}
     private PendingIntent openApp(){Intent intent=new Intent(this,MainActivity.class);intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);return PendingIntent.getActivity(this,0,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private int notificationIcon(){int icon=getResources().getIdentifier("ekonex_notification","drawable",getPackageName());return icon==0?getApplicationInfo().icon:icon;}
     private Notification statusNotification(){return new Notification.Builder(this,STATUS_CHANNEL).setSmallIcon(notificationIcon()).setColor(Color.rgb(229,0,30)).setContentTitle("Ekonex Wear").setContentText("Notifiche attive").setOngoing(true).setContentIntent(openApp()).build();}
-    private void poll(){if(polling)return;polling=true;new Thread(()->{long nextPoll=RECONNECT_INTERVAL_MS;try{String credential=loadCredential();if(credential.isEmpty()){stopSelf();return;}JSONObject response=get(API+"/notifications/wait",credential);JSONArray items=response.getJSONArray("notifications");for(int index=0;index<items.length();index++)show(items.getJSONObject(index));consecutiveFailures=0;}catch(Exception ignored){consecutiveFailures=Math.min(consecutiveFailures+1,4);nextPoll=Math.min(FAILURE_RETRY_INTERVAL_MS*(1L<<(consecutiveFailures-1)),MAX_RETRY_INTERVAL_MS);}finally{polling=false;if(!handler.postDelayed(this::poll,nextPoll))stopSelf();}}).start();}
+    private void poll(){if(polling)return;polling=true;new Thread(()->{boolean fcmReady=hasFcmToken();long nextPoll=RECONNECT_INTERVAL_MS;try{String credential=loadCredential();if(credential.isEmpty()){stopSelf();return;}JSONObject response=get(API+(fcmReady?"/notifications":"/notifications/wait"),credential);JSONArray items=response.getJSONArray("notifications");for(int index=0;index<items.length();index++)show(items.getJSONObject(index));consecutiveFailures=0;}catch(Exception ignored){consecutiveFailures=Math.min(consecutiveFailures+1,4);nextPoll=Math.min(FAILURE_RETRY_INTERVAL_MS*(1L<<(consecutiveFailures-1)),MAX_RETRY_INTERVAL_MS);}finally{polling=false;if(fcmReady){scheduleRestart();stopSelf();}else if(!handler.postDelayed(this::poll,nextPoll))stopSelf();}}).start();}
+    private boolean hasFcmToken(){return !getSharedPreferences(PREFS,MODE_PRIVATE).getString("fcm_token","").isEmpty();}
     private void show(JSONObject item)throws Exception{String id=item.getString("id");String title=item.getString("title");String body=item.getString("body");Intent intent=new Intent(this,MainActivity.class);intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);intent.putExtra("notification_id",id);PendingIntent open=PendingIntent.getActivity(this,id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);Notification notification=new Notification.Builder(this,EVENT_CHANNEL).setSmallIcon(notificationIcon()).setColor(Color.rgb(229,0,30)).setLargeIcon(BitmapFactory.decodeResource(getResources(),getApplicationInfo().icon)).setContentTitle(title).setContentText(body).setStyle(new Notification.BigTextStyle().bigText(body)).setVibrate(new long[]{0,250,150,250}).setOnlyAlertOnce(true).setAutoCancel(true).setContentIntent(open).build();getSystemService(NotificationManager.class).notify(id.hashCode(),notification);}
     private JSONObject get(String endpoint,String token)throws Exception{HttpURLConnection connection=(HttpURLConnection)new URL(endpoint).openConnection();try{connection.setConnectTimeout(10000);connection.setReadTimeout(60000);connection.setRequestProperty("Authorization","Bearer "+token);if(connection.getResponseCode()!=200)throw new IllegalStateException();StringBuilder value=new StringBuilder();try(BufferedReader reader=new BufferedReader(new InputStreamReader(connection.getInputStream(),StandardCharsets.UTF_8))){String line;while((line=reader.readLine())!=null&&value.length()<32768)value.append(line);}return new JSONObject(value.toString());}finally{connection.disconnect();}}
     private String loadCredential(){try{String iv=getSharedPreferences(PREFS,MODE_PRIVATE).getString("iv","");String encrypted=getSharedPreferences(PREFS,MODE_PRIVATE).getString("credential","");if(iv.isEmpty()||encrypted.isEmpty())return"";KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);SecretKey key=((KeyStore.SecretKeyEntry)store.getEntry(KEY_ALIAS,null)).getSecretKey();Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key,new GCMParameterSpec(128,Base64.decode(iv,Base64.NO_WRAP)));return new String(cipher.doFinal(Base64.decode(encrypted,Base64.NO_WRAP)),StandardCharsets.UTF_8);}catch(Exception error){return"";}}

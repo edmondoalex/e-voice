@@ -28,6 +28,7 @@ from .command_dispatch import (
     PowerCommand,
     PressCommand,
 )
+from .config import get_settings
 from .conversation_service import ConversationEntityService
 from .database import get_database_session
 from .domain.models import Entity, Installation, WearDevice, WearEnrollment
@@ -82,6 +83,10 @@ class ClaimRequest(BaseModel):
 class ClaimResponse(BaseModel):
     device_id: str
     credential: str
+
+class PushTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    token: str = Field(min_length=20, max_length=4096)
 
 
 class AskRequest(BaseModel):
@@ -1072,6 +1077,38 @@ async def bootstrap(
         "capabilities": sorted(context.capabilities),
         "quick_actions": quick_actions,
     }
+
+@router.put(
+    "/api/wear/v1/push-token",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def register_push_token(
+    payload: PushTokenRequest,
+    context=wear_context_dependency,
+    session: Annotated[AsyncSession, session_dependency] = None,
+) -> Response:
+    context.require("notification.receive")
+    device = await session.scalar(
+        select(WearDevice).where(
+            WearDevice.id == context.device_id,
+            WearDevice.tenant_id == context.tenant_id,
+            WearDevice.installation_id == context.installation_id,
+            WearDevice.revoked_at.is_(None),
+        )
+    )
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    from cryptography.fernet import Fernet
+
+    device.fcm_token_encrypted = (
+        Fernet(get_settings().pairing_delivery_key.encode())
+        .encrypt(payload.token.encode())
+        .decode()
+    )
+    device.fcm_token_updated_at = datetime.now(UTC)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/api/wear/v1/notifications")

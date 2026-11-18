@@ -374,6 +374,8 @@ class WearDevice(Base):
             "timezone": "Europe/Rome",
         },
     )
+    fcm_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    fcm_token_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

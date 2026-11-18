@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -17,6 +18,11 @@ from apps.cloud_api.app.domain.models import (
     User,
 )
 from apps.cloud_api.app.portal_auth import hash_password
+
+
+@pytest.fixture
+def enable_custom_integrations() -> None:
+    """Keep cloud-only tests independent from the optional HA pytest plugin."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,11 @@
+package it.ekonex.voice.watch;
+import android.content.Context; import android.util.Base64;
+import com.google.firebase.messaging.FirebaseMessaging;
+import java.net.HttpURLConnection; import java.net.URL; import java.nio.charset.StandardCharsets; import java.security.KeyStore;
+import javax.crypto.Cipher; import javax.crypto.SecretKey; import javax.crypto.spec.GCMParameterSpec;
+public final class FcmRegistration {
+ private FcmRegistration(){}
+ public static void sync(Context c){FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token->new Thread(()->send(c,token)).start());}
+ private static void send(Context c,String token){try{String credential=credential(c);if(credential.isEmpty())return;HttpURLConnection x=(HttpURLConnection)new URL(BuildConfig.EKONEX_API_BASE+"/push-token").openConnection();try{x.setRequestMethod("PUT");x.setConnectTimeout(6000);x.setReadTimeout(12000);x.setRequestProperty("Authorization","Bearer "+credential);x.setRequestProperty("Content-Type","application/json");x.setDoOutput(true);String body="{\"token\":\""+token.replace("\\","\\\\").replace("\"","\\\"")+"\"}";x.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));if(x.getResponseCode()==204)c.getSharedPreferences("ekonex_wear",Context.MODE_PRIVATE).edit().putString("fcm_token",token).apply();}finally{x.disconnect();}}catch(Exception ignored){}}
+ private static String credential(Context c)throws Exception{String iv=c.getSharedPreferences("ekonex_wear",Context.MODE_PRIVATE).getString("iv","");String value=c.getSharedPreferences("ekonex_wear",Context.MODE_PRIVATE).getString("credential","");if(iv.isEmpty()||value.isEmpty())return"";KeyStore s=KeyStore.getInstance("AndroidKeyStore");s.load(null);SecretKey k=((KeyStore.SecretKeyEntry)s.getEntry("ekonex_wear_device_v1",null)).getSecretKey();Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,k,new GCMParameterSpec(128,Base64.decode(iv,Base64.NO_WRAP)));return new String(cipher.doFinal(Base64.decode(value,Base64.NO_WRAP)),StandardCharsets.UTF_8);}
+}

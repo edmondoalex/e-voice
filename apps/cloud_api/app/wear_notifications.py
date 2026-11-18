@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .domain.models import WearDevice, WearNotification
 from .wear_devices import WearContext, WearDenied
+from .wear_fcm import WearFcmSender
 
 SEVERITIES = frozenset({"info", "warning", "critical"})
 SEVERITY_LEVEL = {"info": 0, "warning": 1, "critical": 2}
@@ -78,6 +79,7 @@ class WearNotificationService:
             )
         ).all()
         created = 0
+        wake_devices: list[WearDevice] = []
         for device in devices:
             if "notification.receive" not in device.capabilities_json:
                 continue
@@ -110,7 +112,15 @@ class WearNotificationService:
                 )
             )
             created += 1
+            wake_devices.append(device)
         await self.session.flush()
+        sender = WearFcmSender()
+        for device in wake_devices:
+            if device.fcm_token_encrypted:
+                result = await sender.send_wake(device.fcm_token_encrypted, event_key)
+                if result is False:
+                    device.fcm_token_encrypted = None
+                    device.fcm_token_updated_at = None
         return created
 
     async def pending(self, context: WearContext, limit: int = 20) -> list[WearNotification]:

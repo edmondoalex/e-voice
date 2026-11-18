@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="it.ekonex.voice.watch"
-    android:versionCode="15"
-    android:versionName="0.1.14">
+    android:versionCode="16"
+    android:versionName="0.1.15">
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -28,6 +28,9 @@
         </activity>
         <service android:name=".NotificationPollService" android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service android:name=".WearMessagingService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
         <receiver android:name=".NotificationServiceReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

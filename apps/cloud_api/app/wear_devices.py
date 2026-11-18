@@ -209,6 +209,8 @@ class WearDeviceService:
         if device is None:
             raise WearDenied
         device.revoked_at = datetime.now(UTC)
+        device.fcm_token_encrypted = None
+        device.fcm_token_updated_at = None
 
 
 class WearClaimLimiter:
