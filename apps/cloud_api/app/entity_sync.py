@@ -370,6 +370,7 @@ class EntitySyncService:
         from .alexa import SUPPORTED_DOMAINS
         from .alexa_events import AlexaEventGateway
 
+        installation_id = self._installation.id
         gateway = AlexaEventGateway(self._session)
         try:
             for entity in changed_entities:
@@ -379,7 +380,7 @@ class EntitySyncService:
         except Exception:  # External Alexa delivery must not fail committed entity state.
             await self._session.rollback()
             logger.exception(
-                "Alexa proactive reporting failed installation_id=%s", self._installation.id
+                "Alexa proactive reporting failed installation_id=%s", installation_id
             )
         finally:
             await gateway.close()
