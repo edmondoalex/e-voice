@@ -145,6 +145,7 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
                     Entity.installation_id == context.installation_id,
                     Entity.deleted_at.is_(None),
                     Entity.available.is_(True),
+                    Entity.control_exposed.is_(True),
                     Entity.ha_domain.in_(domains),
                 )
             )

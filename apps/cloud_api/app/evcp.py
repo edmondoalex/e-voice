@@ -1040,6 +1040,13 @@ async def connector_websocket(
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
     except WEBSOCKET_DISCONNECT_EXCEPTIONS:
         pass
+    except Exception:
+        logger.exception(
+            "Unexpected connector session failure installation_id=%s session_id=%s",
+            installation_id,
+            session_id,
+        )
+        await _safe_close(websocket, 1011, "INTERNAL_ERROR")
     finally:
         if registered:
             assert session_handle is not None

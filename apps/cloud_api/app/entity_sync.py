@@ -221,9 +221,11 @@ class EntitySyncService:
             if is_new_or_reappeared:
                 entity = await self._upsert(item)
             if entity is None or entity.deleted_at is not None:
-                raise StaleSyncError(
-                    f"state_entity_missing:{str(item['registry_id'])[:80]}"
+                logger.warning(
+                    "Ignoring state update for entity absent from inventory: registry_id=%s",
+                    str(item["registry_id"])[:80],
                 )
+                continue
             previous_state, previous_available = entity.state, entity.available
             if not is_new_or_reappeared:
                 previous_values.append((entity.id, previous_state, previous_available))
