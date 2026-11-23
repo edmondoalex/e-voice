@@ -98,7 +98,9 @@ async def test_negotiation_session_gate_and_old_peer(
                 await task
 
 
-async def test_real_loopback_websocket_negotiates_and_saves(session, seeded_domain, monkeypatch):
+async def test_real_loopback_websocket_negotiates_and_saves(
+    session, seeded_domain, monkeypatch, socket_enabled
+):
     import json
     import socket
 
@@ -201,7 +203,7 @@ async def test_real_loopback_websocket_negotiates_and_saves(session, seeded_doma
 
 
 async def test_real_ws_existing_media_metadata_and_control_restored(
-    session, seeded_domain, monkeypatch
+    session, seeded_domain, monkeypatch, socket_enabled
 ):
     import json
     import socket

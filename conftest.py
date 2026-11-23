@@ -18,9 +18,12 @@ def pytest_runtest_setup() -> None:
     remains responsible for its normal leak checks and cleanup.
     """
     try:
-        asyncio.get_event_loop()
+        previous_loop = asyncio.get_event_loop()
     except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+        previous_loop = None
+    if previous_loop is not None and not previous_loop.is_running():
+        previous_loop.close()
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 @pytest.fixture
