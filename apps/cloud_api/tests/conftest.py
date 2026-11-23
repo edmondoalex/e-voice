@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -41,8 +42,9 @@ class SeededDomain:
 
 
 @pytest_asyncio.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    database_path = (tmp_path / "cloud-api-test.sqlite3").as_posix()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 

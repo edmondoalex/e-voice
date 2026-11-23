@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -10,6 +11,13 @@ from apps.cloud_api.app import voice_scope
 from apps.cloud_api.app.admin_console import _assign_visible_categories
 from apps.cloud_api.app.domain.models import ConnectorCredential, Entity, VoiceCategory
 from apps.cloud_api.app.voice_selection_store import persist_selection, register_selection_session
+
+
+@pytest.fixture(autouse=True)
+def require_postgresql(session) -> None:
+    """Run row-lock race proofs only where ``FOR UPDATE`` is implemented."""
+    if session.bind.dialect.name != "postgresql":
+        pytest.skip("requires PostgreSQL row-lock semantics")
 
 
 async def prepare(session, seeded_domain, monkeypatch):
