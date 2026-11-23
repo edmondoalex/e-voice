@@ -7,7 +7,9 @@ import voluptuous as vol
 from homeassistant.components.media_player import MediaPlayerEntityFeature
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ekonex_voice.announcement import async_announce
 from custom_components.ekonex_voice.command_executor import EkonexVoiceCommandExecutor
@@ -300,20 +302,27 @@ async def test_alexa_speech_rejects_wrong_targets_and_unsafe_messages(
 
 
 async def test_alexa_media_sibling_is_bounded_to_exposed_parent(hass: HomeAssistant) -> None:
+    config_entry = MockConfigEntry(domain="test")
+    config_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={("test", "echo-office-device")},
+        name="Echo Office",
+    )
     registry = er.async_get(hass)
     parent = registry.async_get_or_create(
         "media_player",
         "alexa_devices",
         "echo-office-media",
         suggested_object_id="echo_office",
-        device_id="echo-office-device",
+        device_id=device.id,
     )
     sibling = registry.async_get_or_create(
         "notify",
         "alexa_devices",
         "echo-office-speak",
         suggested_object_id="echo_office_parla",
-        device_id="echo-office-device",
+        device_id=device.id,
     )
     hass.states.async_set(parent.entity_id, "idle")
     hass.states.async_set(sibling.entity_id, "unknown")
@@ -339,20 +348,33 @@ async def test_alexa_media_sibling_is_bounded_to_exposed_parent(hass: HomeAssist
 
 
 async def test_alexa_media_sibling_rejects_unrelated_parent(hass: HomeAssistant) -> None:
+    config_entry = MockConfigEntry(domain="test")
+    config_entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    parent_device = devices.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={("test", "echo-office-device-denied")},
+        name="Echo Office Denied",
+    )
+    sibling_device = devices.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={("test", "echo-other-device")},
+        name="Echo Other",
+    )
     registry = er.async_get(hass)
     parent = registry.async_get_or_create(
         "media_player",
         "alexa_devices",
         "echo-office-media-denied",
         suggested_object_id="echo_office_denied",
-        device_id="echo-office-device-denied",
+        device_id=parent_device.id,
     )
     sibling = registry.async_get_or_create(
         "notify",
         "alexa_devices",
         "echo-other-speak",
         suggested_object_id="echo_other_parla",
-        device_id="echo-other-device",
+        device_id=sibling_device.id,
     )
     hass.states.async_set(parent.entity_id, "idle")
     hass.states.async_set(sibling.entity_id, "unknown")
