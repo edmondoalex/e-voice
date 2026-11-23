@@ -245,7 +245,7 @@ class EntityInventorySynchronizer:
         if items:
             await self._send("state_update", items)
 
-    async def _send_full(self) -> None:
+    async def _send_full(self) -> bool:
         registry = er.async_get(self._hass)
         entries = sorted(registry.entities.values(), key=lambda value: value.id)
         items = [item for entry in entries if (item := self._serialize(entry)) is not None]
@@ -324,7 +324,7 @@ class EntityInventorySynchronizer:
         async with self._send_lock:
             await self._send_locked(message_type, items)
 
-    async def _send_locked(self, message_type: str, items: list[dict[str, object]]) -> None:
+    async def _send_locked(self, message_type: str, items: list[dict[str, object]]) -> bool:
         websocket, session_id = self._websocket, self._session_id
         if websocket is None or session_id is None or getattr(websocket, "closed", False) is True:
             return False

@@ -516,7 +516,12 @@ async def voice_categories_page(
     return response
 
 
-async def _assign_visible_categories(session, context, entity_ids, target_id):
+async def _assign_visible_categories(
+    session: AsyncSession,
+    context: TenantContext,
+    entity_ids: list[UUID],
+    target_id: UUID,
+) -> int:
     if not entity_ids:
         return 0
     # Local experiment only: serialize category updates with selection writes
@@ -733,7 +738,7 @@ async def auto_assign_voice_categories(
             )
         ).all()
     )
-    pending = {}
+    pending: dict[UUID, list[UUID]] = {}
     for entity in entities:
         attributes = entity.attributes_json or {}
         slug = infer_standard_category(
@@ -1280,7 +1285,7 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
     media_players = [entity for entity in entities if entity.ha_domain == "media_player"]
     for domain in sorted(
         set(grouped) | set(ENTITY_DOMAIN_LABELS),
-        key=lambda value: (ENTITY_DOMAIN_LABELS.get(value, value).casefold(), value),
+        key=lambda value: ((ENTITY_DOMAIN_LABELS.get(value) or value).casefold(), value),
     ):
         domain_entities = grouped.get(domain, [])
         rows = "".join(

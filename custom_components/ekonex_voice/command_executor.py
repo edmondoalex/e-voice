@@ -17,7 +17,7 @@ from homeassistant.components.climate.const import ClimateEntityFeature
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.components.fan import FanEntityFeature
 from homeassistant.components.light.const import ColorMode
-from homeassistant.components.media_player import MediaPlayerEntityFeature
+from homeassistant.components.media_player.const import MediaPlayerEntityFeature
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
@@ -788,10 +788,10 @@ def _map_command(
         return domain, "set_temperature", {"temperature": value}
     if domain == "humidifier" and operation == "set_percentage":
         _require_keys(arguments, {"percentage"})
-        value = command.get("percentage")
-        if type(value) is not int or not 0 <= value <= 100:
+        percentage = command.get("percentage")
+        if type(percentage) is not int or not 0 <= percentage <= 100:
             raise InvalidArgument
-        return domain, "set_humidity", {"humidity": value}
+        return domain, "set_humidity", {"humidity": percentage}
     if domain == "humidifier" and operation == "set_mode":
         _require_keys(arguments, {"mode"})
         mode = command.get("mode")

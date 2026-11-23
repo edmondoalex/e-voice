@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -114,13 +114,13 @@ app.include_router(wear_control_router)
 
 
 @app.exception_handler(BoundLaunchDenied)
-async def bounded_denied(_request, _error) -> JSONResponse:
+async def bounded_denied(_request: Request, _error: BoundLaunchDenied) -> JSONResponse:
     """Uniform bounded denial without resource-existence disclosure."""
     return JSONResponse({"detail": "bounded_resource_denied"}, status_code=404)
 
 
 @app.exception_handler(WearDenied)
-async def wear_denied(_request, _error) -> JSONResponse:
+async def wear_denied(_request: Request, _error: WearDenied) -> JSONResponse:
     """Do not disclose which Wear scope or capability check failed."""
     return JSONResponse({"detail": "wear_resource_denied"}, status_code=403)
 

@@ -220,7 +220,7 @@ def overlay_entities(entities: Iterable[Entity], states: dict[str, LiveEntitySta
             ("last_changed_at", live.last_changed_at),
             ("last_seen_at", live.last_seen_at),
         ):
-            set_committed_value(entity, field, value)
+            set_committed_value(entity, field, value)  # type: ignore[no-untyped-call]
 
 
 def overlay_installation(installation: Installation, live: LiveInstallationState | None) -> None:
@@ -241,4 +241,4 @@ def overlay_installation(installation: Installation, live: LiveInstallationState
         "inventory_synced_at": live.inventory_synced_at,
     }
     for field, value in values.items():
-        set_committed_value(installation, field, value)
+        set_committed_value(installation, field, value)  # type: ignore[no-untyped-call]

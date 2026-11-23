@@ -86,6 +86,7 @@ def derive_installation_key(master: bytes, installation: UUID) -> bytes:
 
 def verify_service_key(provided: object, supplied: object, payload: bytes) -> bytes:
     """Accept current and optional previous key during a controlled overlap."""
+    keys: tuple[bytes, ...]
     if isinstance(provided, bytes):
         keys = (provided,)
     elif isinstance(provided, (tuple, list)):

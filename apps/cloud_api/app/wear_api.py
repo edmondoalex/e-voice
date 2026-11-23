@@ -25,11 +25,11 @@ from .alexa_device_types import is_gate_override
 from .command_dispatch import (
     ActivateCommand,
     CommandDispatchService,
+    CommandSpec,
     CoverCommand,
     DomainActionCommand,
     PowerCommand,
     PressCommand,
-    StrictCommand,
 )
 from .config import get_settings
 from .conversation_service import ConversationEntityService
@@ -186,7 +186,7 @@ def _voice_tokens(value: str) -> set[str]:
     }
 
 
-def _wear_entity_command(entity: Entity, requested: str) -> tuple[StrictCommand, str]:
+def _wear_entity_command(entity: Entity, requested: str) -> tuple[CommandSpec, str]:
     if requested in {"open", "close"} and is_gate_override(entity):
         operation = "power_on" if requested == "open" else "power_off"
         return PowerCommand(operation=cast(Literal["power_on", "power_off"], operation)), operation
@@ -1669,7 +1669,7 @@ async def execute_quick_action(
                     status.HTTP_409_CONFLICT, "quick_action_state_unknown"
                 ) from None
         if operation in {"power_on", "power_off"}:
-            command: StrictCommand = PowerCommand(
+            command: CommandSpec = PowerCommand(
                 operation=cast(Literal["power_on", "power_off"], operation)
             )
         elif operation in {"open", "stop", "close"}:

@@ -9,7 +9,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket
@@ -39,10 +39,11 @@ from .voice_selection_store import (
     register_selection_session,
 )
 
-_websocket_disconnected = getattr(starlette_websockets, "WebSocketDisconnected", None)
-WEBSOCKET_DISCONNECT_EXCEPTIONS = (
+_websocket_disconnected: object = getattr(starlette_websockets, "WebSocketDisconnected", None)
+WEBSOCKET_DISCONNECT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     (WebSocketDisconnect, _websocket_disconnected)
     if isinstance(_websocket_disconnected, type)
+    and issubclass(_websocket_disconnected, BaseException)
     else (WebSocketDisconnect,)
 )
 
@@ -182,7 +183,7 @@ class VoiceSelectionPayload(StrictModel):
     registry_ids: list[str] = Field(max_length=500)
 
     @model_validator(mode="after")
-    def valid_selection(self):
+    def valid_selection(self) -> Self:
         if self.batch_index >= self.batch_count or any(
             not x or len(x) > 64 for x in self.registry_ids
         ):
@@ -704,7 +705,7 @@ def _add_connector_version_activity(
     )
 
 
-def _entity_sync_payload(item: EntityItem) -> dict:
+def _entity_sync_payload(item: EntityItem) -> dict[str, object]:
     payload = item.model_dump(mode="json")
     # Preserve absence for older senders, without changing other legacy defaults.
     if "control_exposed" not in item.model_fields_set:
@@ -835,7 +836,7 @@ async def _apply_entity_sync(
     *,
     registry_only_negotiated: bool = False,
     credential_id: UUID | None = None,
-) -> None:
+) -> bool:
     """Accumulate and persist one validated, session-bound EVCP sync message."""
     if any(item.registry_only for item in message.payload.entities) and (
         not registry_only_negotiated or isinstance(message, StateUpdate)
