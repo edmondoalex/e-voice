@@ -89,9 +89,16 @@ class EkonexVoiceCommandExecutor:
         command: dict[str, object],
         *,
         correlation_id: str | None = None,
+        related_to_registry_id: str | None = None,
     ) -> CommandResult:
         fingerprint = json.dumps(
-            {"registry_id": registry_id, "command": command}, sort_keys=True, separators=(",", ":")
+            {
+                "registry_id": registry_id,
+                "command": command,
+                "related_to_registry_id": related_to_registry_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         )
         if cached := self._results.get(command_id):
             return (
@@ -100,7 +107,11 @@ class EkonexVoiceCommandExecutor:
                 else CommandResult(command_id, "duplicate", "DUPLICATE_COMMAND")
             )
         result = await self._execute_once(
-            command_id, registry_id, command, correlation_id=correlation_id
+            command_id,
+            registry_id,
+            command,
+            correlation_id=correlation_id,
+            related_to_registry_id=related_to_registry_id,
         )
         self._results[command_id] = (fingerprint, result)
         self._results.move_to_end(command_id)
@@ -115,6 +126,7 @@ class EkonexVoiceCommandExecutor:
         command: dict[str, object],
         *,
         correlation_id: str | None,
+        related_to_registry_id: str | None,
     ) -> CommandResult:
         diagnostics: list[dict[str, object]] = [
             {
@@ -138,7 +150,13 @@ class EkonexVoiceCommandExecutor:
                 correlation_id,
                 tuple(diagnostics),
             )
-        if not self._inventory.is_exposed(entry):
+        if not self._inventory.is_exposed(entry) and not _is_authorized_media_sibling(
+            registry,
+            self._inventory,
+            entry,
+            command,
+            related_to_registry_id,
+        ):
             return CommandResult(
                 command_id,
                 "target_not_exposed",
@@ -820,6 +838,37 @@ def _is_alexa_notify(entry: er.RegistryEntry, operation: str) -> bool:
         entry.domain == "notify"
         and entry.platform == "alexa_devices"
         and entry.entity_id.endswith(suffixes)
+    )
+
+
+def _is_authorized_media_sibling(
+    registry: er.EntityRegistry,
+    inventory: EntityInventorySynchronizer,
+    entry: er.RegistryEntry,
+    command: dict[str, object],
+    related_to_registry_id: str | None,
+) -> bool:
+    """Authorize only the bounded Alexa sibling of an exposed media player."""
+    if related_to_registry_id is None or entry.device_id is None:
+        return False
+    parent = next(
+        (item for item in registry.entities.values() if item.id == related_to_registry_id), None
+    )
+    if (
+        parent is None
+        or parent.disabled
+        or parent.domain != "media_player"
+        or parent.device_id != entry.device_id
+        or parent.platform != "alexa_devices"
+        or entry.platform != "alexa_devices"
+        or not inventory.is_exposed(parent)
+    ):
+        return False
+    operation = command.get("operation")
+    return _is_alexa_notify(entry, str(operation)) or (
+        entry.domain == "switch"
+        and entry.entity_id.endswith(("_do_not_disturb", "_non_disturbare"))
+        and operation in {"power_on", "power_off"}
     )
 
 

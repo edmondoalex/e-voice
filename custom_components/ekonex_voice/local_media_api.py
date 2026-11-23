@@ -240,7 +240,12 @@ class LocalMediaCommandView(HomeAssistantView):
                 if type(enabled) is not bool:
                     return _json_error(422, "INVALID_ARGUMENT", "Valore DND non valido")
                 command = {"operation": "power_on" if enabled else "power_off"}
-        result = await executor.async_execute(request_id, target_registry_id, command)
+        result = await executor.async_execute(
+            request_id,
+            target_registry_id,
+            command,
+            related_to_registry_id=(registry_id if operation in {"tts", "set_dnd"} else None),
+        )
         status = 200 if result.status == "success" else 422
         return web.json_response(
             {
