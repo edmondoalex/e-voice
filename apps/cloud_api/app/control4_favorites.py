@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .admin_console import _admin, _e, _installation, _layout, console_context_dependency
 from .alexa_routines import _multi_form, _one
 from .auth import TenantContext
-from .config import get_settings
 from .database import get_database_session
 from .domain.models import Installation
 from .evcp import sessions
@@ -28,11 +27,6 @@ session_dependency = Depends(get_database_session)
 COMMAND = re.compile(r"^[a-z0-9](?:[a-z0-9_/-]{0,126}[a-z0-9])?$")
 PART = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MAX_FAVORITES = 100
-
-
-def _lab() -> None:
-    if get_settings().environment != "laboratory":
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Non trovato")
 
 
 def _settings(installation: Installation) -> dict[str, object]:
@@ -70,7 +64,6 @@ async def page(
     notice: str | None = None,
     message: str | None = None,
 ) -> HTMLResponse:
-    _lab()
     _admin(context)
     installations = list(
         (
@@ -128,7 +121,6 @@ async def save_settings(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _lab()
     _admin(context)
     values, installation = await _form_context(request, context, session)
     host = _one(values, "host").strip()
@@ -151,7 +143,6 @@ async def create(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _lab()
     _admin(context)
     values, installation = await _form_context(request, context, session)
     config = _settings(installation)
@@ -194,7 +185,6 @@ async def test(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _lab()
     _admin(context)
     _, installation = await _form_context(request, context, session)
     config = _settings(installation)
@@ -230,7 +220,6 @@ async def delete(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _lab()
     _admin(context)
     _, installation = await _form_context(request, context, session)
     config = _settings(installation)

@@ -199,7 +199,6 @@ async def test_connector_trigger_uses_default_or_ha_rendered_message(
         return_value=[SimpleNamespace(status="success"), SimpleNamespace(status="success")]
     )
     with (
-        patch("apps.cloud_api.app.alexa_routines._laboratory_only"),
         patch("apps.cloud_api.app.alexa_routines.authenticate_connector_secret", new=auth),
         patch("apps.cloud_api.app.alexa_routines._dispatch_announcement", new=dispatch),
     ):
@@ -281,8 +280,7 @@ async def test_create_routine_form_exposes_volume_control(
     request = Request({"type": "http", "query_string": b"", "headers": []})
     context = TenantContext(user_id=user_id, tenant_id=tenant_id, role=TenantRole.OWNER)
 
-    with patch("apps.cloud_api.app.alexa_routines._laboratory_only"):
-        response = await routines_page(request, context, session)
+    response = await routines_page(request, context, session)
 
     html = bytes(response.body).decode()
     assert html.count('name="volume_percent"') == 2

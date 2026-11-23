@@ -38,11 +38,6 @@ session_dependency = Depends(get_database_session)
 MAX_BUTTONS = 5
 
 
-def _laboratory_only() -> None:
-    if get_settings().environment != "laboratory":
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Non trovato")
-
-
 def _cipher() -> Fernet:
     return Fernet(get_settings().pairing_delivery_key.encode())
 
@@ -70,7 +65,6 @@ async def page(
     notice: str | None = None,
     message: str | None = None,
 ) -> HTMLResponse:
-    _laboratory_only()
     _admin(context)
     installations = list(
         (
@@ -141,7 +135,6 @@ async def create(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -194,7 +187,6 @@ async def remove(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -215,7 +207,6 @@ async def remove(
 async def ring(
     button_id: UUID, token: str, session: Annotated[AsyncSession, session_dependency]
 ) -> JSONResponse:
-    _laboratory_only()
     button = await session.scalar(
         select(DoorbellButton)
         .options(selectinload(DoorbellButton.routine))
