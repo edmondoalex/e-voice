@@ -189,6 +189,7 @@ class ConversationEntityService:
         observed_at = entity.last_seen_at or entity.last_changed_at
         if observed_at is not None and observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
+        voice_category = getattr(entity, "voice_category", None)
         return EntitySnapshot(
             entity_id=entity.ha_entity_id,
             name=(
@@ -205,5 +206,5 @@ class ConversationEntityService:
             aliases=aliases,
             available=entity.available,
             observed_at=observed_at,
-            category=entity.voice_category.slug if entity.voice_category is not None else None,
+            category=getattr(voice_category, "slug", None),
         )
