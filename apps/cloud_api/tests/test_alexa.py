@@ -61,9 +61,7 @@ def test_home_assistant_button_is_published_as_alexa_scene_trigger() -> None:
         and capability["supportsDeactivation"] is False
         for capability in endpoint["capabilities"]
     )
-    assert _command("Alexa.SceneController", "Activate", {}, entity) == {
-        "operation": "press"
-    }
+    assert _command("Alexa.SceneController", "Activate", {}, entity) == {"operation": "press"}
 
 
 async def _client(session: AsyncSession) -> httpx.AsyncClient:
