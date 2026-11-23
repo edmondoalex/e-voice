@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import async_session_factory
 from .domain.models import Entity, WearDevice
 from .wear_notifications import WearNotificationService
+from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,17 @@ async def evaluate_wear_notification_rules(
     installation_id: UUID,
     changes: list[tuple[UUID, str | None, bool]],
 ) -> int:
+    from .wear_bridge import lock_wear_writer
+    from fastapi import HTTPException
+    try:
+        authority=await lock_wear_writer(session,installation_id,allow_econtrol=True)
+    except HTTPException:
+        await session.rollback()
+        raise
+    fenced=authority is not None
+    if authority is not None and authority.owner != 'legacy':
+        await session.rollback()
+        return 0
     previous = {entity_id: (state, available) for entity_id, state, available in changes}
     if not previous:
         return 0
@@ -120,13 +132,19 @@ async def evaluate_wear_notification_rules(
             observed_at = entity.updated_at or entity.last_changed_at
             event_stamp = observed_at.isoformat() if observed_at else state_text
             title, body = render_wear_rule_message(rule, entity, old_state)
-            created += await service.enqueue_for_device(
+            event_key=f"wear-rule:{str(rule.get('id'))[:36]}:{event_stamp}"[:120]
+            added = await service.enqueue_for_device(
                 device=device,
-                event_key=f"wear-rule:{str(rule.get('id'))[:36]}:{event_stamp}"[:120],
+                event_key=event_key,
                 category=str(rule.get("category") or "system"),
                 severity=str(rule.get("severity") or "info"),
                 title=title,
                 body=body,
+                wake=not fenced,
             )
+            created += added
+            if fenced and added and device.fcm_token_encrypted:
+                from .wear_bridge import WearBridgeWake
+                session.add(WearBridgeWake(device_id=device.id,event_key=event_key,attempts=0))
     await session.commit()
     return created

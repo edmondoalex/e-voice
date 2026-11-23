@@ -132,6 +132,7 @@ class WearNotificationService:
         severity: str,
         title: str,
         body: str,
+        wake: bool = True,
     ) -> int:
         """Queue one event only for its configured Wear identity."""
         if (
@@ -177,7 +178,7 @@ class WearNotificationService:
             )
         )
         await self.session.flush()
-        if device.fcm_token_encrypted:
+        if wake and device.fcm_token_encrypted:
             result = await WearFcmSender().send_wake(device.fcm_token_encrypted, event_key)
             if result is False:
                 device.fcm_token_encrypted = None

@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     econtrol_bounded_frame_ancestors: str = ""
     wear_fcm_project_id: str = "e-face-mobile"
     wear_fcm_credentials_path: str = ""
+    # CHANGE083 stays off until schema, key provisioning and cross-owner tests pass.
+    wear_render_v2_enabled: bool = False
+    wear_bridge_control_enabled: bool = False
+    wear_bridge_scope: dict[str, list[str]] = Field(default_factory=dict)
+    wear_bridge_fence_enabled: bool = False
+    wear_bridge_wake_worker_enabled: bool = False
+    voice_selection_inventory_fence_enabled: bool = False
+    voice_selection_v1_enabled: bool = False
+    voice_selection_projection_enabled: bool = False
 
     @model_validator(mode="after")
     def production_pairing_secrets_are_explicit(self) -> Self:

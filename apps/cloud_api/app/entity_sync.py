@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from .voice_scope import VOICE_SELECTION_KEY, selection_from_item
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -21,10 +22,17 @@ class StaleSyncError(Exception):
 
 
 class EntitySyncService:
-    def __init__(self, session: AsyncSession, installation: Installation) -> None:
+    def __init__(self, session: AsyncSession, installation: Installation, *, registry_only_negotiated: bool = False) -> None:
         self._session, self._installation = session, installation
+        self._registry_only_negotiated = registry_only_negotiated is True
 
     async def apply_full(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=['sync_revision'])
         if revision <= self._installation.sync_revision:
             raise StaleSyncError(
                 f"full_revision_not_new:{revision}<={self._installation.sync_revision}"
@@ -140,6 +148,12 @@ class EntitySyncService:
         await self._publish_inventory_players(revision, previous_media_ids)
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=['sync_revision'])
         if revision != self._installation.sync_revision + 1:
             raise StaleSyncError(
                 f"delta_revision_gap:{revision}!={self._installation.sync_revision + 1}"
@@ -222,6 +236,12 @@ class EntitySyncService:
             media_events.publish(self._installation.id, revision, event_type, payload)
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=['sync_revision'])
         if revision != self._installation.sync_revision + 1:
             raise StaleSyncError(
                 f"state_revision_gap:{revision}!={self._installation.sync_revision + 1}"
@@ -244,10 +264,15 @@ class EntitySyncService:
                 previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
+            previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
             attributes = item.get("attributes", {})
             entity.attributes_json = (
                 _sanitize_json(attributes) if isinstance(attributes, dict) else {}
             )
+            entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
+            selected = selection_from_item(item, previous_selection)
+            if selected is not None:
+                entity.attributes_json[VOICE_SELECTION_KEY] = selected
             _store_device_metadata(entity, item)
             if entity.ha_domain == "media_player":
                 entity.attributes_json["_experiences"] = _experiences(item)
@@ -413,6 +438,29 @@ class EntitySyncService:
                 )
             )
             entity = result.one_or_none()
+        if item.get("registry_only") is True:
+            if not self._registry_only_negotiated or item.get("available") is not False or item.get("control_exposed") is not False:
+                raise ValueError("registry_only_not_negotiated_or_invalid")
+            is_new = entity is None
+            if is_new:
+                entity = Entity(installation_id=self._installation.id, ha_registry_id=str(item["registry_id"]),
+                                ha_entity_id=str(item["entity_id"]), ha_domain=str(item["domain"]),
+                                friendly_name=_optional(item, "friendly_name"), available=False, control_exposed=False)
+                self._session.add(entity)
+                await self._session.flush()
+                previous_state, previous_available = None, True
+            else:
+                if entity.ha_registry_id not in (None, str(item["registry_id"])) or entity.ha_domain != str(item["domain"]):
+                    raise ValueError("registry_only_identity_conflict")
+                previous_state, previous_available = entity.state, entity.available
+                entity.ha_registry_id = str(item["registry_id"])
+                entity.ha_entity_id = str(item["entity_id"])
+            entity.state = None
+            entity.available = False
+            entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
+            await StateHistoryService(self._session).record_change(entity, tenant_id=self._installation.tenant_id,
+                previous_state=previous_state, previous_available=previous_available)
+            return entity
         is_new = entity is None
         if entity is None:
             entity = Entity(
@@ -442,8 +490,13 @@ class EntitySyncService:
         incoming_exposed = bool(item.get("control_exposed", True))
         if is_new or incoming_exposed:
             entity.control_exposed = incoming_exposed
+        previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
         attributes = item.get("attributes", {})
         entity.attributes_json = _sanitize_json(attributes) if isinstance(attributes, dict) else {}
+        entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
+        selected = selection_from_item(item, previous_selection)
+        if selected is not None:
+            entity.attributes_json[VOICE_SELECTION_KEY] = selected
         _store_device_metadata(entity, item)
         if entity.ha_domain == "media_player":
             entity.attributes_json["_experiences"] = _experiences(item)

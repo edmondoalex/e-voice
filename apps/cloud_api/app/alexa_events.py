@@ -244,6 +244,35 @@ class AlexaEventGateway:
         """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
         from .entity_names import unambiguous_voice_entities
+        from .voice_scope import (
+            get_settings as selection_settings,
+            selection_current_clause,
+            voice_visible_clause,
+        )
+
+        selection = selection_settings()
+        strict_selection = bool(
+            getattr(selection, "voice_selection_v1_enabled", False)
+            and getattr(selection, "voice_selection_projection_enabled", False)
+        )
+        if strict_selection:
+            current_installation = await self._session.scalar(
+                select(Installation.id).where(
+                    Installation.id == installation.id,
+                    Installation.tenant_id == installation.tenant_id,
+                    selection_current_clause(Installation.id),
+                )
+            )
+            if current_installation is None:
+                await self._audit_discovery(
+                    installation,
+                    "alexa.discovery.selection_unavailable",
+                    None,
+                    None,
+                    "deferred",
+                )
+                await self._session.commit()
+                return 0
 
         entities = list(
             (
@@ -253,6 +282,7 @@ class AlexaEventGateway:
                         Entity.deleted_at.is_(None),
                         Entity.control_exposed.is_(True),
                         Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+                        *([voice_visible_clause(Entity)] if strict_selection else []),
                     )
                 )
             ).all()

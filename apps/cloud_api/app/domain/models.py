@@ -335,7 +335,6 @@ class WearClaimAttempt(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
 
-
 class WearDevice(Base):
     """Revocable Wear identity; only the credential digest is persisted."""
 

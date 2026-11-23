@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import TenantContext
@@ -282,6 +283,18 @@ class PairingService:
         )
         if credential is None:
             raise ResourceNotFoundError
+        # Experimental ordering shared with strict category mutations.
+        locked = await self._session.scalar(select(Installation).where(
+            Installation.id == credential.installation_id, Installation.tenant_id == context.tenant_id
+        ).with_for_update())
+        if locked is None:
+            raise ResourceNotFoundError
+        credential = await self._session.scalar(select(ConnectorCredential).where(
+            ConnectorCredential.id == credential_id,
+            ConnectorCredential.installation_id == locked.id
+        ).with_for_update().execution_options(populate_existing=True))
+        if credential is None:
+            raise ResourceNotFoundError
         if credential.revoked_at is None:
             credential.revoked_at = self._now()
             self._audit(
@@ -299,6 +312,11 @@ class PairingService:
         installation = await self._installations.get(
             tenant_id=context.tenant_id, installation_id=installation_id
         )
+        if installation is None:
+            raise ResourceNotFoundError
+        installation = await self._session.scalar(select(Installation).where(
+            Installation.id == installation_id, Installation.tenant_id == context.tenant_id
+        ).with_for_update().execution_options(populate_existing=True))
         if installation is None:
             raise ResourceNotFoundError
         now = self._now()

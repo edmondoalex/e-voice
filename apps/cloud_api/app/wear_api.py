@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import json
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
@@ -42,6 +43,48 @@ from .wear_notifications import WearNotificationService
 
 router = APIRouter(tags=["wear"])
 session_dependency = Depends(get_database_session)
+
+
+@router.get('/bounded/wear/devices/export')
+async def export_wear_selection(
+    response: Response,
+    context: Annotated[BoundContext, bound_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
+) -> dict[str, object]:
+    """Read-only, tenant/user/installation-bound migration snapshot.
+
+    An export does not activate e-Control, alter a watch or transfer ownership.
+    """
+    context.require('use')
+    response.headers['Cache-Control']='no-store'
+    devices = (await session.scalars(select(WearDevice).where(
+        WearDevice.tenant_id == context.tenant_id,
+        WearDevice.user_id == context.user_id,
+        WearDevice.installation_id == context.effective_installation_id,
+        WearDevice.revoked_at.is_(None),
+    ).order_by(WearDevice.created_at))).all()
+    selected=[]
+    for device in devices:
+        preferences=device.notification_preferences_json or {}
+        if (not isinstance(preferences,dict) or not isinstance(preferences.get('notification_rules',[]),list)
+                or not isinstance(preferences.get('quick_actions',[]),list)):
+            raise HTTPException(409,'wear_preferences_invalid')
+        selected.append({'device_id':str(device.id),'name':device.display_name,
+            'notification_rules':preferences.get('notification_rules',[]),
+            'quick_actions':preferences.get('quick_actions',[])})
+    requested=set()
+    for device in selected:
+        for item in device['notification_rules'] + device['quick_actions']:
+            if isinstance(item,dict) and item.get('entity_id'):
+                try: requested.add(UUID(str(item['entity_id'])))
+                except ValueError: pass
+    entities=(await session.scalars(select(Entity).where(
+        Entity.id.in_(requested), Entity.installation_id==context.effective_installation_id,
+        Entity.deleted_at.is_(None)))).all() if requested else []
+    mapping={str(entity.id):{'registry_id':entity.ha_registry_id,'entity_id':entity.ha_entity_id} for entity in entities}
+    snapshot={'devices':selected,'entity_mapping':mapping}
+    digest=hashlib.sha256(json.dumps(snapshot,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+    return {'snapshot':snapshot,'revision':digest,'active_owner_unchanged':True}
 
 _MDI_ASSET_DIR = Path(__file__).with_name("assets") / "wear"
 _MDI_FONT_PATH = _MDI_ASSET_DIR / "mdi_webfont.ttf"
@@ -951,6 +994,8 @@ async def revoke_device(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    from .wear_bridge import lock_wear_writer
+    await lock_wear_writer(session,context.effective_installation_id,allow_econtrol=True)
     try:
         from uuid import UUID
 
@@ -984,6 +1029,8 @@ async def update_device_capabilities(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    from .wear_bridge import lock_wear_writer
+    await lock_wear_writer(session,context.effective_installation_id,allow_econtrol=True)
     if not payload.capabilities or not payload.capabilities <= CAPABILITIES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_capabilities")
     device = await session.scalar(
@@ -1013,6 +1060,8 @@ async def update_notification_preferences(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    from .wear_bridge import lock_wear_writer
+    await lock_wear_writer(session,context.effective_installation_id)
     if not payload.categories <= set(NOTIFICATION_CATEGORIES):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
     device = await session.scalar(
@@ -1022,7 +1071,7 @@ async def update_notification_preferences(
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        )
+        ).execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1053,6 +1102,8 @@ async def update_quick_actions(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    from .wear_bridge import lock_wear_writer
+    await lock_wear_writer(session,context.effective_installation_id)
     device = await session.scalar(
         select(WearDevice).where(
             WearDevice.id == device_id,
@@ -1060,7 +1111,7 @@ async def update_quick_actions(
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        )
+        ).execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1109,6 +1160,8 @@ async def update_notification_rules(
     context.require("use")
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
+    from .wear_bridge import lock_wear_writer
+    await lock_wear_writer(session,context.effective_installation_id)
     if any(item.category not in NOTIFICATION_CATEGORIES for item in payload.rules):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
     device = await session.scalar(
@@ -1118,7 +1171,7 @@ async def update_notification_rules(
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        )
+        ).execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1330,7 +1383,7 @@ async def register_push_token(
             WearDevice.tenant_id == context.tenant_id,
             WearDevice.installation_id == context.installation_id,
             WearDevice.revoked_at.is_(None),
-        )
+        ).with_for_update()
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)

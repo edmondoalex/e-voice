@@ -113,6 +113,12 @@ async def sync_live_entities(session: AsyncSession, installation: Installation) 
     states = await load_live_states(installation.public_id)
     if not states:
         return 0
+    # The laboratory overlay cannot version changes with the connector's
+    # sync_revision. Serialize it with snapshot/cutover and fail closed after
+    # transfer rather than presenting unversioned mapping updates to e-Control.
+    from .wear_bridge import lock_wear_writer
+
+    await lock_wear_writer(session, installation.id)
     local_entities = list(
         (
             await session.scalars(select(Entity).where(Entity.installation_id == installation.id))

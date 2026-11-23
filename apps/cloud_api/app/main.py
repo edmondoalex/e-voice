@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
@@ -39,16 +40,35 @@ except PackageNotFoundError:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     monitor: asyncio.Task[None] | None = None
+    wear_worker: asyncio.Task[None] | None = None
+    from .database import async_session_factory
+    from .wear_bridge import verify_bridge_startup
+    await verify_bridge_startup(async_session_factory, fence_enabled=get_settings().wear_bridge_fence_enabled)
+    # Explicit provisioning only; no key and no feature flags means no provider.
+    if get_settings().wear_bridge_fence_enabled:
+        from .wear_key_provider import cloud_provider, KeyUnavailable
+        config={'wear_bridge_master_b64':os.environ.get('EKONEX_WEAR_BRIDGE_MASTER_B64'),
+                'wear_bridge_previous_master_b64':os.environ.get('EKONEX_WEAR_BRIDGE_PREVIOUS_MASTER_B64')}
+        try: application.state.wear_bridge_key_provider=cloud_provider(config)
+        except KeyUnavailable: application.state.wear_bridge_key_provider=None
     if get_settings().environment == "laboratory":
         monitor = asyncio.create_task(run_live_alert_monitor())
+    if get_settings().wear_bridge_fence_enabled and get_settings().wear_bridge_wake_worker_enabled:
+        from .database import async_session_factory
+        from .wear_wake_worker import run_worker
+        wear_worker = asyncio.create_task(run_worker(async_session_factory))
     try:
         yield
     finally:
+        application.state.wear_bridge_key_provider=None
         if monitor is not None:
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
+        if wear_worker is not None:
+            wear_worker.cancel()
+            await asyncio.gather(wear_worker, return_exceptions=True)
 
 
 app = FastAPI(title="Ekonex Voice Cloud API", version=application_version, lifespan=lifespan)
@@ -76,6 +96,10 @@ app.include_router(media_router)
 
 app.include_router(installation_bound_router)
 app.include_router(wear_router)
+from .wear_bridge import router as wear_bridge_router
+app.include_router(wear_bridge_router)
+from .wear_control_service import router as wear_control_router
+app.include_router(wear_control_router)
 
 
 @app.exception_handler(BoundLaunchDenied)

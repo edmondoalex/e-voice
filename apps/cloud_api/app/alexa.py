@@ -496,7 +496,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
                             },
                             {
                                 "@type": "text",
-                                "value": {"text": "Giù", "locale": "it-IT"},
+                                "value": {"text": "Gi\u00f9", "locale": "it-IT"},
                             },
                         ]
                         if discrete
@@ -717,7 +717,7 @@ def _climate_temperature_scale(entity: Entity) -> str:
     unit = attributes.get("temperature_unit", attributes.get("unit_of_measurement"))
     if isinstance(unit, str):
         normalized = unit.strip().casefold()
-        if normalized in {"°f", "f", "fahrenheit"}:
+        if normalized in {"??f", "\u00b0f", "f", "fahrenheit"}:
             return "FAHRENHEIT"
         if normalized in {"k", "kelvin"}:
             return "KELVIN"
@@ -1342,6 +1342,32 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                 )
             ).all()
         )
+        from .voice_scope import (
+            get_settings as selection_settings,
+            selection_current_clause,
+            voice_visible_clause,
+        )
+
+        selection = selection_settings()
+        strict_selection = bool(
+            getattr(selection, "voice_selection_v1_enabled", False)
+            and getattr(selection, "voice_selection_projection_enabled", False)
+        )
+        if strict_selection:
+            current_installation_ids = set(
+                (
+                    await database.scalars(
+                        select(Installation.id).where(
+                            Installation.tenant_id == link.tenant_id,
+                            selection_current_clause(Installation.id),
+                        )
+                    )
+                ).all()
+            )
+            if current_installation_ids != {item.id for item in installations}:
+                # An empty/partial response would make Alexa delete endpoints while
+                # the connector selection is merely missing, stale, or revoked.
+                raise HTTPException(503, "DISCOVERY_TEMPORARILY_UNAVAILABLE")
         entities = list(
             (
                 await database.scalars(
@@ -1351,6 +1377,7 @@ async def directive(request: Request, database: AsyncSession = database_dependen
                         Installation.tenant_id == link.tenant_id,
                         Entity.deleted_at.is_(None),
                         Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+                        *([voice_visible_clause(Entity)] if strict_selection else []),
                     )
                 )
             ).all()
@@ -1393,6 +1420,14 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             )
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
+        from .voice_scope import get_settings as selection_settings, voice_visible_clause
+
+        selection = selection_settings()
+        if bool(
+            getattr(selection, "voice_selection_v1_enabled", False)
+            and getattr(selection, "voice_selection_projection_enabled", False)
+        ):
+            entity_query = entity_query.where(voice_visible_clause(Entity))
         entity = await database.scalar(entity_query)
         if entity is None or entity.ha_registry_id is None or not alexa_entity_eligible(entity):
             if diagnostic_correlation_id is not None:

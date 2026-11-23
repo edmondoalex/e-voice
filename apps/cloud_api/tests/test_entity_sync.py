@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.cloud_api.app.alexa import discovery_endpoint
 from apps.cloud_api.app.config import Settings
@@ -44,6 +44,23 @@ def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, 
         "last_changed_at": datetime.now(UTC).isoformat(),
         "removed": False,
     }
+
+
+@pytest.mark.parametrize('method,revision', [('apply_full', 1), ('apply_delta', 1), ('apply_state', 1)])
+async def test_sync_reloads_revision_after_other_session_commits(session, seeded_domain, method, revision):
+    installation_id = seeded_domain.installation_a_id
+    await session.commit()
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    async with factory() as stale_session, factory() as writer_session:
+        stale = await stale_session.get(Installation, installation_id)
+        writer = await writer_session.get(Installation, installation_id)
+        assert stale.sync_revision == 0
+        writer.sync_revision = 1
+        await writer_session.commit()
+        assert stale.sync_revision == 0
+        with pytest.raises(StaleSyncError):
+            await getattr(EntitySyncService(stale_session, stale), method)(revision, [])
+        assert stale.sync_revision == 1
 
 
 async def test_final_authorization_removal_snapshot_tombstones_entity(

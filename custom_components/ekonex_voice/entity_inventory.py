@@ -65,6 +65,7 @@ ATTRIBUTE_ALLOWLIST = {
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25
+SELECTION_REFRESH_SECONDS = 120
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -90,10 +91,14 @@ class EntityInventorySynchronizer:
         self._websocket: ClientWebSocketResponse | None = None
         self._session_id: str | None = None
         self._revision = 0
+        self._selection_enabled = False
+        self._selection_metadata_enabled = False
+        self._resync_dirty = False
         self._unsubscribers: list[Callable[[], None]] = []
         self._pending: set[str] = set()
         self._flush_task: asyncio.Task[None] | None = None
         self._resync_task: asyncio.Task[None] | None = None
+        self._selection_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
         self.last_full_revision: int | None = None
         self.last_full_entity_count: int | None = None
@@ -131,10 +136,13 @@ class EntityInventorySynchronizer:
         )
 
     async def async_start(
-        self, websocket: ClientWebSocketResponse, session_id: str, cloud_revision: int
+        self, websocket: ClientWebSocketResponse, session_id: str, cloud_revision: int, *, selection_enabled: bool = False, metadata_enabled: bool = False, inventory_fence_enabled: bool = False
     ) -> None:
         await self.async_stop()
         self._websocket, self._session_id, self._revision = websocket, session_id, cloud_revision
+        self._inventory_fence_enabled = selection_enabled is True and inventory_fence_enabled is True
+        self._selection_enabled = selection_enabled is True
+        self._selection_metadata_enabled = selection_enabled is True and metadata_enabled is True
         _LOGGER.info("Starting entity synchronization from cloud revision %d", cloud_revision)
         self._unsubscribers.append(
             self._hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed)
@@ -148,14 +156,19 @@ class EntityInventorySynchronizer:
         self._unsubscribers.append(
             self._hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed)
         )
-        await self._send_full()
+        full_sent = await self._send_full()
+        if self._selection_enabled and (full_sent or not self._inventory_fence_enabled):
+            self._selection_task=self._hass.async_create_background_task(
+                self._selection_refresh_loop(), 'ekonex_voice_selection_refresh', eager_start=True)
 
     async def async_stop(self) -> None:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        tasks = tuple(task for task in (self._flush_task, self._resync_task) if task is not None)
+        tasks = tuple(task for task in (self._flush_task, self._resync_task, self._selection_task) if task is not None)
         self._flush_task = self._resync_task = None
+        self._selection_task = None
+        self._resync_dirty = False
         self._websocket = None
         self._session_id = None
         for task in tasks:
@@ -188,14 +201,19 @@ class EntityInventorySynchronizer:
     def _registry_changed(self, event: Event[Any]) -> None:
         if self._websocket is None or self._session_id is None:
             return
+        if not self._selection_enabled and self._resync_task is not None and not self._resync_task.done():
+            return
+        self._resync_dirty = True
         if self._resync_task is None or self._resync_task.done():
             self._resync_task = self._hass.async_create_background_task(
                 self._delayed_full(), "ekonex_voice_inventory_resync", eager_start=True
             )
 
     async def _delayed_full(self) -> None:
-        await asyncio.sleep(COALESCE_SECONDS)
-        await self._send_full()
+        while self._resync_dirty:
+            await asyncio.sleep(COALESCE_SECONDS)
+            self._resync_dirty = False
+            await self._send_full()
 
     async def _flush_states(self) -> None:
         await asyncio.sleep(COALESCE_SECONDS)
@@ -211,12 +229,52 @@ class EntityInventorySynchronizer:
 
     async def _send_full(self) -> None:
         registry = er.async_get(self._hass)
+        entries = sorted(registry.entities.values(), key=lambda value: value.id)
         items = [
             item
-            for entry in sorted(registry.entities.values(), key=lambda value: value.id)
+            for entry in entries
             if (item := self._serialize(entry)) is not None
         ]
-        await self._send("inventory_full", items)
+        selected = [entry.id for entry in entries if self.is_exposed(entry)] if self._selection_enabled else []
+        async with self._send_lock:
+            sent = await self._send_locked("inventory_full", items)
+            if not sent and getattr(self,'_inventory_fence_enabled',False):
+                websocket = self._websocket
+                if self._selection_enabled and websocket is not None and not getattr(websocket, "closed", False):
+                    await websocket.close()
+                return False
+            if self._selection_enabled:
+                await self._send_selection(selected)
+            return True
+
+    async def _send_selection(self, selected: list[str]) -> None:
+        websocket,session_id=self._websocket,self._session_id
+        if websocket is None or session_id is None or getattr(websocket,'closed',False):return
+        chunks=[selected[i:i+500] for i in range(0,len(selected),500)] or [[]]
+        if len(chunks)>256:raise ValueError('voice_selection_too_large')
+        for index,chunk in enumerate(chunks):
+            message=envelope('voice_selection_v1',{'session_id':session_id,'revision':self._revision,
+                'batch_index':index,'batch_count':len(chunks),'registry_ids':chunk})
+            if len(json.dumps(message,separators=(',',':')).encode())>MAX_MESSAGE_BYTES:raise ValueError('voice_selection_too_large')
+            await websocket.send_json(message)
+
+    async def _selection_refresh_loop(self) -> None:
+        websocket=self._websocket
+        try:
+            while True:
+                await asyncio.sleep(SELECTION_REFRESH_SECONDS)
+                async with self._send_lock:
+                    if self._websocket is not websocket or websocket is None or getattr(websocket,'closed',False):return
+                    registry=er.async_get(self._hass)
+                    selected=sorted(entry.id for entry in registry.entities.values() if self.is_exposed(entry))
+                    await self._send_selection(selected)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A failed refresh cannot keep a healthy-looking stale session.
+            if self._websocket is websocket and websocket is not None and not getattr(websocket,'closed',False):
+                await websocket.close()
+            raise
 
     async def _send(self, message_type: str, items: list[dict[str, object]]) -> None:
         async with self._send_lock:
@@ -225,7 +283,7 @@ class EntityInventorySynchronizer:
     async def _send_locked(self, message_type: str, items: list[dict[str, object]]) -> None:
         websocket, session_id = self._websocket, self._session_id
         if websocket is None or session_id is None or getattr(websocket, "closed", False) is True:
-            return
+            return False
         self._revision += 1
         chunks = _chunks(items)
         try:
@@ -243,7 +301,7 @@ class EntityInventorySynchronizer:
                 if len(json.dumps(message, separators=(",", ":")).encode()) > MAX_MESSAGE_BYTES:
                     raise ValueError("inventory_message_too_large")
                 if self._websocket is not websocket or getattr(websocket, "closed", False) is True:
-                    return
+                    return False
                 await websocket.send_json(message)
         except ClientConnectionError:
             self.send_failure_count += 1
@@ -253,7 +311,7 @@ class EntityInventorySynchronizer:
                 message_type,
                 self._revision,
             )
-            return
+            return False
         except Exception:
             self.send_failure_count += 1
             self.last_error_code = "send_failed"
@@ -281,11 +339,25 @@ class EntityInventorySynchronizer:
                 self._revision,
                 len(items),
             )
+        return True
 
     def _serialize(self, entry: er.RegistryEntry | None) -> dict[str, object] | None:
         if entry is None:
             return None
         item = _serialize(self._hass, entry)
+        if item is None and self._selection_enabled and self._selection_metadata_enabled and self.is_exposed(entry):
+            # A selected registry entity can exist without a state. Preserve it
+            # for strict selection presentation without granting control.
+            return {
+                "registry_id": entry.id,
+                "registry_only": True,
+                "entity_id": entry.entity_id,
+                "domain": entry.domain,
+                "friendly_name": _bound(entry.name or entry.original_name or entry.entity_id),
+                "available": False,
+                "control_exposed": False,
+                "removed": False,
+            }
         if item is not None:
             item["control_exposed"] = self.is_exposed(entry)
         if item is not None and entry.domain == "media_player":

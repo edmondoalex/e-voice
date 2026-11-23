@@ -16,6 +16,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from .voice_scope import voice_visible, voice_visible_clause, selection_current_clause
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin_console import (
@@ -237,7 +238,18 @@ async def bounded_app(
 ) -> HTMLResponse:
     resources = BoundedResourceService(session, context)
     installation = await resources.installation(context.effective_installation_id)
-    entities = await resources.entities()
+    # Presentation only: the complete inventory remains available to services.
+    all_entities = await resources.entities()
+    settings=get_settings()
+    selection_notice=''
+    if getattr(settings,'voice_selection_v1_enabled',False) and getattr(settings,'voice_selection_projection_enabled',False):
+        if not await session.scalar(select(selection_current_clause(context.effective_installation_id))):
+            selection_notice='<p class="bad" role="status">Selezione vocale non verificabile. Le entità non sono state eliminate.</p>'
+        visible_ids=set((await session.scalars(select(Entity.id).where(
+            Entity.installation_id==context.effective_installation_id,voice_visible_clause(Entity)))).all())
+        entities=[entity for entity in all_entities if entity.id in visible_ids]
+    else:
+        entities=[entity for entity in all_entities if voice_visible(entity)]
     overlay_entities(entities, await load_live_states(installation.public_id))
     csrf = _ui_csrf(context)
     feedback = (
@@ -250,6 +262,7 @@ async def bounded_app(
     page = _layout(
         installation.name,
         '<p class="muted bounded-scope">Sessione e-Voice legata a questo impianto.</p>'
+        + selection_notice
         + feedback
         + _entity_groups(installation, entities, csrf),
         context,

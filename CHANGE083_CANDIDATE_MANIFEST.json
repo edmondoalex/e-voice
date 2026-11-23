@@ -1,0 +1,299 @@
+{
+    "schema":  "ekonex.change-candidate.v1",
+    "change":  "CHANGE-2026-083",
+    "status":  "LOCAL_TESTED_NOT_RELEASED",
+    "base_commit":  "5e568f83a900cda22adb6a0c72c8765c651c9508",
+    "branch":  "agent/change083-voice-scope",
+    "generated_at":  "2026-11-23T09:33:21.7975173+01:00",
+    "files":  [
+                  {
+                      "path":  "apps/cloud_api/app/admin_console.py",
+                      "git_status":  "M",
+                      "sha256":  "5bd82368181f639ee16af6f07769b22351c3820fe026580cbc04007c19746e56",
+                      "size":  132640
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/alexa.py",
+                      "git_status":  "M",
+                      "sha256":  "d47f6469688ba333803edbe3c3641aefb3781f7eab163903c196d1d36ddef1dd",
+                      "size":  65919
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/alexa_events.py",
+                      "git_status":  "M",
+                      "sha256":  "42538d81716ee194f00a7cd1da7bcfbc452f027ea80ec27066eaafa628f8f825",
+                      "size":  26751
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/config.py",
+                      "git_status":  "M",
+                      "sha256":  "d154f5e6e1a58da35ebc5b6200849255a7faca9683e19a78eb5b590b2cc8ecc8",
+                      "size":  5466
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/domain/models.py",
+                      "git_status":  "M",
+                      "sha256":  "2d0e535f0aa60b8843e8ce79e9fb5953b7af9c4e1ffcca80e6261c2b470816f6",
+                      "size":  42739
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/entity_sync.py",
+                      "git_status":  "M",
+                      "sha256":  "42442202518224c70fb901f60d61ae88549e8a47dba06f4d7c9bf205fcdbdf4e",
+                      "size":  25524
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/evcp.py",
+                      "git_status":  "M",
+                      "sha256":  "be3913f0a4a79c710c9bcde918c95d8c1f1bb67faba9644241d7ce92b7d8b1ee",
+                      "size":  51587
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/installation_bound_api.py",
+                      "git_status":  "M",
+                      "sha256":  "57c1690bf554068b38f7668ea5c7ef97c8c68eed63b55948df1aac8b56f454ff",
+                      "size":  21040
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/laboratory_live_state.py",
+                      "git_status":  "M",
+                      "sha256":  "204edc834c4974a76aae488528c58434efa68427eb304bae1c7a43c694fe4be9",
+                      "size":  9784
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/main.py",
+                      "git_status":  "M",
+                      "sha256":  "efb5c7fcca41b9d1512fc600102487dfca6951e8a1b3ef7a62f494126fea5929",
+                      "size":  5354
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/pairing.py",
+                      "git_status":  "M",
+                      "sha256":  "ba24dcf42e54c7469d3412d6c7d3194d4177b85ec0caf6559ef64c7579226b1b",
+                      "size":  14758
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_api.py",
+                      "git_status":  "M",
+                      "sha256":  "408775889e8f49616c01cf3425798aee61a82d963a65050c52789fe839f0c4a0",
+                      "size":  90296
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_devices.py",
+                      "git_status":  "M",
+                      "sha256":  "2a33812c074add8cd78e351fca32cdb3b9ca8c115cff8db1d9fa97666feecf81",
+                      "size":  8619
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_notification_rules.py",
+                      "git_status":  "M",
+                      "sha256":  "636cb075a35b2a07140a6d5ed869cbe92a8f1605ac7c600b72b73a465e0ac267",
+                      "size":  5863
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_notifications.py",
+                      "git_status":  "M",
+                      "sha256":  "0ec820065030dbb751adb9e4f63841e2a67a3f70fcb947856659d8e71bc3ae5f",
+                      "size":  8671
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_admin_console.py",
+                      "git_status":  "M",
+                      "sha256":  "10ce8c225c8d16b61156b42c29cc606a1e05d65b1e833a894828e86cd68c48a8",
+                      "size":  73109
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_entity_sync.py",
+                      "git_status":  "M",
+                      "sha256":  "1df80a55f765ead3751cc400a0726ce9bceaca5dcd91d0aed7ad087876e6645d",
+                      "size":  19318
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_evcp.py",
+                      "git_status":  "M",
+                      "sha256":  "e79ca19ae48829205b51874091c735bff2127ba2f6d3477705e6dc69ea81c299",
+                      "size":  20822
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_installation_bound_api.py",
+                      "git_status":  "M",
+                      "sha256":  "5bd5573c490fb26da64706dd25cf93b201c89e0d31d7501dc73c7b5ab765b2df",
+                      "size":  17415
+                  },
+                  {
+                      "path":  "custom_components/ekonex_voice/connection.py",
+                      "git_status":  "M",
+                      "sha256":  "9821adf43e0ffd7ac26e397414424b6b25faf73ff5ad39c1d5ff9c8fc0cc3982",
+                      "size":  16693
+                  },
+                  {
+                      "path":  "custom_components/ekonex_voice/entity_inventory.py",
+                      "git_status":  "M",
+                      "sha256":  "2b226b14a29cd73c6634eb4a227f8b910fc8ee5568a2a05263f1c1f043ada798",
+                      "size":  21134
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/voice_scope.py",
+                      "git_status":  "??",
+                      "sha256":  "01524be8b1a0618700745d4806cd6e8e7eddf2d0ef817201f2df972b153b3612",
+                      "size":  2331
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/voice_selection_store.py",
+                      "git_status":  "??",
+                      "sha256":  "4b823b9a0780b201991e742beee679755bdffe155db3245fce6e255e8af6bf47",
+                      "size":  5241
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_bridge.py",
+                      "git_status":  "??",
+                      "sha256":  "2c5602aa6368daae7a2218e784ac34cef6c82bfeef33e65672040ae189106924",
+                      "size":  16749
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_contract_v1.py",
+                      "git_status":  "??",
+                      "sha256":  "7d70478a2da809a4c6785bb1f67357d0b7b5c76ece65aa38a08f767a1e8cd71a",
+                      "size":  673
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_control_service.py",
+                      "git_status":  "??",
+                      "sha256":  "f5687881e415fbdc6f1aa5a15243ea1e551124bb6c94f5cb2fbe1b09fe0bef4a",
+                      "size":  9416
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_cutover.py",
+                      "git_status":  "??",
+                      "sha256":  "9b41460d773fa9714e04b5c721f79c743673ffa658e10e3f34270abc74d8799b",
+                      "size":  7622
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_key_provider.py",
+                      "git_status":  "??",
+                      "sha256":  "94f8e199bb973afc2d9ab81196b229ee4ca6615814fe5a34fab0e7ba8e3237bc",
+                      "size":  1743
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_provision_approval.py",
+                      "git_status":  "??",
+                      "sha256":  "4bbd9283ac1cb1d232e4dd2c7189c6cc3c3cc0831d5a617f0c3ba27db4a75de1",
+                      "size":  2803
+                  },
+                  {
+                      "path":  "apps/cloud_api/app/wear_wake_worker.py",
+                      "git_status":  "??",
+                      "sha256":  "8f3402b7a334d492bbb22dac16ee4d1c6a05e407ef92e2f355e5962ef58d94ca",
+                      "size":  2653
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_category_guard.py",
+                      "git_status":  "??",
+                      "sha256":  "1ebaa1ae802500042702379e499f7537be235a5a16e4195294f6ca910c6715ab",
+                      "size":  4490
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_cloud_fahrenheit.py",
+                      "git_status":  "??",
+                      "sha256":  "f75ed1894a28a67dd64797b08babb8eaafdf4197cb552815528dfa23e293023d",
+                      "size":  273
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_inventory_negotiation_review.py",
+                      "git_status":  "??",
+                      "sha256":  "2ef002a31db8fe23d8f09e3a14fd07df03442bf627642c6c3a2a7853851cec42",
+                      "size":  2676
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_inventory_selection_guard_review.py",
+                      "git_status":  "??",
+                      "sha256":  "8ff4945ed557bc7589a689cbf23bdcb958b2d0ad03ea0a46e4394235d6567405",
+                      "size":  1241
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_laboratory_wear_fence.py",
+                      "git_status":  "??",
+                      "sha256":  "76c3bc068927edc80ae46f7744cd17d069a32f342bc7251ea98685eb47eb337b",
+                      "size":  4668
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_no_state_cloud.py",
+                      "git_status":  "??",
+                      "sha256":  "da1e140ffaec60d602d37eedbc557e5f9b1fef268a353cb29eee0aec5622cae7",
+                      "size":  7409
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_registry_handshake.py",
+                      "git_status":  "??",
+                      "sha256":  "e8a727a288ae486f9c1d0fcf4d73cbc15bcb1328b6945558604e842ea7d1d6c4",
+                      "size":  9771
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_review_category_race_pg.py",
+                      "git_status":  "??",
+                      "sha256":  "5b2dcced4a4711426bf2fbaaad7d6fa4f528ee58f11cc9897945b76e93e93db4",
+                      "size":  13189
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_voice_scope_change083.py",
+                      "git_status":  "??",
+                      "sha256":  "b3be3c2e21c8205bc4db9c9a925481aed6134419d24fba452766c7d2f4c5c521",
+                      "size":  2693
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_voice_selection_projection.py",
+                      "git_status":  "??",
+                      "sha256":  "488f0c90c1ebb540e65db506acb39a1b51ebc9ab70365a32f3b538b3057eec1a",
+                      "size":  3152
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_voice_selection_route_guards.py",
+                      "git_status":  "??",
+                      "sha256":  "ffd7e7eaf7c60edbe8d46f511a10f711830f52b6c288b574f1b5ed6d2a9a079a",
+                      "size":  5874
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_voice_selection_store.py",
+                      "git_status":  "??",
+                      "sha256":  "f05da545e8659d2fc1c6820a4e01c51f0ab2c810e69fcd2478f48a26225be63e",
+                      "size":  2243
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_wear_bridge_change083.py",
+                      "git_status":  "??",
+                      "sha256":  "f9297965cbb0fcd462eb27f570cb1dda41cc98c948d8537db91fb1a2bea6fa23",
+                      "size":  62164
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_wear_export_change083.py",
+                      "git_status":  "??",
+                      "sha256":  "f2b52d7a0fd907db300162c59fd741170a3cea98d09f1d5953b30153cd7162ec",
+                      "size":  3044
+                  },
+                  {
+                      "path":  "apps/cloud_api/tests/test_wear_preferences_concurrency.py",
+                      "git_status":  "??",
+                      "sha256":  "9ba9756c3eb8cdfb6fce311411a27b00bd8881cf489f7b124033ae725e7b2f61",
+                      "size":  2864
+                  },
+                  {
+                      "path":  "migrations/versions/20261120_0031_wear_bridge_staged.py",
+                      "git_status":  "??",
+                      "sha256":  "29a2f3f85bbb3185c59525f9d4adaa8ad5cb82f22974f73226d9c3fad2cf0c68",
+                      "size":  1467
+                  },
+                  {
+                      "path":  "migrations/versions/20261122_0032_voice_selection.py",
+                      "git_status":  "??",
+                      "sha256":  "767e06ee455efccda9a13cff71713e1804fba594cf5f755ca982d8012b192d34",
+                      "size":  1521
+                  }
+              ],
+    "verification":  {
+                         "cloud_targeted":  "171 passed",
+                         "connector_ast":  "4 passed",
+                         "compileall":  "passed",
+                         "diff_check":  "passed",
+                         "connector_runtime_tests":  "not rerun on Windows: Home Assistant package unavailable; copied connector hashes match verified staging"
+                     }
+}
