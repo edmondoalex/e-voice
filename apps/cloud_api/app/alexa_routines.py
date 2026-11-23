@@ -214,11 +214,6 @@ async def _condition_belongs_to_tenant(
     )
 
 
-def _laboratory_only() -> None:
-    if get_settings().environment != "laboratory":
-        raise HTTPException(status.HTTP_404_NOT_FOUND)
-
-
 async def _multi_form(request: Request) -> dict[str, list[str]]:
     raw = await request.body()
     if len(raw) > MAX_FORM_BYTES:
@@ -354,7 +349,6 @@ async def routines_page(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> HTMLResponse:
-    _laboratory_only()
     _admin(context)
     installations = await _installations(session, context)
     requested = request.query_params.get("installation", "")
@@ -547,7 +541,6 @@ async def cancel_alert(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -574,7 +567,6 @@ async def create_group(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -618,7 +610,6 @@ async def delete_group(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -653,7 +644,6 @@ async def update_group(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -959,7 +949,6 @@ async def create_routine(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -1030,7 +1019,6 @@ async def delete_routine(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -1057,7 +1045,6 @@ async def update_routine(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -1131,7 +1118,6 @@ async def test_routine(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
@@ -1203,7 +1189,6 @@ async def trigger_routine(
     session: AsyncSession = session_dependency,
 ) -> RoutineTriggerResponse:
     """Run one lab routine using the installation-bound Connector credential."""
-    _laboratory_only()
     credential: ConnectorCredential = await authenticate_connector_secret(authorization, session)
     installation = credential.installation
     routine = await session.scalar(
@@ -1293,7 +1278,6 @@ async def send_test(
     context: Annotated[TenantContext, console_context_dependency],
     session: Annotated[AsyncSession, session_dependency],
 ) -> RedirectResponse:
-    _laboratory_only()
     _admin(context)
     values = await _multi_form(request)
     if not _valid_csrf(_one(values, "csrf_token"), request.cookies.get(CSRF_COOKIE), context):
