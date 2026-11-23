@@ -4,6 +4,17 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-23 — 2.0.13 bounded Alexa media sibling authorization
+
+Status: Production hotfix prepared and validated
+
+### Scope
+
+- Allow local media TTS and DND commands to reach only the Alexa Devices sibling attached to the
+  same device as an explicitly exposed media player.
+- Keep unrelated, cross-device, non-Alexa, and unsupported sibling operations denied.
+- Include the parent relationship in command idempotency fingerprints and regression coverage.
+
 ## 2026-11-23 — 2.0.12 Home Assistant notify target compatibility
 
 Status: Production hotfix prepared and validated

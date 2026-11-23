@@ -299,6 +299,78 @@ async def test_alexa_speech_rejects_wrong_targets_and_unsafe_messages(
     call.assert_not_awaited()
 
 
+async def test_alexa_media_sibling_is_bounded_to_exposed_parent(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    parent = registry.async_get_or_create(
+        "media_player",
+        "alexa_devices",
+        "echo-office-media",
+        suggested_object_id="echo_office",
+        device_id="echo-office-device",
+    )
+    sibling = registry.async_get_or_create(
+        "notify",
+        "alexa_devices",
+        "echo-office-speak",
+        suggested_object_id="echo_office_parla",
+        device_id="echo-office-device",
+    )
+    hass.states.async_set(parent.entity_id, "idle")
+    hass.states.async_set(sibling.entity_id, "unknown")
+    executor = EkonexVoiceCommandExecutor(
+        hass, EntityInventorySynchronizer(hass, set(), {parent.id}, None)
+    )
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "local-media-speak",
+            sibling.id,
+            {"operation": "speak", "message": "Test locale"},
+            related_to_registry_id=parent.id,
+        )
+    assert result.status == "success"
+    call.assert_awaited_once_with(
+        "notify",
+        "send_message",
+        {"message": "Test locale"},
+        blocking=True,
+        target={"entity_id": sibling.entity_id},
+    )
+
+
+async def test_alexa_media_sibling_rejects_unrelated_parent(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    parent = registry.async_get_or_create(
+        "media_player",
+        "alexa_devices",
+        "echo-office-media-denied",
+        suggested_object_id="echo_office_denied",
+        device_id="echo-office-device-denied",
+    )
+    sibling = registry.async_get_or_create(
+        "notify",
+        "alexa_devices",
+        "echo-other-speak",
+        suggested_object_id="echo_other_parla",
+        device_id="echo-other-device",
+    )
+    hass.states.async_set(parent.entity_id, "idle")
+    hass.states.async_set(sibling.entity_id, "unknown")
+    executor = EkonexVoiceCommandExecutor(
+        hass, EntityInventorySynchronizer(hass, set(), {parent.id}, None)
+    )
+    call = AsyncMock()
+    with patch("homeassistant.core.ServiceRegistry.async_call", new=call):
+        result = await executor.async_execute(
+            "local-media-speak-denied",
+            sibling.id,
+            {"operation": "speak", "message": "Non eseguire"},
+            related_to_registry_id=parent.id,
+        )
+    assert result.status == "target_not_exposed"
+    call.assert_not_awaited()
+
+
 async def test_local_announcement_action_calls_only_validated_notify_target(
     hass: HomeAssistant,
 ) -> None:
