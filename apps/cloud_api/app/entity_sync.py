@@ -352,7 +352,11 @@ class EntitySyncService:
                 if not (entity.attributes_json or {}).get("_experiences"):
                     continue
                 _enrich_echo_players([serialized], all_entities)
-                serialized["group"] = group_by_member.get(entity.ha_registry_id)
+                serialized["group"] = (
+                    group_by_member.get(entity.ha_registry_id)
+                    if entity.ha_registry_id is not None
+                    else None
+                )
                 media_events.publish(
                     self._installation.id,
                     revision,

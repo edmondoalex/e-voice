@@ -86,12 +86,15 @@ def derive_installation_key(master: bytes, installation: UUID) -> bytes:
 
 def verify_service_key(provided: object, supplied: object, payload: bytes) -> bytes:
     """Accept current and optional previous key during a controlled overlap."""
-    keys = (provided,) if isinstance(provided, bytes) else provided
-    if (
-        not isinstance(keys, (tuple, list))
-        or not 1 <= len(keys) <= 2
-        or not isinstance(supplied, str)
-    ):
+    if isinstance(provided, bytes):
+        keys = (provided,)
+    elif isinstance(provided, (tuple, list)):
+        keys = tuple(key for key in provided if isinstance(key, bytes))
+        if len(keys) != len(provided):
+            raise ValueError("invalid_bridge_keyring")
+    else:
+        raise ValueError("invalid_bridge_keyring")
+    if not 1 <= len(keys) <= 2 or not isinstance(supplied, str):
         raise ValueError("invalid_bridge_keyring")
     if any(not isinstance(key, bytes) or not 32 <= len(key) <= 128 for key in keys):
         raise ValueError("invalid_bridge_keyring")
