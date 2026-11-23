@@ -1,7 +1,9 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -17,6 +19,11 @@ from apps.cloud_api.app.domain.models import (
     User,
 )
 from apps.cloud_api.app.portal_auth import hash_password
+
+
+@pytest.fixture
+def enable_custom_integrations() -> None:
+    """Keep cloud-only tests independent from the optional HA pytest plugin."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +42,9 @@ class SeededDomain:
 
 
 @pytest_asyncio.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    database_path = (tmp_path / "cloud-api-test.sqlite3").as_posix()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 

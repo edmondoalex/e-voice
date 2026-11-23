@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import voluptuous as vol
+from homeassistant.components.media_player import MediaPlayerEntityFeature
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -471,9 +472,22 @@ async def test_media_group_volume_preserves_relative_levels(hass: HomeAssistant)
     hass.states.async_set(
         first.entity_id,
         "playing",
-        {"supported_features": 524288, "volume_level": 0.52, "group_members": members},
+        {
+            "supported_features": int(
+                MediaPlayerEntityFeature.GROUPING | MediaPlayerEntityFeature.VOLUME_SET
+            ),
+            "volume_level": 0.52,
+            "group_members": members,
+        },
     )
-    hass.states.async_set(second.entity_id, "playing", {"volume_level": 0.40})
+    hass.states.async_set(
+        second.entity_id,
+        "playing",
+        {
+            "supported_features": int(MediaPlayerEntityFeature.VOLUME_SET),
+            "volume_level": 0.40,
+        },
+    )
     inventory = EntityInventorySynchronizer(hass, set(), {first.id, second.id}, None)
     executor = EkonexVoiceCommandExecutor(hass, inventory)
     call = AsyncMock()

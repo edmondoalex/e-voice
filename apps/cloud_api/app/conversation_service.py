@@ -69,9 +69,11 @@ class ConversationEntityService:
             tenant_id=tenant_id, installation_id=installation_id
         )
         settings = get_settings()
-        live_states = await load_live_states(
-            live_installation_public_id or settings.alexa_laboratory_installation_public_id
+        configured_installation = getattr(settings, "alexa_laboratory_installation_public_id", "")
+        fallback_installation = (
+            configured_installation if isinstance(configured_installation, str) else ""
         )
+        live_states = await load_live_states(live_installation_public_id or fallback_installation)
         overlay_entities(entities, live_states)
         snapshots = tuple(
             self._snapshot(entity)
@@ -188,6 +190,7 @@ class ConversationEntityService:
         observed_at = entity.last_seen_at or entity.last_changed_at
         if observed_at is not None and observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
+        voice_category = getattr(entity, "voice_category", None)
         return EntitySnapshot(
             entity_id=entity.ha_entity_id,
             name=(
@@ -204,5 +207,5 @@ class ConversationEntityService:
             aliases=aliases,
             available=entity.available,
             observed_at=observed_at,
-            category=entity.voice_category.slug if entity.voice_category is not None else None,
+            category=getattr(voice_category, "slug", None),
         )

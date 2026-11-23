@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator
 
 import pytest
+
+
+def pytest_runtest_setup() -> None:
+    """Provide the loop expected by the Home Assistant cleanup fixture.
+
+    Home Assistant installs a strict event-loop policy.  Under Python 3.13 and
+    pytest 9, the third-party ``verify_cleanup`` fixture runs before
+    pytest-asyncio has installed a current loop.  Create one at the start of
+    each test only when the policy reports that none is current; the fixture
+    remains responsible for its normal leak checks and cleanup.
+    """
+    try:
+        previous_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        previous_loop = None
+    if previous_loop is None or previous_loop.is_closed():
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 @pytest.fixture

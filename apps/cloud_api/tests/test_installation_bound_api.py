@@ -16,6 +16,7 @@ from apps.cloud_api.app.domain.models import (
     ExternalInstallationBinding,
     InstallationBoundSession,
     UserInstallationAssignment,
+    WearDevice,
 )
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.installation_bound import InstallationBoundService, encode_launch
@@ -122,6 +123,29 @@ async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domai
     assert replay.status_code == 403
     await client.aclose()
     app.dependency_overrides.clear()
+
+
+async def test_bounded_app_reports_unverified_selection_without_deletion(
+    session, seeded_domain, monkeypatch
+):
+    from apps.cloud_api.app import installation_bound_api, voice_scope
+
+    launch = await _setup(session, seeded_domain)
+    client = await _client(session)
+    settings = get_settings().model_copy(
+        update={"voice_selection_v1_enabled": True, "voice_selection_projection_enabled": True}
+    )
+    monkeypatch.setattr(installation_bound_api, "get_settings", lambda: settings)
+    monkeypatch.setattr(voice_scope, "get_settings", lambda: settings)
+    try:
+        assert (await client.post("/bounded/exchange", json={"launch": launch})).status_code == 200
+        page = await client.get("/bounded/app")
+        assert page.status_code == 200 and "Selezione vocale non verificabile" in page.text
+        assert "Le entità non sono state eliminate" in page.text
+        assert await session.get(Entity, seeded_domain.entity_a_id) is not None
+    finally:
+        await client.aclose()
+        app.dependency_overrides.clear()
 
 
 async def test_bounded_app_renders_safe_controls_and_dispatches_with_csrf(
@@ -328,6 +352,48 @@ async def test_revocation_while_stream_is_open_stops_before_next_item(session, s
         raise AssertionError("revoked stream emitted another item")
     except StopAsyncIteration:
         pass
+    await client.aclose()
+    app.dependency_overrides.clear()
+
+
+async def test_wear_page_documents_private_installer_flow(session, seeded_domain):
+    launch = await _setup(session, seeded_domain)
+    session.add(
+        WearDevice(
+            credential_hash="f" * 64,
+            tenant_id=seeded_domain.tenant_a_id,
+            user_id=seeded_domain.user_a_id,
+            installation_id=seeded_domain.installation_a_id,
+            display_name="Synthetic Watch",
+            capabilities_json=["notification.receive"],
+            notification_preferences_json={},
+        )
+    )
+    await session.commit()
+    client = await _client(session)
+    assert (await client.post("/bounded/exchange", json={"launch": launch})).status_code == 200
+
+    response = await client.get("/bounded/wear")
+
+    assert response.status_code == 200
+    assert "Installazione privata APK" in response.text
+    assert "Solo installatore" in response.text
+    assert "Debug wireless" in response.text
+    assert "disattiva Debug wireless" in response.text
+    assert "non deve essere eseguita dal cliente finale" in response.text.casefold()
+    assert "Apri installazione tecnica" in response.text
+    assert "ekonex:wear-installer" in response.text
+    assert "In attesa dell'associazione dall'orologio" in response.text
+    assert "Orologio associato correttamente" in response.text
+    assert "/bounded/wear/enrollments/" in response.text
+    assert "Priorità minima" in response.text
+    assert "Ã" not in response.text
+    assert "â€”" not in response.text
+    assert 'data-quick-search type=search placeholder="Cerca dispositivo o azione"' in response.text
+    assert "toLocaleLowerCase('it').includes(query)" in response.text
+    assert "Regole notifiche automatiche" in response.text
+    assert "/notification-rules" in response.text
+    assert "Qualsiasi cambio" in response.text
     await client.aclose()
     app.dependency_overrides.clear()
 

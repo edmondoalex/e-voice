@@ -25,6 +25,9 @@ type RandomValue = Callable[[], float]
 type Connect = Callable[[], Coroutine[Any, Any, ClientWebSocketResponse]]
 _LOGGER = logging.getLogger(__name__)
 CONNECTOR_CAPABILITIES = {
+    "supports_voice_selection_v1": True,
+    "supports_voice_selection_inventory_fence_v1": True,
+    "supports_voice_registry_only_v1": True,
     "supports_alexa_announcements": True,
     "supports_alexa_volume": True,
     "supports_correlation_id": True,
@@ -124,9 +127,14 @@ class EkonexVoiceConnection:
                 )
                 self.state, self.last_error_code = ConnectionState.PROTOCOL_ERROR, error_code
                 return
-            except EkonexVoiceCannotConnect:
+            except EkonexVoiceCannotConnect as error:
                 self.state, self.last_error_code = ConnectionState.BACKING_OFF, "cannot_connect"
                 self.retry_count += 1
+                _LOGGER.warning(
+                    "Connector session closed (%s, websocket_code=%s); retrying",
+                    error,
+                    websocket.close_code if websocket is not None else None,
+                )
                 delay = self._random_value() * BACKOFF_SCHEDULE[backoff_index]
                 self.next_retry_delay = delay
                 await self._sleep(delay)
@@ -162,12 +170,30 @@ class EkonexVoiceConnection:
         )
         await websocket.send_json(hello)
         payload = await self._receive_ack(websocket, "hello_ack", str(hello["id"]))
-        if set(payload) != {
+        expected_ack = {
             "installation_id",
             "session_id",
             "heartbeat_interval_seconds",
             "sync_revision",
-        }:
+        }
+        optional = {
+            "voice_selection_v1",
+            "voice_registry_only_v1",
+            "voice_selection_inventory_fence_v1",
+        }
+        if (
+            not expected_ack.issubset(payload)
+            or set(payload) - expected_ack - optional
+            or any(payload[key] is not True for key in optional if key in payload)
+            or (
+                "voice_registry_only_v1" in payload
+                and payload.get("voice_selection_v1") is not True
+            )
+            or (
+                "voice_selection_inventory_fence_v1" in payload
+                and payload.get("voice_selection_v1") is not True
+            )
+        ):
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         if payload.get("installation_id") != self._installation_id:
             raise EkonexVoiceProtocolError("installation_identity_mismatch")
@@ -191,7 +217,16 @@ class EkonexVoiceConnection:
             },
         )
         if self._inventory is not None:
-            await self._inventory.async_start(websocket, session_id, sync_revision)
+            if payload.get("voice_selection_v1") is True:
+                kwargs = {
+                    "selection_enabled": True,
+                    "metadata_enabled": payload.get("voice_registry_only_v1") is True,
+                }
+                if payload.get("voice_selection_inventory_fence_v1") is True:
+                    kwargs["inventory_fence_enabled"] = True
+                await self._inventory.async_start(websocket, session_id, sync_revision, **kwargs)
+            else:
+                await self._inventory.async_start(websocket, session_id, sync_revision)
         while not self._stop.is_set():
             sleeper = asyncio.create_task(self._sleep(float(interval)))
             receiver = asyncio.create_task(self._receive_message(websocket, session_id=session_id))

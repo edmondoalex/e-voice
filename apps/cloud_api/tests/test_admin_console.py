@@ -60,6 +60,29 @@ async def _login(client: httpx.AsyncClient, email: str, password: str) -> None:
     assert response.status_code == 303
 
 
+async def test_unverified_voice_selection_explains_hidden_entities_without_deletion(
+    session, seeded_domain, monkeypatch
+):
+    from apps.cloud_api.app import admin_console, voice_scope
+
+    original = admin_console.get_settings()
+    settings = original.model_copy(
+        update={"voice_selection_v1_enabled": True, "voice_selection_projection_enabled": True}
+    )
+    monkeypatch.setattr(admin_console, "get_settings", lambda: settings)
+    monkeypatch.setattr(voice_scope, "get_settings", lambda: settings)
+    client = await _client(session)
+    try:
+        await _login(client, "owner@example.test", "owner-password-123")
+        page = await client.get(f"/installations/{seeded_domain.installation_a_id}")
+        assert page.status_code == 200
+        assert "Selezione vocale non verificabile" in page.text
+        assert "Le entità non sono state eliminate" in page.text
+        assert await session.get(Entity, seeded_domain.entity_a_id) is not None
+    finally:
+        await client.aclose()
+
+
 async def test_dashboard_is_tenant_scoped_and_requires_admin(
     session: AsyncSession, seeded_domain: SeededDomain
 ) -> None:
@@ -72,8 +95,8 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     assert page.status_code == 200
     assert "Home A" in page.text
     assert "Home B" not in page.text
-    assert '<img class="brand-logo" src="/static/ekonex-e-voice-laboratorio.png"' in page.text
-    assert 'alt="Ekonex Laboratorio e-Voice"' in page.text
+    assert '<img class="brand-logo" src="/static/ekonex-cloud-voice.png"' in page.text
+    assert 'alt="Ekonex Cloud Voice"' in page.text
     assert ">Impianti<" in page.text
     assert "Home Assistant" not in page.text
     for href in ("/dashboard", "/installations", "/activity", "/system", "/pair"):

@@ -17,7 +17,11 @@ def test_settings_read_prefixed_environment(monkeypatch: MonkeyPatch) -> None:
 
 def test_production_rejects_development_pairing_portal_secrets() -> None:
     with pytest.raises(ValueError, match="pairing portal secrets"):
-        Settings(environment="production", _env_file=None)
+        Settings(
+            environment="production",
+            pairing_delivery_key=Fernet.generate_key().decode(),
+            _env_file=None,
+        )
 
 
 @pytest.mark.parametrize("environment", ["laboratory", "production"])

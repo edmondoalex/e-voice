@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.cloud_api.app.alexa import (
     _command,
     _digest,
+    alexa_entity_eligible,
     capabilities,
     discovery_endpoint,
     endpoint_id,
@@ -30,6 +31,16 @@ from apps.cloud_api.app.domain.models import (
 )
 from apps.cloud_api.app.evcp import CommandResultPayload, sessions
 from apps.cloud_api.app.main import app
+
+
+def test_global_notification_entity_is_not_alexa_eligible() -> None:
+    entity = Entity(
+        installation_id=uuid4(),
+        ha_entity_id="light.private_notification_only",
+        ha_domain="light",
+        control_exposed=False,
+    )
+    assert alexa_entity_eligible(entity) is False
 
 
 async def _client(session: AsyncSession) -> httpx.AsyncClient:

@@ -2,13 +2,13 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.cloud_api.app.alexa import discovery_endpoint
 from apps.cloud_api.app.config import Settings
@@ -46,6 +46,27 @@ def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, 
     }
 
 
+@pytest.mark.parametrize(
+    "method,revision", [("apply_full", 1), ("apply_delta", 1), ("apply_state", 1)]
+)
+async def test_sync_reloads_revision_after_other_session_commits(
+    session, seeded_domain, method, revision
+):
+    installation_id = seeded_domain.installation_a_id
+    await session.commit()
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    async with factory() as stale_session, factory() as writer_session:
+        stale = await stale_session.get(Installation, installation_id)
+        writer = await writer_session.get(Installation, installation_id)
+        assert stale.sync_revision == 0
+        writer.sync_revision = 1
+        await writer_session.commit()
+        assert stale.sync_revision == 0
+        with pytest.raises(StaleSyncError):
+            await getattr(EntitySyncService(stale_session, stale), method)(revision, [])
+        assert stale.sync_revision == 1
+
+
 async def test_final_authorization_removal_snapshot_tombstones_entity(
     session: AsyncSession, seeded_domain: object
 ) -> None:
@@ -62,6 +83,87 @@ async def test_final_authorization_removal_snapshot_tombstones_entity(
     await service.apply_full(2, [])
     assert entity.deleted_at is not None
     assert not entity.available
+
+
+async def test_reconnect_snapshot_evaluates_rules_only_for_existing_state_changes(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    scheduled: list[tuple[object, list[tuple[object, str | None, bool]]]] = []
+    monkeypatch.setattr(
+        "apps.cloud_api.app.wear_notification_rules.schedule_wear_rule_evaluation",
+        lambda installation_id, changes: scheduled.append((installation_id, changes)),
+    )
+
+    await service.apply_full(1, [item(state="on")])
+    scheduled.clear()
+
+    await service.apply_full(2, [item(state="off")])
+    matching = [entry for entry in scheduled if entry[1][0][1:] == ("on", True)]
+    assert len(matching) == 1
+
+
+async def test_inventory_removes_nul_characters_before_database_write(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    nul_item = {
+        **item(registry_id="registry-nul-state", state="\x00V000033"),
+        "entity_id": "sensor.software_version_master",
+        "domain": "sensor",
+        "friendly_name": "Software\x00 Version Master",
+        "attributes": {"raw": "A\x00B", "nested": ["C\x00D"]},
+    }
+
+    await EntitySyncService(session, installation).apply_full(1, [nul_item])
+    await session.commit()
+
+    entity = (
+        await session.scalars(select(Entity).where(Entity.ha_registry_id == "registry-nul-state"))
+    ).one()
+    assert entity.state == "V000033"
+    assert entity.friendly_name == "Software Version Master"
+    assert entity.attributes_json == {"raw": "AB", "nested": ["CD"]}
+
+
+async def test_reconnect_snapshot_reuses_preloaded_entities_without_per_item_lookup(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [item(state="on")])
+
+    async def unexpected_lookup(*args: object, **kwargs: object) -> None:
+        raise AssertionError("full sync must not query each preloaded entity")
+
+    monkeypatch.setattr(service, "_by_registry", unexpected_lookup)
+    await service.apply_full(2, [item(state="off")])
+
+
+async def test_state_update_adds_entity_created_after_full_inventory(
+    session: AsyncSession, seeded_domain: object
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    await service.apply_full(1, [])
+
+    created = {
+        **item(registry_id="registry-created-after-full", state="on"),
+        "entity_id": "binary_sensor.created_after_full",
+        "domain": "binary_sensor",
+    }
+    await service.apply_state(2, [created])
+
+    entity = await service._by_registry("registry-created-after-full")
+    assert entity is not None
+    assert entity.ha_entity_id == "binary_sensor.created_after_full"
+    assert entity.state == "on"
+    assert entity.deleted_at is None
 
 
 async def test_cover_device_class_survives_inventory_database_and_discovery(
@@ -98,10 +200,12 @@ async def test_inventory_commit_triggers_proactive_discovery_reconciliation(
         seeded_domain.installation_a_id,  # type: ignore[attr-defined]
     )
     assert installation is not None
-    reconcile = AsyncMock(return_value=0)
-    monkeypatch.setattr("apps.cloud_api.app.alexa_events.reconcile_discovery_safely", reconcile)
+    reconcile = MagicMock()
+    monkeypatch.setattr(
+        "apps.cloud_api.app.alexa_events.schedule_discovery_reconciliation", reconcile
+    )
     await EntitySyncService(session, installation).apply_full(1, [item()])
-    reconcile.assert_awaited_once_with(session, installation)
+    reconcile.assert_called_once_with(installation.id)
 
 
 async def test_laboratory_state_sync_never_reports_to_alexa(
@@ -185,7 +289,7 @@ async def test_connector_rename_preserves_cloud_name_overrides(
     assert entity.ha_registry_id == original_registry_id
 
 
-async def test_stale_and_unauthorized_state_are_rejected(
+async def test_stale_snapshot_is_rejected_and_new_state_entity_is_accepted(
     session: AsyncSession, seeded_domain: object
 ) -> None:
     installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
@@ -194,8 +298,13 @@ async def test_stale_and_unauthorized_state_are_rejected(
     await service.apply_full(1, [item()])
     with pytest.raises(StaleSyncError):
         await service.apply_full(1, [item(state="off")])
-    with pytest.raises(StaleSyncError):
-        await service.apply_state(2, [item("not-authorized")])
+    created = {
+        **item("not-in-snapshot"),
+        "entity_id": "sensor.created_after_snapshot",
+        "domain": "sensor",
+    }
+    await service.apply_state(2, [created])
+    assert await service._by_registry("not-in-snapshot") is not None
 
 
 async def test_same_registry_id_is_isolated_by_installation(

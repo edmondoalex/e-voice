@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from cryptography.fernet import Fernet
@@ -244,6 +244,37 @@ class AlexaEventGateway:
         """Publish changed, or explicitly forced, endpoints for one installation."""
         from .alexa import SUPPORTED_DOMAINS, alexa_entity_eligible, discovery_endpoint
         from .entity_names import unambiguous_voice_entities
+        from .voice_scope import (
+            get_settings as selection_settings,
+        )
+        from .voice_scope import (
+            selection_current_clause,
+            voice_visible_clause,
+        )
+
+        selection = selection_settings()
+        strict_selection = bool(
+            getattr(selection, "voice_selection_v1_enabled", False)
+            and getattr(selection, "voice_selection_projection_enabled", False)
+        )
+        if strict_selection:
+            current_installation = await self._session.scalar(
+                select(Installation.id).where(
+                    Installation.id == installation.id,
+                    Installation.tenant_id == installation.tenant_id,
+                    selection_current_clause(Installation.id),
+                )
+            )
+            if current_installation is None:
+                await self._audit_discovery(
+                    installation,
+                    "alexa.discovery.selection_unavailable",
+                    None,
+                    None,
+                    "deferred",
+                )
+                await self._session.commit()
+                return 0
 
         entities = list(
             (
@@ -251,7 +282,9 @@ class AlexaEventGateway:
                     select(Entity).where(
                         Entity.installation_id == installation.id,
                         Entity.deleted_at.is_(None),
+                        Entity.control_exposed.is_(True),
                         Entity.ha_domain.in_(SUPPORTED_DOMAINS),
+                        *([voice_visible_clause(Entity)] if strict_selection else []),
                     )
                 )
             ).all()
@@ -571,3 +604,64 @@ async def reconcile_discovery_safely(
         return None
     finally:
         await gateway.close()
+
+
+def schedule_state_reporting(installation_id: UUID, entity_ids: list[UUID]) -> None:
+    """Report Alexa state outside the connector receive loop."""
+    task = asyncio.create_task(_report_state_safely(installation_id, entity_ids))
+    task.add_done_callback(_log_state_reporting_error)
+
+
+def _log_state_reporting_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("alexa_state_reporting_failed", exc_info=task.exception())
+
+
+async def _report_state_safely(installation_id: UUID, entity_ids: list[UUID]) -> None:
+    from .alexa import SUPPORTED_DOMAINS
+    from .database import async_session_factory
+
+    async with async_session_factory() as session:
+        installation = await session.get(Installation, installation_id)
+        if installation is None:
+            return
+        entities = list(
+            (
+                await session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == installation_id,
+                        Entity.id.in_(entity_ids),
+                    )
+                )
+            ).all()
+        )
+        gateway = AlexaEventGateway(session)
+        try:
+            for entity in entities:
+                if entity.ha_domain in SUPPORTED_DOMAINS:
+                    await gateway.report_entity(entity)
+        except Exception:
+            await session.rollback()
+            logger.exception("Alexa proactive reporting failed installation_id=%s", installation_id)
+        finally:
+            await gateway.close()
+
+
+def schedule_discovery_reconciliation(installation_id: UUID) -> None:
+    """Reconcile Alexa without blocking the Connector receive loop."""
+    task = asyncio.create_task(_reconcile_discovery_after_sync(installation_id))
+    task.add_done_callback(_log_reconciliation_error)
+
+
+def _log_reconciliation_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("alexa_discovery_reconciliation_failed", exc_info=task.exception())
+
+
+async def _reconcile_discovery_after_sync(installation_id: UUID) -> None:
+    from .database import async_session_factory
+
+    async with async_session_factory() as session:
+        installation = await session.get(Installation, installation_id)
+        if installation is not None:
+            await reconcile_discovery_safely(session, installation)

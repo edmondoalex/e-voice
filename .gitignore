@@ -17,3 +17,6 @@ build/
 .vscode/
 .DS_Store
 Thumbs.db
+wear-os/.gradle/
+wear-os/local.properties
+wear-os/build/

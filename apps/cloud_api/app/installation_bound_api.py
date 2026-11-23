@@ -8,7 +8,8 @@ import io
 import json
 import logging
 import re
-from typing import Annotated, Any
+from collections.abc import AsyncIterator
+from typing import Annotated, Any, Literal
 from urllib.parse import parse_qs, urlencode
 from uuid import UUID
 
@@ -31,7 +32,7 @@ from .admin_console import (
 from .command_dispatch import CommandDispatchService, command_adapter
 from .config import get_settings
 from .database import get_database_session
-from .domain.models import AuditEvent, Entity
+from .domain.models import AuditEvent, Entity, OperationalEvent
 from .evcp import sessions
 from .installation_bound import (
     BoundContext,
@@ -40,13 +41,14 @@ from .installation_bound import (
     InstallationBoundService,
 )
 from .laboratory_live_state import load_live_states, overlay_entities
+from .voice_scope import selection_current_clause, voice_visible, voice_visible_clause
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bounded", tags=["econtrol-installation-bound"])
 
 
-def _frame_policy() -> tuple[str, str]:
+def _frame_policy() -> tuple[str, Literal["strict", "none"]]:
     raw = get_settings().econtrol_bounded_frame_ancestors
     origins = [item.strip() for item in raw.split(",") if item.strip()]
     if not origins:
@@ -237,7 +239,33 @@ async def bounded_app(
 ) -> HTMLResponse:
     resources = BoundedResourceService(session, context)
     installation = await resources.installation(context.effective_installation_id)
-    entities = await resources.entities()
+    # Presentation only: the complete inventory remains available to services.
+    all_entities = await resources.entities()
+    settings = get_settings()
+    selection_notice = ""
+    if getattr(settings, "voice_selection_v1_enabled", False) and getattr(
+        settings, "voice_selection_projection_enabled", False
+    ):
+        if not await session.scalar(
+            select(selection_current_clause(context.effective_installation_id))
+        ):
+            selection_notice = (
+                '<p class="bad" role="status">Selezione vocale non verificabile. '
+                "Le entità non sono state eliminate.</p>"
+            )
+        visible_ids = set(
+            (
+                await session.scalars(
+                    select(Entity.id).where(
+                        Entity.installation_id == context.effective_installation_id,
+                        voice_visible_clause(Entity),
+                    )
+                )
+            ).all()
+        )
+        entities = [entity for entity in all_entities if entity.id in visible_ids]
+    else:
+        entities = [entity for entity in all_entities if voice_visible(entity)]
     overlay_entities(entities, await load_live_states(installation.public_id))
     csrf = _ui_csrf(context)
     feedback = (
@@ -250,6 +278,7 @@ async def bounded_app(
     page = _layout(
         installation.name,
         '<p class="muted bounded-scope">Sessione e-Voice legata a questo impianto.</p>'
+        + selection_notice
         + feedback
         + _entity_groups(installation, entities, csrf),
         context,
@@ -487,7 +516,9 @@ async def event_stream(
     )
 
 
-async def bounded_event_payload(service: InstallationBoundService, token: str, events):
+async def bounded_event_payload(
+    service: InstallationBoundService, token: str, events: list[OperationalEvent]
+) -> AsyncIterator[str]:
     """Revalidate revocation before every SSE item and terminate fail-closed."""
     for item in events:
         try:

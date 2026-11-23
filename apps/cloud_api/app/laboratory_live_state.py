@@ -113,6 +113,12 @@ async def sync_live_entities(session: AsyncSession, installation: Installation) 
     states = await load_live_states(installation.public_id)
     if not states:
         return 0
+    # The laboratory overlay cannot version changes with the connector's
+    # sync_revision. Serialize it with snapshot/cutover and fail closed after
+    # transfer rather than presenting unversioned mapping updates to e-Control.
+    from .wear_bridge import lock_wear_writer
+
+    await lock_wear_writer(session, installation.id)
     local_entities = list(
         (
             await session.scalars(select(Entity).where(Entity.installation_id == installation.id))
@@ -214,7 +220,7 @@ def overlay_entities(entities: Iterable[Entity], states: dict[str, LiveEntitySta
             ("last_changed_at", live.last_changed_at),
             ("last_seen_at", live.last_seen_at),
         ):
-            set_committed_value(entity, field, value)
+            set_committed_value(entity, field, value)  # type: ignore[no-untyped-call]
 
 
 def overlay_installation(installation: Installation, live: LiveInstallationState | None) -> None:
@@ -235,4 +241,4 @@ def overlay_installation(installation: Installation, live: LiveInstallationState
         "inventory_synced_at": live.inventory_synced_at,
     }
     for field, value in values.items():
-        set_committed_value(installation, field, value)
+        set_committed_value(installation, field, value)  # type: ignore[no-untyped-call]

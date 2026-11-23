@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "213416740231",
+    "project_id": "e-face-mobile",
+    "storage_bucket": "e-face-mobile.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:213416740231:android:68670bc50399a1893dff22",
+        "android_client_info": {
+          "package_name": "it.ekonex.voice.watch"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuEDugoVdqOfLPqQUHCbc4X1StSzp5oWA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:213416740231:android:d7a11e8a7fd9e7ec3dff22",
+        "android_client_info": {
+          "package_name": "tech.econtrol.eface.companion"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuEDugoVdqOfLPqQUHCbc4X1StSzp5oWA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

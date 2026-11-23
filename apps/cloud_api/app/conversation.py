@@ -311,7 +311,7 @@ class ConversationEngine:
         if any(_contains_phrase(text, term) for term in _COMMAND_TERMS):
             return ConversationReply(
                 ReplyStatus.UNSUPPORTED,
-                "Il laboratorio è in sola lettura e non esegue comandi.",
+                "Questo comando diretto non è disponibile in questa conversazione.",
             )
 
         snapshots = tuple(entities)

@@ -52,6 +52,13 @@ def test_answers_photovoltaic_power_with_evidence() -> None:
     assert reply.evidence[0].entity_id == "sensor.pv_power"
 
 
+def test_command_fallback_never_identifies_production_as_laboratory() -> None:
+    reply = ConversationEngine().ask("apri cancello", [], now=NOW)
+
+    assert reply.status is ReplyStatus.UNSUPPORTED
+    assert "laboratorio" not in reply.speech.casefold()
+
+
 def test_power_reply_infers_watts_when_unit_is_missing() -> None:
     pv = entity("sensor.pv_power", "Fotovoltaico SAS", "5600", None, "power")
 

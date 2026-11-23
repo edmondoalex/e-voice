@@ -54,10 +54,13 @@ def registered_device_entities(
     return device, light, sensor
 
 
-async def test_fresh_integration_exposes_nothing(hass: HomeAssistant) -> None:
+async def test_fresh_integration_reports_registry_without_control(hass: HomeAssistant) -> None:
     entry = registered_light(hass)
     sync = EntityInventorySynchronizer(hass, set(), set(), None)
-    assert sync._serialize(entry) is None
+    item = sync._serialize(entry)
+    assert item is not None
+    assert item["registry_id"] == entry.id
+    assert item["control_exposed"] is False
 
 
 async def test_initial_inventory_sync_sends_selected_entities(hass: HomeAssistant) -> None:
@@ -124,7 +127,7 @@ async def test_cover_inventory_preserves_current_position(hass: HomeAssistant) -
     assert item["attributes"] == {"current_position": 37}
 
 
-async def test_zero_selected_entities_sends_explicit_empty_snapshot(
+async def test_zero_selected_entities_sends_registry_without_control(
     hass: HomeAssistant,
 ) -> None:
     registered_light(hass)
@@ -136,8 +139,9 @@ async def test_zero_selected_entities_sends_explicit_empty_snapshot(
     message = websocket.send_json.await_args_list[0].args[0]
     assert message["type"] == "inventory_full"
     assert message["payload"]["revision"] == 5
-    assert message["payload"]["entities"] == []
-    assert sync.last_full_entity_count == 0
+    [item] = message["payload"]["entities"]
+    assert item["control_exposed"] is False
+    assert sync.last_full_entity_count == 1
     await sync.async_stop()
 
 
@@ -431,7 +435,9 @@ async def test_ui_and_label_sources_have_union_semantics(hass: HomeAssistant) ->
     sync._registry_ids.clear()
     assert sync._serialize(updated) is not None
     registry.async_update_entity(entry.entity_id, labels=set())
-    assert sync._serialize(registry.async_get(entry.entity_id)) is None
+    unselected = sync._serialize(registry.async_get(entry.entity_id))
+    assert unselected is not None
+    assert unselected["control_exposed"] is False
 
 
 async def test_registry_rename_preserves_stable_ui_selection(hass: HomeAssistant) -> None:
@@ -456,7 +462,7 @@ async def test_current_user_configured_name_is_mutable_metadata(hass: HomeAssist
     assert item["friendly_name"] == "User configured name"
 
 
-async def test_user_rename_replaces_original_name_in_next_inventory_full(
+async def test_registry_name_wins_over_transient_state_name_in_inventory_full(
     hass: HomeAssistant,
 ) -> None:
     original_name = "BusPro Luci Luce Ufficio Alex"
@@ -496,13 +502,13 @@ async def test_user_rename_replaces_original_name_in_next_inventory_full(
     ]
     assert full_messages
     renamed = full_messages[-1]["payload"]["entities"][0]
-    assert renamed["friendly_name"] == renamed_name
+    assert renamed["friendly_name"] == current_name
     assert renamed["entity_id"] == entry.entity_id
     assert renamed["registry_id"] == entry.id
     await sync.async_stop()
 
 
-async def test_removing_final_ui_and_label_authorization_emits_empty_reconciliation(
+async def test_removing_final_authorization_revokes_control_in_reconciliation(
     hass: HomeAssistant,
 ) -> None:
     entry = registered_light(hass)
@@ -522,7 +528,9 @@ async def test_removing_final_ui_and_label_authorization_emits_empty_reconciliat
     registry.async_update_entity(entry.entity_id, labels=set())
     await sync._send_full()
     reconciled = websocket.send_json.await_args_list[-1].args[0]["payload"]["entities"]
-    assert reconciled == []
+    assert len(reconciled) == 1
+    assert reconciled[0]["registry_id"] == entry.id
+    assert reconciled[0]["control_exposed"] is False
 
 
 def test_large_inventory_chunking_is_deterministic_and_bounded() -> None:

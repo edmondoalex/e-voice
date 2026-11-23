@@ -17,7 +17,7 @@ from custom_components.ekonex_voice.client import (
     EkonexVoiceProtocolError,
 )
 from custom_components.ekonex_voice.command_executor import CommandResult
-from custom_components.ekonex_voice.connection import EkonexVoiceConnection
+from custom_components.ekonex_voice.connection import CONNECTOR_CAPABILITIES, EkonexVoiceConnection
 from custom_components.ekonex_voice.models import ConnectionState
 
 CONNECTOR_VERSION = json.loads(
@@ -109,13 +109,7 @@ async def test_transient_failure_uses_bounded_jitter_then_connects(
     assert hello["type"] == "hello"
     assert hello["payload"]["connector_version"] == CONNECTOR_VERSION  # type: ignore[index]
     assert hello["payload"]["protocol_versions"] == [1]  # type: ignore[index]
-    assert hello["payload"]["capabilities"] == {  # type: ignore[index]
-        "supports_alexa_announcements": True,
-        "supports_alexa_volume": True,
-        "supports_correlation_id": True,
-        "supports_command_diagnostics": True,
-        "supports_heartbeat_diagnostics": True,
-    }
+    assert hello["payload"]["capabilities"] == CONNECTOR_CAPABILITIES  # type: ignore[index]
     acknowledged = next(
         call for call in info_log.call_args_list if call.args[0] == "evcp_session_acknowledged %s"
     )

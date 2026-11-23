@@ -9,14 +9,17 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import websockets as starlette_websockets
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from .config import get_settings
 from .connector_compatibility import (
     MINIMUM_SUPPORTED_CONNECTOR_VERSION,
     RECOMMENDED_CONNECTOR_VERSION,
@@ -30,6 +33,19 @@ from .database import get_database_session
 from .domain.models import AuditEvent, ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
+from .voice_selection_store import (
+    end_selection_session,
+    persist_selection,
+    register_selection_session,
+)
+
+_websocket_disconnected: object = getattr(starlette_websockets, "WebSocketDisconnected", None)
+WEBSOCKET_DISCONNECT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    (WebSocketDisconnect, _websocket_disconnected)
+    if isinstance(_websocket_disconnected, type)
+    and issubclass(_websocket_disconnected, BaseException)
+    else (WebSocketDisconnect,)
+)
 
 PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 1_048_576
@@ -39,6 +55,8 @@ LIVENESS_TIMEOUT_SECONDS = 75.0
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+# Experimental, always off unless explicitly enabled for isolated testing.
+REGISTRY_ONLY_NEGOTIATION_ENABLED = False
 
 
 class StrictModel(BaseModel):
@@ -61,6 +79,7 @@ JsonScalar = str | int | float | bool | None
 
 
 class EntityItem(StrictModel):
+    registry_only: bool = False
     registry_id: str = Field(min_length=1, max_length=64)
     entity_id: str = Field(min_length=3, max_length=255)
     domain: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
@@ -77,6 +96,7 @@ class EntityItem(StrictModel):
     supported_features: int = Field(default=0, ge=0)
     state: str | None = Field(default=None, max_length=255)
     available: bool
+    control_exposed: bool = True
     attributes: dict[str, JsonScalar | list[JsonScalar]] = Field(default_factory=dict)
     experiences: list[Literal["watch", "listen"]] = Field(default_factory=list, max_length=2)
     last_changed_at: datetime | None = None
@@ -155,6 +175,30 @@ class StateUpdate(StrictModel):
     payload: InventoryPayload
 
 
+class VoiceSelectionPayload(StrictModel):
+    session_id: UUID
+    revision: int = Field(ge=1, le=2**63 - 1)
+    batch_index: int = Field(ge=0, lt=256)
+    batch_count: int = Field(ge=1, le=256)
+    registry_ids: list[str] = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def valid_selection(self) -> Self:
+        if self.batch_index >= self.batch_count or any(
+            not x or len(x) > 64 for x in self.registry_ids
+        ):
+            raise ValueError("invalid selection batch")
+        return self
+
+
+class VoiceSelection(StrictModel):
+    version: Literal[1]
+    type: Literal["voice_selection_v1"]
+    id: UUID
+    timestamp: datetime
+    payload: VoiceSelectionPayload
+
+
 CommandStatus = Literal[
     "success",
     "target_not_found",
@@ -188,7 +232,13 @@ class CommandResultMessage(StrictModel):
 
 
 InboundMessage = Annotated[
-    Hello | Heartbeat | InventoryFull | InventoryDelta | StateUpdate | CommandResultMessage,
+    Hello
+    | Heartbeat
+    | InventoryFull
+    | InventoryDelta
+    | StateUpdate
+    | VoiceSelection
+    | CommandResultMessage,
     Field(discriminator="type"),
 ]
 inbound_adapter: TypeAdapter[InboundMessage] = TypeAdapter(InboundMessage)
@@ -245,30 +295,32 @@ class ConnectorSessionRegistry:
                     )
                     return diagnostic
                 self._transitioning.add(installation_id)
-                draining = [
-                    pending
-                    for key, pending in self._pending.items()
-                    if key[0] == installation_id
-                    and pending.session_id == previous.session_id
-                    and pending.sent
-                    and not pending.future.done()
-                ]
-            try:
-                if draining:
-                    await asyncio.gather(
-                        *(asyncio.shield(pending.future) for pending in draining),
-                        return_exceptions=True,
-                    )
-            except asyncio.CancelledError:
-                async with self._lock:
-                    self._transitioning.discard(installation_id)
-                raise
-            async with self._lock:
+                for key, pending in list(self._pending.items()):
+                    if (
+                        key[0] == installation_id
+                        and pending.session_id == previous.session_id
+                        and not pending.future.done()
+                    ):
+                        pending.future.set_result(
+                            CommandResultPayload(
+                                session_id=previous.session_id,
+                                command_id=key[1],
+                                status="stale_session",
+                                error_code="STALE_SESSION",
+                            )
+                        )
                 if self._sessions.get(installation_id) is previous:
                     self._sessions.pop(installation_id, None)
                 self._sessions[installation_id] = handle
                 self._transitioning.discard(installation_id)
-            await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+            try:
+                async with asyncio.timeout(1.0):
+                    await _safe_close(previous.websocket, 4008, "SESSION_REPLACED")
+            except TimeoutError:
+                logger.warning(
+                    "Timed out closing replaced connector session installation_id=%s",
+                    installation_id,
+                )
             diagnostic = _session_diagnostic(
                 installation_id,
                 handle,
@@ -653,6 +705,14 @@ def _add_connector_version_activity(
     )
 
 
+def _entity_sync_payload(item: EntityItem) -> dict[str, object]:
+    payload = item.model_dump(mode="json")
+    # Preserve absence for older senders, without changing other legacy defaults.
+    if "control_exposed" not in item.model_fields_set:
+        payload.pop("control_exposed", None)
+    return payload
+
+
 class InventoryAccumulator:
     """Bound in-flight full snapshots by authenticated session and revision."""
 
@@ -686,7 +746,7 @@ class InventoryAccumulator:
         self._batches.pop(key, None)
         self._counts.pop(key, None)
         return [
-            item.model_dump(mode="json")
+            _entity_sync_payload(item)
             for index in range(payload.batch_count)
             for item in batches[index]
         ]
@@ -773,8 +833,15 @@ async def _apply_entity_sync(
     installation: Installation,
     installation_id: UUID,
     message: InventoryFull | InventoryDelta | StateUpdate,
-) -> None:
+    *,
+    registry_only_negotiated: bool = False,
+    credential_id: UUID | None = None,
+) -> bool:
     """Accumulate and persist one validated, session-bound EVCP sync message."""
+    if any(item.registry_only for item in message.payload.entities) and (
+        not registry_only_negotiated or isinstance(message, StateUpdate)
+    ):
+        raise ValueError("registry_only_not_negotiated")
     items = inventory_batches.add(installation_id, message.payload)
     logger.debug(
         "Entity synchronization batch received: type=%s revision=%d batch=%d/%d entities=%d",
@@ -785,8 +852,44 @@ async def _apply_entity_sync(
         len(message.payload.entities),
     )
     if items is None:
-        return
-    service = EntitySyncService(database, installation)
+        return False
+    if registry_only_negotiated:
+        # Lock and verify the durable selection fence and the authenticated
+        # credential in the same transaction as the inventory mutation.
+        from .voice_selection_store import VoiceSelectionFence
+
+        locked = await database.scalar(
+            select(Installation)
+            .where(Installation.id == installation_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        fence = await database.get(VoiceSelectionFence, installation_id, populate_existing=True)
+        if (
+            locked is None
+            or fence is None
+            or fence.active is not True
+            or fence.tenant_id != locked.tenant_id
+            or fence.session_id != message.payload.session_id
+            or credential_id is None
+            or fence.credential_id != credential_id
+        ):
+            raise ValueError("registry_session_replaced")
+        credential = await database.scalar(
+            select(ConnectorCredential)
+            .where(ConnectorCredential.id == credential_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            credential is None
+            or credential.installation_id != installation_id
+            or credential.revoked_at is not None
+        ):
+            raise ValueError("registry_credential_revoked")
+    service = EntitySyncService(
+        database, installation, registry_only_negotiated=registry_only_negotiated
+    )
     if isinstance(message, InventoryFull):
         await service.apply_full(message.payload.revision, items)
     elif isinstance(message, StateUpdate):
@@ -799,6 +902,7 @@ async def _apply_entity_sync(
         message.payload.revision,
         len(items),
     )
+    return True
 
 
 @router.websocket("/connector/v1/ws")
@@ -818,11 +922,33 @@ async def connector_websocket(
     tenant_id = installation.tenant_id
     registered = False
     session_handle: SessionHandle | None = None
+    selection_parts: list[list[str]] = []
+    selection_key: tuple[int, int] | None = None
+    selection_negotiated = False
+    registry_only_negotiated = False
+    selection_fence_active = False
+    selection_full_complete = False
+    inventory_fence_negotiated = False
     try:
         hello = await _receive(websocket, HANDSHAKE_TIMEOUT_SECONDS)
         if not isinstance(hello, Hello) or hello.payload.installation_id != installation_id:
             await _safe_close(websocket, 4004, "INSTALLATION_MISMATCH")
             return
+        selection_negotiated = (
+            get_settings().voice_selection_v1_enabled is True
+            and hello.payload.capabilities.get("supports_voice_selection_v1") is True
+        )
+        inventory_fence_negotiated = (
+            selection_negotiated
+            and getattr(get_settings(), "voice_selection_inventory_fence_enabled", False) is True
+            and hello.payload.capabilities.get("supports_voice_selection_inventory_fence_v1")
+            is True
+        )
+        registry_only_negotiated = (
+            REGISTRY_ONLY_NEGOTIATION_ENABLED
+            and selection_negotiated
+            and hello.payload.capabilities.get("supports_voice_registry_only_v1") is True
+        )
         installation.connector_version = hello.payload.connector_version
         installation.ha_version = hello.payload.ha_version
         installation.last_seen_at = datetime.now(UTC)
@@ -882,6 +1008,15 @@ async def connector_websocket(
             websocket=websocket,
             capabilities=effective_capabilities,
         )
+        if get_settings().voice_selection_v1_enabled is True:
+            # Hold the installation lock across local replacement and commit:
+            # the durable fence is the cross-process selection authority.
+            await register_selection_session(
+                database, installation_id, tenant_id, session_id, credential.id
+            )
+            selection_fence_active = True
+        if selection_fence_active:
+            registered = True
         registration_diagnostic = await sessions.replace(installation_id, session_handle)
         registered = True
         _add_session_activity(
@@ -911,6 +1046,13 @@ async def connector_websocket(
                     "session_id": str(session_id),
                     "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
                     "sync_revision": installation.sync_revision,
+                    **({"voice_selection_v1": True} if selection_negotiated else {}),
+                    **(
+                        {"voice_selection_inventory_fence_v1": True}
+                        if inventory_fence_negotiated
+                        else {}
+                    ),
+                    **({"voice_registry_only_v1": True} if registry_only_negotiated else {}),
                 },
             )
         )
@@ -920,6 +1062,39 @@ async def connector_websocket(
             if not await sessions.touch(installation_id, session_id):
                 await _safe_close(websocket, 4008, "SESSION_REPLACED")
                 return
+            if isinstance(message, VoiceSelection):
+                part = message.payload
+                if inventory_fence_negotiated and not selection_full_complete:
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
+                if (
+                    not selection_negotiated
+                    or get_settings().voice_selection_v1_enabled is not True
+                    or part.session_id != session_id
+                ):
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
+                key = (part.revision, part.batch_count)
+                if selection_key is None:
+                    selection_key = key
+                if selection_key != key or part.batch_index != len(selection_parts):
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
+                selection_parts.append(part.registry_ids)
+                if len(selection_parts) == part.batch_count:
+                    await persist_selection(
+                        database,
+                        installation_id,
+                        tenant_id,
+                        session_id,
+                        part.revision,
+                        [identity for batch in selection_parts for identity in batch],
+                        require_inventory_revision=inventory_fence_negotiated,
+                    )
+                    await database.commit()
+                    selection_parts = []
+                    selection_key = None
+                continue
             if isinstance(message, Heartbeat):
                 if message.payload.session_id != session_id:
                     await _safe_close(websocket, 4002, "INVALID_MESSAGE")
@@ -999,10 +1174,25 @@ async def connector_websocket(
                 await _safe_close(websocket, 4002, "INVALID_MESSAGE")
                 return
             try:
-                await _apply_entity_sync(database, installation, installation_id, message)
-            except StaleSyncError:
+                completed = await _apply_entity_sync(
+                    database,
+                    installation,
+                    installation_id,
+                    message,
+                    registry_only_negotiated=registry_only_negotiated,
+                    credential_id=credential.id,
+                )
+                if completed and isinstance(message, InventoryFull):
+                    selection_full_complete = True
+            except ValueError:
+                await database.rollback()
+                await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                return
+            except StaleSyncError as error:
                 logger.warning(
-                    "Entity synchronization rejected: stale revision=%d", message.payload.revision
+                    "Entity synchronization rejected: stale revision=%d reason=%s",
+                    message.payload.revision,
+                    error,
                 )
                 await _safe_close(websocket, 4009, "STALE_REVISION")
                 return
@@ -1025,15 +1215,41 @@ async def connector_websocket(
             await database.commit()
         await _safe_close(websocket, 4005 if not registered else 4006, "TIMEOUT")
     except (ValidationError, ValueError):
+        if selection_fence_active:
+            await database.rollback()
         logger.warning("Connector EVCP message rejected: invalid schema or batch sequence")
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
-    except WebSocketDisconnect:
+    except WEBSOCKET_DISCONNECT_EXCEPTIONS:
+        if selection_fence_active:
+            await database.rollback()
         pass
+    except asyncio.CancelledError:
+        if selection_fence_active:
+            await database.rollback()
+        raise
+    except Exception as error:
+        if selection_fence_active:
+            await database.rollback()
+        logger.error(
+            "connector_session_exception installation_id=%s session_id=%s type=%s error=%r",
+            installation_id,
+            session_id,
+            type(error).__name__,
+            error,
+        )
+        logger.exception(
+            "Unexpected connector session failure installation_id=%s session_id=%s",
+            installation_id,
+            session_id,
+        )
+        await _safe_close(websocket, 1011, "INTERNAL_ERROR")
     finally:
         if registered:
             assert session_handle is not None
             inventory_batches.clear_session(installation_id, session_id)
             removal_diagnostic = await sessions.remove(installation_id, session_id)
+            if selection_fence_active:
+                await end_selection_session(database, installation_id, session_id)
             _add_session_activity(
                 database,
                 tenant_id=tenant_id,

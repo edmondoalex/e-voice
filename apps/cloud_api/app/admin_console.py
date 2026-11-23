@@ -12,13 +12,13 @@ import json
 import math
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Protocol, TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -69,6 +69,7 @@ from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
 from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug, infer_standard_category
+from .voice_scope import selection_current_clause, voice_visible_clause
 
 
 class ActivityRow(TypedDict):
@@ -187,7 +188,12 @@ def _nav_link(href: str, label: str, key: str, active: str) -> str:
     return f'<a href="{href}"{attributes}>{label}</a>'
 
 
-def _layout(title: str, body: str, context: TenantContext, csrf: str, active: str) -> str:
+class LayoutContext(Protocol):
+    @property
+    def tenant_id(self) -> UUID: ...
+
+
+def _layout(title: str, body: str, context: LayoutContext, csrf: str, active: str) -> str:
     is_laboratory = get_settings().environment == "laboratory"
     laboratory_banner = (
         '<div class="laboratory-banner">LABORATORIO — NON È PRODUZIONE</div>'
@@ -223,6 +229,12 @@ aside a{{display:block;color:#d0d5dd;text-decoration:none;padding:10px 12px;bord
 th,td{{padding:12px;text-align:left;border-bottom:1px solid #eaecf0}}input,select,textarea,button{{padding:9px;border:1px solid #d0d5dd;border-radius:7px;font:inherit}}textarea{{width:100%;min-height:120px}}
 button,.button{{background:var(--blue);color:white;border:0;text-decoration:none;display:inline-block;padding:9px 12px;border-radius:7px}}
 .ok{{color:var(--ok)}}.bad{{color:var(--bad)}}.warn{{color:var(--removed)}}.muted{{color:var(--muted)}}.badge{{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#174ea6;font-size:12px;font-weight:700}}.compat-badge{{display:inline-block;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800}}.compat-ok{{background:#dcfae6;color:var(--ok)}}.compat-update{{background:#fef0c7;color:#93370d}}.compat-bad{{background:#fee4e2;color:var(--bad)}}.compat-offline{{background:#eaecf0;color:var(--off)}}.compat-alert{{border:2px solid var(--bad);background:#fff5f4}}.global-warning{{border-left:6px solid var(--bad);background:#fff5f4;margin-bottom:16px}}form.inline{{display:inline}}.field{{display:block;margin:16px 0}}.field input{{display:block;width:100%;margin-top:6px}}.actions,.direct-controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}button.danger{{background:var(--bad)}}.command-button{{background:#e4e7ec;color:var(--ink)}}.command-button.active-on{{background:var(--ok);color:white;font-weight:700}}.command-button.active-off{{background:var(--off);color:white;font-weight:700}}button:disabled,input:disabled{{opacity:.45;cursor:not-allowed}}.entity-summary{{display:flex;align-items:flex-start;gap:10px;min-width:250px}}.entity-icon{{flex:0 0 auto;fill:var(--blue)}}.entity-meta{{line-height:1.45}}.voice-label{{font-size:12px;color:var(--blue);font-weight:700;text-transform:uppercase}}.status-dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--off)}}.status-dot.state-on{{background:var(--ok)}}.status-dot.state-off{{background:var(--off)}}.status-dot.state-unavailable{{background:var(--bad)}}.status-dot.state-removed{{background:var(--removed)}}.level-control input{{width:110px;padding:0}}.level-value{{min-width:38px;font-variant-numeric:tabular-nums}}.command-feedback{{flex-basis:100%;min-height:20px;font-size:13px}}tr.state-on td:first-child{{box-shadow:inset 3px 0 var(--ok)}}@media(max-width:720px){{aside{{position:static;width:auto}}main{{margin:0;padding:16px}}table{{display:block;overflow:auto}}}}
+/* Tema condiviso e-Control / Ekonex */
+:root{{--ink:#f7f7f7;--muted:#b9c9d1;--blue:#49d3f2;--bg:#384044;--card:#1f1f1f;--bad:#ef3027;--ok:#0b9b65;--off:#738091;--removed:#e58b2a}}
+aside{{background:#1f1f1f;border-right:1px solid #465158}}aside a{{color:#d8e2e7}}aside a:hover,aside a:focus-visible{{background:#2b3337}}aside a.active{{background:#3d8ca2;color:#fff}}
+.card,table,.entity-group{{border:1px solid #465158;box-shadow:none}}.entity-group table{{border-top-color:#465158}}th,td{{border-bottom-color:#465158}}
+input,select,textarea{{background:#111;color:#fff;border-color:#55d6e8}}button,.button{{background:#111;color:#fff;border:1px solid #55d6e8}}button:hover,.button:hover{{background:#3d8ca2}}
+.entity-group-count,.badge{{background:#3d8ca2;color:#fff}}.command-button{{background:#292f32;color:#fff;border-color:#55d6e8}}.compat-alert,.global-warning{{background:#302321}}.compat-offline{{background:#30363a;color:#d5dde1}}
 .laboratory-banner{{background:#b42318;color:white;padding:12px 16px;border-radius:8px;font-weight:900;text-align:center;margin-bottom:18px;letter-spacing:.04em}}
 </style></head><body><aside><img class="brand-logo" src="/static/{logo_filename}" width="1254" height="1254" alt="{logo_alt}">
 <nav aria-label="Navigazione principale">{navigation}</nav>
@@ -375,6 +387,7 @@ async def voice_categories_page(
         .where(
             Installation.tenant_id == context.tenant_id,
             Entity.deleted_at.is_(None),
+            voice_visible_clause(Entity),
             Entity.voice_category_id.is_(None),
         )
         .order_by(Installation.name, Entity.ha_domain, Entity.friendly_name, Entity.ha_entity_id)
@@ -388,6 +401,7 @@ async def voice_categories_page(
                 .where(
                     Installation.tenant_id == context.tenant_id,
                     Entity.deleted_at.is_(None),
+                    voice_visible_clause(Entity),
                     Entity.voice_category_id.is_not(None),
                 )
                 .order_by(Entity.friendly_name, Entity.ha_entity_id)
@@ -507,6 +521,69 @@ async def voice_categories_page(
     return response
 
 
+async def _assign_visible_categories(
+    session: AsyncSession,
+    context: TenantContext,
+    entity_ids: list[UUID],
+    target_id: UUID,
+) -> int:
+    if not entity_ids:
+        return 0
+    # Local experiment only: serialize category updates with selection writes
+    # and credential revocation before evaluating the strict selection.
+    from .voice_scope import get_settings as selection_settings
+
+    selection = selection_settings()
+    if getattr(selection, "voice_selection_v1_enabled", False) and getattr(
+        selection, "voice_selection_projection_enabled", False
+    ):
+        from .domain.models import ConnectorCredential
+
+        installation_ids = list(
+            (
+                await session.scalars(
+                    select(Entity.installation_id)
+                    .join(Installation, Installation.id == Entity.installation_id)
+                    .where(Entity.id.in_(entity_ids), Installation.tenant_id == context.tenant_id)
+                    .distinct()
+                    .order_by(Entity.installation_id)
+                )
+            ).all()
+        )
+        if installation_ids:
+            await session.execute(
+                select(Installation.id)
+                .where(
+                    Installation.id.in_(installation_ids),
+                    Installation.tenant_id == context.tenant_id,
+                )
+                .order_by(Installation.id)
+                .with_for_update(key_share=True)
+            )
+            await session.execute(
+                select(ConnectorCredential.id)
+                .where(ConnectorCredential.installation_id.in_(installation_ids))
+                .order_by(ConnectorCredential.id)
+                .with_for_update()
+            )
+    tenant_installations = select(Installation.id).where(
+        Installation.tenant_id == context.tenant_id
+    )
+    result = await session.execute(
+        update(Entity)
+        .where(
+            Entity.id.in_(entity_ids),
+            Entity.installation_id.in_(tenant_installations),
+            Entity.deleted_at.is_(None),
+            Entity.voice_category_id.is_(None),
+            voice_visible_clause(Entity),
+        )
+        .values(voice_category_id=target_id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount
+
+
 @router.post("/voice-categories/assign-selected", response_class=RedirectResponse)
 async def assign_selected_voice_category(
     request: Request,
@@ -537,16 +614,18 @@ async def assign_selected_voice_category(
                     Installation.tenant_id == context.tenant_id,
                     Entity.id.in_(selected_ids),
                     Entity.deleted_at.is_(None),
+                    voice_visible_clause(Entity),
                     Entity.voice_category_id.is_(None),
                 )
             )
         ).all()
     )
-    for entity in entities:
-        entity.voice_category_id = target_id
+    assigned = await _assign_visible_categories(
+        session, context, [entity.id for entity in entities], target_id
+    )
     await session.commit()
     return RedirectResponse(
-        f"/voice-categories?bulk_assigned={len(entities)}", status_code=status.HTTP_303_SEE_OTHER
+        f"/voice-categories?bulk_assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -578,12 +657,13 @@ async def bulk_assign_voice_category(
                 .where(
                     Installation.tenant_id == context.tenant_id,
                     Entity.deleted_at.is_(None),
+                    voice_visible_clause(Entity),
                     Entity.voice_category_id.is_(None),
                 )
             )
         ).all()
     )
-    assigned = 0
+    matched_ids = []
     for entity in entities:
         searchable = " ".join(
             value
@@ -597,8 +677,8 @@ async def bulk_assign_voice_category(
             if value
         ).casefold()
         if match in searchable:
-            entity.voice_category_id = target_id
-            assigned += 1
+            matched_ids.append(entity.id)
+    assigned = await _assign_visible_categories(session, context, matched_ids, target_id)
     await session.commit()
     return RedirectResponse(
         f"/voice-categories?bulk_assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
@@ -657,12 +737,13 @@ async def auto_assign_voice_categories(
                 .where(
                     Installation.tenant_id == context.tenant_id,
                     Entity.deleted_at.is_(None),
+                    voice_visible_clause(Entity),
                     Entity.voice_category_id.is_(None),
                 )
             )
         ).all()
     )
-    assigned = 0
+    pending: dict[UUID, list[UUID]] = {}
     for entity in entities:
         attributes = entity.attributes_json or {}
         slug = infer_standard_category(
@@ -683,8 +764,13 @@ async def auto_assign_voice_categories(
         )
         category = categories.get(slug or "")
         if category is not None:
-            entity.voice_category_id = category.id
-            assigned += 1
+            pending.setdefault(category.id, []).append(entity.id)
+    assigned = sum(
+        [
+            await _assign_visible_categories(session, context, ids, category_id)
+            for category_id, ids in pending.items()
+        ]
+    )
     await session.commit()
     return RedirectResponse(
         f"/voice-categories?assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
@@ -711,6 +797,30 @@ async def _entity(session: AsyncSession, installation: Installation, entity_id: 
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità non trovata")
     return item
+
+
+async def _require_voice_selected_entity(
+    session: AsyncSession, installation: Installation, entity: Entity
+) -> None:
+    """Fail closed for direct entity routes while strict voice selection is active."""
+    from .voice_scope import get_settings as selection_settings
+
+    settings = selection_settings()
+    if not (
+        getattr(settings, "voice_selection_v1_enabled", False)
+        and getattr(settings, "voice_selection_projection_enabled", False)
+    ):
+        return
+    visible_id = await session.scalar(
+        select(Entity.id).where(
+            Entity.id == entity.id,
+            Entity.installation_id == installation.id,
+            Entity.deleted_at.is_(None),
+            voice_visible_clause(Entity),
+        )
+    )
+    if visible_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entità non trovata")
 
 
 def _online(item: Installation) -> bool:
@@ -782,7 +892,11 @@ async def dashboard(
         await session.scalar(
             select(func.count(Entity.id))
             .join(Installation)
-            .where(Installation.tenant_id == context.tenant_id, Entity.deleted_at.is_(None))
+            .where(
+                Installation.tenant_id == context.tenant_id,
+                Entity.deleted_at.is_(None),
+                voice_visible_clause(Entity),
+            )
         )
         or 0
     )
@@ -817,7 +931,9 @@ async def installations_page(
         select(Installation, func.count(Entity.id))
         .outerjoin(
             Entity,
-            (Entity.installation_id == Installation.id) & Entity.deleted_at.is_(None),
+            (Entity.installation_id == Installation.id)
+            & Entity.deleted_at.is_(None)
+            & voice_visible_clause(Entity),
         )
         .where(Installation.tenant_id == context.tenant_id)
         .group_by(Installation.id)
@@ -848,6 +964,13 @@ async def installation_detail(
 ) -> HTMLResponse:
     _admin(context)
     item = await _installation(session, context, installation_id)
+    selection_notice = ""
+    settings = get_settings()
+    if getattr(settings, "voice_selection_v1_enabled", False) and getattr(
+        settings, "voice_selection_projection_enabled", False
+    ):
+        if not await session.scalar(select(selection_current_clause(item.id))):
+            selection_notice = '<p class="bad" role="status">Selezione vocale non verificabile. Le entità non sono state eliminate.</p>'
     overlay_installation(item, await load_live_installation(item.public_id))
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     total_entity_count = int(
@@ -855,6 +978,7 @@ async def installation_detail(
             select(func.count(Entity.id)).where(
                 Entity.installation_id == item.id,
                 Entity.deleted_at.is_(None),
+                voice_visible_clause(Entity),
             )
         )
         or 0
@@ -865,6 +989,7 @@ async def installation_detail(
         .where(
             Entity.installation_id == item.id,
             Entity.deleted_at.is_(None),
+            voice_visible_clause(Entity),
         )
     )
     if q:
@@ -954,7 +1079,10 @@ async def installation_detail(
         if get_settings().environment == "laboratory"
         else ""
     )
-    entity_content = entity_groups or '<div class="card"><p>Nessuna entità</p></div>'
+    entity_content = selection_notice + (
+        entity_groups
+        or ("" if selection_notice else '<div class="card"><p>Nessuna entità</p></div>')
+    )
     body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div><div class="card"><b>{len(entities)} / {total_entity_count}</b><br>Entità visualizzate / totali</div></div>{_connector_compatibility_card(item)}{inventory_sync_notice}{inventory_sync_form}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
@@ -1162,7 +1290,7 @@ def _entity_groups(installation: Installation, entities: list[Entity], csrf: str
     media_players = [entity for entity in entities if entity.ha_domain == "media_player"]
     for domain in sorted(
         set(grouped) | set(ENTITY_DOMAIN_LABELS),
-        key=lambda value: (ENTITY_DOMAIN_LABELS.get(value, value).casefold(), value),
+        key=lambda value: ((ENTITY_DOMAIN_LABELS.get(value) or value).casefold(), value),
     ):
         domain_entities = grouped.get(domain, [])
         rows = "".join(
@@ -1822,6 +1950,7 @@ async def edit_entity_names_page(
     _admin(context)
     installation = await _installation(session, context, installation_id)
     entity = await _entity(session, installation, entity_id)
+    await _require_voice_selected_entity(session, installation, entity)
     csrf = _csrf(context)
     return _names_page(
         installation, entity, context, csrf, await _voice_categories(session, context)
@@ -1841,10 +1970,17 @@ async def update_entity_names(
     _admin(context)
     installation = await _installation(session, context, installation_id)
     entity = await _entity(session, installation, entity_id)
+    await _require_voice_selected_entity(session, installation, entity)
     categories = await _voice_categories(session, context)
     values = await _form(request)
     if not _valid_csrf(values.get("csrf_token", ""), request.cookies.get(CSRF_COOKIE), context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
+    # Serialize the names included in the experimental Wear snapshot with its cutover.
+    from .wear_bridge import lock_wear_writer
+
+    await lock_wear_writer(session, installation_id, allow_econtrol=True)
+    await session.refresh(entity)
+    await _require_voice_selected_entity(session, installation, entity)
     previous = (
         entity.display_name,
         entity.voice_name,

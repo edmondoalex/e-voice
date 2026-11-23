@@ -43,6 +43,11 @@ def _settings(installation: Installation) -> dict[str, object]:
     return value
 
 
+def _favorites(config: dict[str, object]) -> list[dict[str, object]]:
+    value = config.get("favorites")
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
 def _valid_host(value: str) -> bool:
     try:
         address = ipaddress.ip_address(value)
@@ -150,7 +155,7 @@ async def create(
     _admin(context)
     values, installation = await _form_context(request, context, session)
     config = _settings(installation)
-    favorites = list(config["favorites"])
+    favorites = _favorites(config)
     if len(favorites) >= MAX_FAVORITES:
         raise HTTPException(409, "Limite di 100 preferiti raggiunto")
     name, room, favorite = (_one(values, key).strip() for key in ("name", "room", "favorite"))
@@ -177,11 +182,7 @@ async def create(
 
 def _find(config: dict[str, object], item_id: UUID) -> dict[str, object] | None:
     return next(
-        (
-            item
-            for item in config.get("favorites", [])
-            if isinstance(item, dict) and item.get("id") == str(item_id)
-        ),
+        (item for item in _favorites(config) if item.get("id") == str(item_id)),
         None,
     )
 
@@ -233,11 +234,7 @@ async def delete(
     _admin(context)
     _, installation = await _form_context(request, context, session)
     config = _settings(installation)
-    config["favorites"] = [
-        item
-        for item in config["favorites"]
-        if not isinstance(item, dict) or item.get("id") != str(item_id)
-    ]
+    config["favorites"] = [item for item in _favorites(config) if item.get("id") != str(item_id)]
     installation.control4_favorites_json = config
     await session.commit()
     return _back(installation.id, "success", "Preferito eliminato.")

@@ -582,7 +582,7 @@ async def player_command(
             if len(found) != len(member_ids) or any(not item.available for item in found):
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Membro non valido")
         dispatch_registry_id = registry_id
-        dispatch_operation = payload.operation
+        dispatch_operation: str = payload.operation
         dispatch_arguments = arguments
         if payload.operation in {"tts", "set_dnd"}:
             related = list(

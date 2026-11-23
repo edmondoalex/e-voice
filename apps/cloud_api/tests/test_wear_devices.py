@@ -5,12 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from apps.cloud_api.app.domain.models import UserInstallationAssignment
+from apps.cloud_api.app.domain.models import Entity, UserInstallationAssignment, WearNotification
 from apps.cloud_api.app.wear_devices import (
     WearClaimLimiter,
     WearDenied,
     WearDeviceService,
 )
+from apps.cloud_api.app.wear_notification_rules import evaluate_wear_notification_rules
 from apps.cloud_api.app.wear_notifications import WearNotificationService
 
 
@@ -295,3 +296,55 @@ async def test_notification_preferences_are_scoped_to_each_user_and_wear(session
     pending_b = await notifications.pending(await devices.context(credential_b))
     assert [item.device_id for item in pending_a] == [device_a.id]
     assert pending_b == []
+
+
+@pytest.mark.asyncio
+async def test_notification_rule_creates_event_only_on_matching_transition(session, seeded_domain):
+    await grant(session, seeded_domain)
+    devices = WearDeviceService(session)
+    _offer, code = await devices.create_enrollment(
+        tenant_id=seeded_domain.tenant_a_id,
+        user_id=seeded_domain.user_a_id,
+        installation_id=seeded_domain.installation_a_id,
+        created_by_user_id=seeded_domain.user_a_id,
+        capabilities={"notification.receive", "notification.ack"},
+    )
+    device, _credential = await devices.claim(code, "Wear regole")
+    device.notification_preferences_json = {
+        "enabled": True,
+        "categories": ["security"],
+        "minimum_severity": "info",
+        "notification_rules": [
+            {
+                "id": "5eb59dfd-1e5d-4bc3-bdac-f491aec74013",
+                "enabled": True,
+                "entity_id": str(seeded_domain.entity_a_id),
+                "trigger": "becomes",
+                "target_state": "on",
+                "category": "security",
+                "severity": "warning",
+                "title": "Luce cucina",
+                "body": "{nome}: da {valore_precedente} a {valore} ({id})",
+            }
+        ],
+    }
+    entity = await session.get(Entity, seeded_domain.entity_a_id)
+    entity.state = "on"
+    await session.commit()
+
+    created = await evaluate_wear_notification_rules(
+        session,
+        seeded_domain.installation_a_id,
+        [(entity.id, "off", True)],
+    )
+    duplicate = await evaluate_wear_notification_rules(
+        session,
+        seeded_domain.installation_a_id,
+        [(entity.id, "off", True)],
+    )
+    item = await session.scalar(select(WearNotification))
+    assert created == 1 and duplicate == 0
+    assert item is not None
+    assert item.device_id == device.id
+    assert item.title == "Luce cucina"
+    assert item.body == "Kitchen: da off a on (light.kitchen)"

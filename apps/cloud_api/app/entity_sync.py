@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import cast
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .domain.models import Entity, Installation
 from .history import StateHistoryService
+from .voice_scope import VOICE_SELECTION_KEY, selection_from_item
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +23,52 @@ class StaleSyncError(Exception):
 
 
 class EntitySyncService:
-    def __init__(self, session: AsyncSession, installation: Installation) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        installation: Installation,
+        *,
+        registry_only_negotiated: bool = False,
+    ) -> None:
         self._session, self._installation = session, installation
+        self._registry_only_negotiated = registry_only_negotiated is True
 
     async def apply_full(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=["sync_revision"])
         if revision <= self._installation.sync_revision:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"full_revision_not_new:{revision}<={self._installation.sync_revision}"
+            )
+        existing_before = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(Entity.installation_id == self._installation.id)
+                )
+            ).all()
+        )
+        active_before = sum(entity.deleted_at is None for entity in existing_before)
+        previous_by_registry = {
+            entity.ha_registry_id: (entity.id, entity.state, entity.available)
+            for entity in existing_before
+            if entity.ha_registry_id is not None and entity.deleted_at is None
+        }
+        previous_by_entity_id = {
+            entity.ha_entity_id: (entity.id, entity.state, entity.available)
+            for entity in existing_before
+            if entity.deleted_at is None
+        }
+        entity_by_registry = {
+            entity.ha_registry_id: entity
+            for entity in existing_before
+            if entity.ha_registry_id is not None
+        }
+        entity_by_entity_id = {entity.ha_entity_id: entity for entity in existing_before}
+        previous_values: list[tuple[UUID, str | None, bool]] = []
         previous_media_ids = set(
             (
                 await self._session.scalars(
@@ -39,15 +82,38 @@ class EntitySyncService:
         )
         seen: set[str] = set()
         for item in items:
-            seen.add(str(item["registry_id"]))
-            await self._upsert(item)
+            registry_id = str(item["registry_id"])
+            seen.add(registry_id)
+            previous = previous_by_registry.get(registry_id) or previous_by_entity_id.get(
+                str(item["entity_id"])
+            )
+            entity = await self._upsert(
+                item,
+                known_entity=entity_by_registry.get(registry_id)
+                or entity_by_entity_id.get(str(item["entity_id"])),
+                lookup_complete=True,
+            )
+            entity_by_registry[registry_id] = entity
+            entity_by_entity_id[str(item["entity_id"])] = entity
+            if previous is not None and (
+                previous[1] != entity.state or previous[2] != entity.available
+            ):
+                previous_values.append(previous)
         existing = await self._session.scalars(
             select(Entity).where(Entity.installation_id == self._installation.id)
         )
         now = datetime.now(UTC)
         tombstoned = 0
+        allow_tombstones = active_before < 100 or len(seen) >= active_before // 2
+        if not allow_tombstones:
+            logger.warning(
+                "Preserving existing inventory after suspicious partial snapshot: "
+                "previous=%d incoming=%d",
+                active_before,
+                len(seen),
+            )
         for entity in existing:
-            if entity.ha_registry_id not in seen and entity.deleted_at is None:
+            if allow_tombstones and entity.ha_registry_id not in seen and entity.deleted_at is None:
                 previous_state, previous_available = entity.state, entity.available
                 entity.deleted_at = now
                 entity.available = False
@@ -61,15 +127,19 @@ class EntitySyncService:
         self._installation.sync_revision = revision
         self._installation.inventory_synced_at = now
         await self._session.commit()
+        if previous_values:
+            from .wear_notification_rules import schedule_wear_rule_evaluation
+
+            schedule_wear_rule_evaluation(self._installation.id, previous_values)
         logger.debug(
             "Full entity inventory committed: revision=%d active=%d tombstoned=%d",
             revision,
             len(seen),
             tombstoned,
         )
-        from .alexa_events import reconcile_discovery_safely
+        from .alexa_events import schedule_discovery_reconciliation
 
-        await reconcile_discovery_safely(self._session, self._installation)
+        schedule_discovery_reconciliation(self._installation.id)
         from .media_realtime import media_events
 
         media_events.publish(
@@ -81,8 +151,16 @@ class EntitySyncService:
         await self._publish_inventory_players(revision, previous_media_ids)
 
     async def apply_delta(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=["sync_revision"])
         if revision != self._installation.sync_revision + 1:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"delta_revision_gap:{revision}!={self._installation.sync_revision + 1}"
+            )
         previous_media_ids = set(
             (
                 await self._session.scalars(
@@ -110,9 +188,9 @@ class EntitySyncService:
                 await self._upsert(item)
         self._installation.sync_revision = revision
         await self._session.commit()
-        from .alexa_events import reconcile_discovery_safely
+        from .alexa_events import schedule_discovery_reconciliation
 
-        await reconcile_discovery_safely(self._session, self._installation)
+        schedule_discovery_reconciliation(self._installation.id)
         from .media_realtime import media_events
 
         media_events.publish(
@@ -161,18 +239,45 @@ class EntitySyncService:
             media_events.publish(self._installation.id, revision, event_type, payload)
 
     async def apply_state(self, revision: int, items: list[dict[str, object]]) -> None:
+        # Serialize mapping changes with the experimental Wear snapshot cutover.
+        # The helper is a no-op while the fence feature is disabled.
+        from .wear_bridge import lock_wear_writer
+
+        await lock_wear_writer(self._session, self._installation.id, allow_econtrol=True)
+        await self._session.refresh(self._installation, attribute_names=["sync_revision"])
         if revision != self._installation.sync_revision + 1:
-            raise StaleSyncError
+            raise StaleSyncError(
+                f"state_revision_gap:{revision}!={self._installation.sync_revision + 1}"
+            )
         changed_entities: list[Entity] = []
+        previous_values: list[tuple[UUID, str | None, bool]] = []
         for item in items:
             entity = await self._by_registry(str(item["registry_id"]))
+            is_new_or_reappeared = entity is None or entity.deleted_at is not None
+            if is_new_or_reappeared:
+                entity = await self._upsert(item)
             if entity is None or entity.deleted_at is not None:
-                raise StaleSyncError
+                logger.warning(
+                    "Ignoring state update for entity absent from inventory: registry_id=%s",
+                    str(item["registry_id"])[:80],
+                )
+                continue
             previous_state, previous_available = entity.state, entity.available
+            if not is_new_or_reappeared:
+                previous_values.append((entity.id, previous_state, previous_available))
             entity.state = _optional(item, "state")
             entity.available = bool(item.get("available", True))
+            previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
             attributes = item.get("attributes", {})
-            entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+            entity.attributes_json = (
+                cast(dict[str, object], _sanitize_json(attributes))
+                if isinstance(attributes, dict)
+                else {}
+            )
+            entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
+            selected = selection_from_item(item, previous_selection)
+            if selected is not None:
+                entity.attributes_json[VOICE_SELECTION_KEY] = selected
             _store_device_metadata(entity, item)
             if entity.ha_domain == "media_player":
                 entity.attributes_json["_experiences"] = _experiences(item)
@@ -184,7 +289,7 @@ class EntitySyncService:
             )
             updated = item.get("last_updated_at")
             if updated:
-                entity.attributes_json["_last_updated_at"] = str(updated)[:64]
+                entity.attributes_json["_last_updated_at"] = _clean_text(updated)[:64]
             entity.last_seen_at = datetime.now(UTC)
             await StateHistoryService(self._session).record_change(
                 entity,
@@ -195,33 +300,50 @@ class EntitySyncService:
             changed_entities.append(entity)
         self._installation.sync_revision = revision
         await self._session.commit()
+        from .wear_notification_rules import schedule_wear_rule_evaluation
+
+        schedule_wear_rule_evaluation(self._installation.id, previous_values)
         from .media_api import _enrich_echo_players, _groups, _player
         from .media_realtime import media_events
 
-        media_players = list(
-            (
-                await self._session.scalars(
-                    select(Entity).where(
-                        Entity.installation_id == self._installation.id,
-                        Entity.ha_domain == "media_player",
-                        Entity.deleted_at.is_(None),
-                    )
-                )
-            ).all()
+        media_relevant = any(
+            entity.ha_domain == "media_player"
+            or (
+                entity.ha_domain == "switch"
+                and entity.ha_entity_id.endswith(("_do_not_disturb", "_non_disturbare"))
+            )
+            for entity in changed_entities
         )
-        current_groups = _groups(media_players, self._installation.id)
-        all_entities = list(
-            (
-                await self._session.scalars(
-                    select(Entity).where(
-                        Entity.installation_id == self._installation.id,
-                        Entity.deleted_at.is_(None),
+        media_players: list[Entity] = []
+        current_groups: list[dict[str, object]] = []
+        all_entities: list[Entity] = []
+        if media_relevant:
+            media_players = list(
+                (
+                    await self._session.scalars(
+                        select(Entity).where(
+                            Entity.installation_id == self._installation.id,
+                            Entity.ha_domain == "media_player",
+                            Entity.deleted_at.is_(None),
+                        )
                     )
-                )
-            ).all()
-        )
+                ).all()
+            )
+            current_groups = _groups(media_players, self._installation.id)
+            all_entities = list(
+                (
+                    await self._session.scalars(
+                        select(Entity).where(
+                            Entity.installation_id == self._installation.id,
+                            Entity.deleted_at.is_(None),
+                        )
+                    )
+                ).all()
+            )
         group_by_member = {
-            member: group for group in current_groups for member in group["member_registry_ids"]
+            member: group
+            for group in current_groups
+            for member in cast(list[str], group["member_registry_ids"])
         }
         group_changed = False
         for entity in changed_entities:
@@ -230,7 +352,11 @@ class EntitySyncService:
                 if not (entity.attributes_json or {}).get("_experiences"):
                     continue
                 _enrich_echo_players([serialized], all_entities)
-                serialized["group"] = group_by_member.get(entity.ha_registry_id)
+                serialized["group"] = (
+                    group_by_member.get(entity.ha_registry_id)
+                    if entity.ha_registry_id is not None
+                    else None
+                )
                 media_events.publish(
                     self._installation.id,
                     revision,
@@ -289,22 +415,12 @@ class EntitySyncService:
                 self._installation.id, [entity.id for entity in changed_entities]
             )
             return
-        from .alexa import SUPPORTED_DOMAINS
-        from .alexa_events import AlexaEventGateway
+        from .alexa_events import schedule_state_reporting
 
-        gateway = AlexaEventGateway(self._session)
-        try:
-            for entity in changed_entities:
-                if entity.ha_domain in SUPPORTED_DOMAINS:
-                    await gateway.report_entity(entity)
-            await gateway.reconcile_discovery(self._installation)
-        except Exception:  # External Alexa delivery must not fail committed entity state.
-            await self._session.rollback()
-            logger.exception(
-                "Alexa proactive reporting failed installation_id=%s", self._installation.id
-            )
-        finally:
-            await gateway.close()
+        schedule_state_reporting(
+            self._installation.id,
+            [entity.id for entity in changed_entities],
+        )
 
     async def _by_registry(self, registry_id: str) -> Entity | None:
         result = await self._session.scalars(
@@ -315,9 +431,17 @@ class EntitySyncService:
         )
         return result.one_or_none()
 
-    async def _upsert(self, item: dict[str, object]) -> Entity:
-        entity = await self._by_registry(str(item["registry_id"]))
-        if entity is None:
+    async def _upsert(
+        self,
+        item: dict[str, object],
+        *,
+        known_entity: Entity | None = None,
+        lookup_complete: bool = False,
+    ) -> Entity:
+        entity = known_entity
+        if entity is None and not lookup_complete:
+            entity = await self._by_registry(str(item["registry_id"]))
+        if entity is None and not lookup_complete:
             result = await self._session.scalars(
                 select(Entity).where(
                     Entity.installation_id == self._installation.id,
@@ -325,6 +449,46 @@ class EntitySyncService:
                 )
             )
             entity = result.one_or_none()
+        if item.get("registry_only") is True:
+            if (
+                not self._registry_only_negotiated
+                or item.get("available") is not False
+                or item.get("control_exposed") is not False
+            ):
+                raise ValueError("registry_only_not_negotiated_or_invalid")
+            is_new = entity is None
+            if entity is None:
+                entity = Entity(
+                    installation_id=self._installation.id,
+                    ha_registry_id=str(item["registry_id"]),
+                    ha_entity_id=str(item["entity_id"]),
+                    ha_domain=str(item["domain"]),
+                    friendly_name=_optional(item, "friendly_name"),
+                    available=False,
+                    control_exposed=False,
+                )
+                self._session.add(entity)
+                await self._session.flush()
+                previous_state, previous_available = None, True
+            else:
+                if entity.ha_registry_id not in (
+                    None,
+                    str(item["registry_id"]),
+                ) or entity.ha_domain != str(item["domain"]):
+                    raise ValueError("registry_only_identity_conflict")
+                previous_state, previous_available = entity.state, entity.available
+                entity.ha_registry_id = str(item["registry_id"])
+                entity.ha_entity_id = str(item["entity_id"])
+            entity.state = None
+            entity.available = False
+            entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
+            await StateHistoryService(self._session).record_change(
+                entity,
+                tenant_id=self._installation.tenant_id,
+                previous_state=previous_state,
+                previous_available=previous_available,
+            )
+            return entity
         is_new = entity is None
         if entity is None:
             entity = Entity(
@@ -351,8 +515,20 @@ class EntitySyncService:
         entity.supported_features = supported_features if isinstance(supported_features, int) else 0
         entity.state = _optional(item, "state")
         entity.available = bool(item.get("available", True))
+        incoming_exposed = bool(item.get("control_exposed", True))
+        if is_new or incoming_exposed:
+            entity.control_exposed = incoming_exposed
+        previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
         attributes = item.get("attributes", {})
-        entity.attributes_json = attributes if isinstance(attributes, dict) else {}
+        entity.attributes_json = (
+            cast(dict[str, object], _sanitize_json(attributes))
+            if isinstance(attributes, dict)
+            else {}
+        )
+        entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
+        selected = selection_from_item(item, previous_selection)
+        if selected is not None:
+            entity.attributes_json[VOICE_SELECTION_KEY] = selected
         _store_device_metadata(entity, item)
         if entity.ha_domain == "media_player":
             entity.attributes_json["_experiences"] = _experiences(item)
@@ -362,7 +538,7 @@ class EntitySyncService:
         )
         updated = item.get("last_updated_at")
         if updated:
-            entity.attributes_json["_last_updated_at"] = str(updated)[:64]
+            entity.attributes_json["_last_updated_at"] = _clean_text(updated)[:64]
         entity.last_seen_at, entity.deleted_at = datetime.now(UTC), None
         if is_new:
             previous_state, previous_available = None, not entity.available
@@ -377,7 +553,22 @@ class EntitySyncService:
 
 def _optional(item: dict[str, object], key: str) -> str | None:
     value = item.get(key)
-    return str(value)[:255] if value is not None else None
+    return _clean_text(value)[:255] if value is not None else None
+
+
+def _clean_text(value: object) -> str:
+    """Remove NUL characters that PostgreSQL text and JSONB cannot store."""
+    return str(value).replace("\x00", "")
+
+
+def _sanitize_json(value: object) -> object:
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, list):
+        return [_sanitize_json(item) for item in value]
+    if isinstance(value, dict):
+        return {_clean_text(key): _sanitize_json(item) for key, item in value.items()}
+    return value
 
 
 def _experiences(item: dict[str, object]) -> list[str]:
@@ -391,7 +582,7 @@ def _store_device_metadata(entity: Entity, item: dict[str, object]) -> None:
     for key in ("manufacturer", "model", "platform"):
         value = item.get(key)
         if value is not None:
-            entity.attributes_json[f"_{key}"] = str(value)[:255]
+            entity.attributes_json[f"_{key}"] = _clean_text(value)[:255]
 
 
 def _resource_revision(entity: Entity) -> int:
