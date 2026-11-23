@@ -3,6 +3,7 @@
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ekonex_voice.entity_inventory import EntityInventorySynchronizer
 
@@ -30,6 +31,7 @@ async def test_manual_media_experiences_are_serialized_in_state_updates(
 async def test_echo_device_metadata_is_serialized_without_renaming(
     hass: HomeAssistant,
 ) -> None:
+    MockConfigEntry(domain="alexa_media", entry_id="test-entry").add_to_hass(hass)
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id="test-entry",
         identifiers={("alexa_media", "echo-sala")},

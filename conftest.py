@@ -21,9 +21,8 @@ def pytest_runtest_setup() -> None:
         previous_loop = asyncio.get_event_loop()
     except RuntimeError:
         previous_loop = None
-    if previous_loop is not None and not previous_loop.is_running():
-        previous_loop.close()
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    if previous_loop is None or previous_loop.is_closed():
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 @pytest.fixture
