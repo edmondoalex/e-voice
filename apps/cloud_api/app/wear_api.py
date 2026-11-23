@@ -11,7 +11,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, Self, cast
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -29,6 +29,7 @@ from .command_dispatch import (
     DomainActionCommand,
     PowerCommand,
     PressCommand,
+    StrictCommand,
 )
 from .config import get_settings
 from .conversation_service import ConversationEntityService
@@ -37,7 +38,7 @@ from .domain.models import Entity, Installation, WearDevice, WearEnrollment, Wea
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
 from .installation_bound_api import UI_OPERATIONS, _frame_policy, _ui_csrf, bound_context_dependency
-from .wear_devices import CAPABILITIES, WearClaimLimiter, WearDenied, WearDeviceService
+from .wear_devices import CAPABILITIES, WearClaimLimiter, WearContext, WearDenied, WearDeviceService
 from .wear_notification_rules import render_wear_rule_message
 from .wear_notifications import WearNotificationService
 
@@ -69,7 +70,7 @@ async def export_wear_selection(
             .order_by(WearDevice.created_at)
         )
     ).all()
-    selected = []
+    selected: list[dict[str, object]] = []
     for device in devices:
         preferences = device.notification_preferences_json or {}
         if (
@@ -86,9 +87,11 @@ async def export_wear_selection(
                 "quick_actions": preferences.get("quick_actions", []),
             }
         )
-    requested = set()
-    for device in selected:
-        for item in device["notification_rules"] + device["quick_actions"]:
+    requested: set[UUID] = set()
+    for selected_device in selected:
+        rules = cast(list[object], selected_device["notification_rules"])
+        actions = cast(list[object], selected_device["quick_actions"])
+        for item in rules + actions:
             if isinstance(item, dict) and item.get("entity_id"):
                 try:
                     requested.add(UUID(str(item["entity_id"])))
@@ -183,16 +186,18 @@ def _voice_tokens(value: str) -> set[str]:
     }
 
 
-def _wear_entity_command(entity: Entity, requested: str):
+def _wear_entity_command(entity: Entity, requested: str) -> tuple[StrictCommand, str]:
     if requested in {"open", "close"} and is_gate_override(entity):
         operation = "power_on" if requested == "open" else "power_off"
-        return PowerCommand(operation=operation), operation
+        return PowerCommand(operation=cast(Literal["power_on", "power_off"], operation)), operation
     if requested in {"open", "close", "stop"}:
-        return CoverCommand(operation=requested), requested
-    return PowerCommand(operation=requested), requested
+        return CoverCommand(operation=cast(Literal["open", "close", "stop"], requested)), requested
+    return PowerCommand(operation=cast(Literal["power_on", "power_off"], requested)), requested
 
 
-async def _wear_power_command(session: AsyncSession, context, utterance: str) -> str | None:
+async def _wear_power_command(
+    session: AsyncSession, context: WearContext, utterance: str
+) -> str | None:
     words = _voice_tokens(utterance)
     requested = (
         "power_on"
@@ -236,7 +241,12 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
     device = await session.get(WearDevice, context.device_id)
     quick_labels: dict[UUID, str] = {}
     if device is not None:
-        for action in (device.notification_preferences_json or {}).get("quick_actions", []):
+        quick_actions = (device.notification_preferences_json or {}).get("quick_actions", [])
+        if not isinstance(quick_actions, list):
+            quick_actions = []
+        for action in quick_actions:
+            if not isinstance(action, dict):
+                continue
             try:
                 action_entity_id = UUID(str(action.get("entity_id", "")))
             except ValueError:
@@ -327,7 +337,7 @@ class NotificationRuleRequest(BaseModel):
     body: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
-    def target_required(self):
+    def target_required(self) -> Self:
         if self.trigger == "becomes" and not self.target_state:
             raise ValueError("notification_rule_target_required")
         return self
@@ -528,7 +538,7 @@ class QuickActionRequest(BaseModel):
     confirmation_on_activate: bool = False
 
     @model_validator(mode="after")
-    def valid_target(self):
+    def valid_target(self) -> Self:
         direct = self.entity_id is not None or self.operation is not None
         if direct and (self.entity_id is None or self.operation is None):
             raise ValueError("incomplete_quick_action_target")
@@ -575,7 +585,7 @@ class QuickActionsRequest(BaseModel):
 async def _wear_context(
     session: Annotated[AsyncSession, session_dependency],
     authorization: Annotated[str | None, Header()] = None,
-):
+) -> WearContext:
     if authorization is None or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wear_credential_denied")
     try:
@@ -792,7 +802,12 @@ async def wear_management(
 
     def device_card(item: WearDevice) -> str:
         preferences = item.notification_preferences_json or {}
-        selected = set(preferences.get("categories") or NOTIFICATION_CATEGORIES)
+        raw_categories = preferences.get("categories")
+        selected = (
+            {value for value in raw_categories if isinstance(value, str)}
+            if isinstance(raw_categories, list)
+            else set(NOTIFICATION_CATEGORIES)
+        )
         categories = "".join(
             f'<label><input type=checkbox data-category value="{value}" {"checked" if value in selected else ""}> {label}</label>'
             for value, label in (
@@ -813,9 +828,16 @@ async def wear_management(
                 ("critical", "Solo critiche"),
             )
         )
-        saved_actions = {
-            int(action["slot"]): action for action in preferences.get("quick_actions", [])
-        }
+        raw_actions = preferences.get("quick_actions")
+        saved_actions = (
+            {
+                int(action["slot"]): action
+                for action in raw_actions
+                if isinstance(action, dict) and "slot" in action
+            }
+            if isinstance(raw_actions, list)
+            else {}
+        )
         icon_labels = QUICK_ACTION_STANDARD_ICONS
         action_rows = []
         visible_slots = max(8, max(saved_actions, default=0))
@@ -894,7 +916,10 @@ async def wear_management(
         )
         notification_entity_by_id = {str(entity.id): entity for entity in notification_entities}
         rule_rows = []
-        for rule in preferences.get("notification_rules", []):
+        raw_rules = preferences.get("notification_rules")
+        for rule in raw_rules if isinstance(raw_rules, list) else []:
+            if not isinstance(rule, dict):
+                continue
             rule_id = str(rule.get("id") or "")
             activated_at = last_rule_activation.get(rule_id)
             activated_label = (
@@ -1193,6 +1218,10 @@ async def update_quick_actions(
             ).all()
         }
         for action in direct_actions:
+            if action.entity_id is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "quick_action_target_invalid"
+                )
             entity = entities.get(action.entity_id)
             if entity is None or action.operation not in {
                 operation for operation, _label in _wear_operations(entity.ha_domain)
@@ -1374,8 +1403,8 @@ async def claim(
 
 @router.get("/api/wear/v1/bootstrap")
 async def bootstrap(
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, object]:
     device = await session.scalar(
         select(WearDevice).where(
@@ -1384,7 +1413,12 @@ async def bootstrap(
         )
     )
     preferences = device.notification_preferences_json if device else {}
-    configured_actions = list((preferences or {}).get("quick_actions", []))
+    raw_configured_actions = (preferences or {}).get("quick_actions", [])
+    configured_actions = (
+        [item for item in raw_configured_actions if isinstance(item, dict)]
+        if isinstance(raw_configured_actions, list)
+        else []
+    )
     entity_ids: set[UUID] = set()
     for action in configured_actions:
         try:
@@ -1439,8 +1473,8 @@ async def bootstrap(
 )
 async def register_push_token(
     payload: PushTokenRequest,
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> Response:
     context.require("notification.receive")
     device = await session.scalar(
@@ -1469,8 +1503,8 @@ async def register_push_token(
 
 @router.get("/api/wear/v1/notifications")
 async def pending_notifications(
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, object]:
     items = await WearNotificationService(session).pending(context)
     await session.commit()
@@ -1492,8 +1526,8 @@ async def pending_notifications(
 
 @router.get("/api/wear/v1/notifications/wait")
 async def wait_for_notifications(
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, object]:
     """Hold one efficient request until a notification is ready or the proxy-safe timeout expires."""
     deadline = datetime.now(UTC) + timedelta(seconds=45)
@@ -1525,8 +1559,8 @@ async def wait_for_notifications(
 )
 async def acknowledge_notification(
     notification_id: UUID,
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> Response:
     try:
         await WearNotificationService(session).acknowledge(context, notification_id)
@@ -1540,8 +1574,8 @@ async def acknowledge_notification(
 @router.post("/api/wear/v1/ask")
 async def ask(
     payload: AskRequest,
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, str]:
     context.require("voice.ask")
     installation = await session.scalar(
@@ -1579,8 +1613,8 @@ async def ask(
 @router.post("/api/wear/v1/quick-actions/{slot}/execute")
 async def execute_quick_action(
     slot: int,
-    context=wear_context_dependency,
-    session: Annotated[AsyncSession, session_dependency] = None,
+    context: Annotated[WearContext, wear_context_dependency],
+    session: Annotated[AsyncSession, session_dependency],
 ) -> dict[str, str]:
     if slot < 1 or slot > 32:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "quick_action_not_found")
@@ -1599,8 +1633,12 @@ async def execute_quick_action(
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "quick_action_not_found")
-    actions = (device.notification_preferences_json or {}).get("quick_actions", [])
-    action = next((item for item in actions if int(item.get("slot", 0)) == slot), None)
+    raw_actions = (device.notification_preferences_json or {}).get("quick_actions", [])
+    actions = raw_actions if isinstance(raw_actions, list) else []
+    action = next(
+        (item for item in actions if isinstance(item, dict) and int(item.get("slot", 0)) == slot),
+        None,
+    )
     if action is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "quick_action_not_found")
     if action.get("entity_id") and action.get("operation"):
@@ -1631,15 +1669,17 @@ async def execute_quick_action(
                     status.HTTP_409_CONFLICT, "quick_action_state_unknown"
                 ) from None
         if operation in {"power_on", "power_off"}:
-            command = PowerCommand(operation=operation)
+            command: StrictCommand = PowerCommand(
+                operation=cast(Literal["power_on", "power_off"], operation)
+            )
         elif operation in {"open", "stop", "close"}:
-            command = CoverCommand(operation=operation)
+            command = CoverCommand(operation=cast(Literal["open", "stop", "close"], operation))
         elif operation == "activate":
             command = ActivateCommand(operation="activate")
         elif operation == "press":
             command = PressCommand(operation="press")
         elif operation in {"lock", "unlock"}:
-            command = DomainActionCommand(operation=operation)
+            command = DomainActionCommand(operation=cast(Literal["lock", "unlock"], operation))
         else:
             raise HTTPException(status.HTTP_409_CONFLICT, "quick_action_target_invalid")
         outcome = await CommandDispatchService(session, sessions).dispatch(
