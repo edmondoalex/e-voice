@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String, Uuid, delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -17,7 +18,7 @@ class VoiceSelectionSnapshot(Base):
     )
     tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    registry_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    registry_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     session_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -44,8 +45,12 @@ class VoiceSelectionMember(Base):
 
 
 async def register_selection_session(
-    session, installation_id, tenant_id, session_id, credential_id=None
-):
+    session: AsyncSession,
+    installation_id: UUID,
+    tenant_id: UUID,
+    session_id: UUID,
+    credential_id: UUID | None = None,
+) -> None:
     instance = await session.scalar(
         select(Installation)
         .where(Installation.id == installation_id)
@@ -74,7 +79,9 @@ async def register_selection_session(
     await session.flush()
 
 
-async def end_selection_session(session, installation_id, session_id):
+async def end_selection_session(
+    session: AsyncSession, installation_id: UUID, session_id: UUID
+) -> None:
     await session.scalar(
         select(Installation).where(Installation.id == installation_id).with_for_update()
     )
@@ -85,15 +92,15 @@ async def end_selection_session(session, installation_id, session_id):
 
 
 async def persist_selection(
-    session,
-    installation_id,
-    tenant_id,
-    session_id,
-    revision,
-    ids,
+    session: AsyncSession,
+    installation_id: UUID,
+    tenant_id: UUID,
+    session_id: UUID,
+    revision: int,
+    ids: list[str],
     *,
-    require_inventory_revision=False,
-):
+    require_inventory_revision: bool = False,
+) -> None:
     instance = await session.scalar(
         select(Installation)
         .where(Installation.id == installation_id)

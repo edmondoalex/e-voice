@@ -3,28 +3,32 @@
 Legacy control authorization and Alexa/Wear rules remain independent.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
-from .config import get_settings
+from .config import get_settings as get_settings
+from .domain.models import Entity
 
 VOICE_SELECTION_KEY = "_ekonex_voice_selected"
 
 
-def selection_from_item(item, previous):
+def selection_from_item(item: Mapping[str, object], previous: object) -> bool | None:
     selected = item.get("control_exposed")
     if type(selected) is bool:
         return selected
     return previous if type(previous) is bool else None
 
 
-def voice_visible(entity):
+def voice_visible(entity: Entity) -> bool:
     selected = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
     return selected if type(selected) is bool else entity.control_exposed is True
 
 
-def voice_visible_clause(entity):
+def voice_visible_clause(entity: type[Entity]) -> ColumnElement[bool]:
     selected = entity.attributes_json[VOICE_SELECTION_KEY].as_boolean()
     legacy = or_(selected.is_(True), and_(selected.is_(None), entity.control_exposed.is_(True)))
     settings = get_settings()
@@ -45,7 +49,7 @@ def voice_visible_clause(entity):
     return and_(current, member)
 
 
-def selection_current_clause(installation_id):
+def selection_current_clause(installation_id: Any) -> ColumnElement[bool]:
     from .domain.models import ConnectorCredential
     from .voice_selection_store import VoiceSelectionFence, VoiceSelectionSnapshot
 
