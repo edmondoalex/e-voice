@@ -258,8 +258,9 @@ async def test_alexa_devices_notify_operations_are_explicit_and_bounded(
     call.assert_awaited_once_with(
         "notify",
         "send_message",
-        {"entity_id": entry.entity_id, "message": "Porta garage aperta"},
+        {"message": "Porta garage aperta"},
         blocking=True,
+        target={"entity_id": entry.entity_id},
     )
 
 
@@ -319,8 +320,9 @@ async def test_local_announcement_action_calls_only_validated_notify_target(
     call.assert_awaited_once_with(
         "notify",
         "send_message",
-        {"entity_id": entry.entity_id, "message": "Valore corrente"},
+        {"message": "Valore corrente"},
         blocking=True,
+        target={"entity_id": entry.entity_id},
     )
 
 

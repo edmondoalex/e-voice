@@ -233,12 +233,21 @@ class EkonexVoiceCommandExecutor:
         started = perf_counter()
         try:
             async with asyncio.timeout(self._timeout):
-                await self._hass.services.async_call(
-                    domain,
-                    service,
-                    {"entity_id": entry.entity_id, **data},
-                    blocking=True,
-                )
+                if domain == "notify" and service == "send_message":
+                    await self._hass.services.async_call(
+                        domain,
+                        service,
+                        data,
+                        blocking=True,
+                        target={"entity_id": entry.entity_id},
+                    )
+                else:
+                    await self._hass.services.async_call(
+                        domain,
+                        service,
+                        {"entity_id": entry.entity_id, **data},
+                        blocking=True,
+                    )
         except TimeoutError:
             diagnostics.append(
                 _service_result(command_id, correlation_id, started, False, "TimeoutError", "")

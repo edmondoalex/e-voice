@@ -142,8 +142,9 @@ async def async_announce(
         await hass.services.async_call(
             "notify",
             "send_message",
-            {"entity_id": entry.entity_id, "message": normalized},
+            {"message": normalized},
             blocking=True,
+            target={"entity_id": entry.entity_id},
         )
 
 
