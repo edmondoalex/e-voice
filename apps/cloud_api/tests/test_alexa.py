@@ -43,6 +43,27 @@ def test_global_notification_entity_is_not_alexa_eligible() -> None:
     assert alexa_entity_eligible(entity) is False
 
 
+def test_home_assistant_button_is_published_as_alexa_scene_trigger() -> None:
+    entity = Entity(
+        id=uuid4(),
+        installation_id=uuid4(),
+        ha_entity_id="button.e_safe_scen_6",
+        ha_domain="button",
+        friendly_name="Allarme notte piu mansarda",
+        control_exposed=True,
+    )
+
+    assert alexa_entity_eligible(entity) is True
+    endpoint = discovery_endpoint(entity)
+    assert endpoint["displayCategories"] == ["SCENE_TRIGGER"]
+    assert any(
+        capability["interface"] == "Alexa.SceneController"
+        and capability["supportsDeactivation"] is False
+        for capability in endpoint["capabilities"]
+    )
+    assert _command("Alexa.SceneController", "Activate", {}, entity) == {"operation": "press"}
+
+
 async def _client(session: AsyncSession) -> httpx.AsyncClient:
     async def database_override():  # type: ignore[no-untyped-def]
         yield session

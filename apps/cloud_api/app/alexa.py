@@ -42,7 +42,16 @@ router = APIRouter()
 database_dependency = Depends(get_database_session)
 user_header = Header(default=None)
 MAX_DIRECTIVE_BYTES = 65_536
-SUPPORTED_DOMAINS = {"light", "switch", "cover", "climate", "fan", "scene", "media_player"}
+SUPPORTED_DOMAINS = {
+    "light",
+    "switch",
+    "cover",
+    "climate",
+    "fan",
+    "scene",
+    "button",
+    "media_player",
+}
 MEDIA_PLAYER_FEATURE_PAUSE = 1
 MEDIA_PLAYER_FEATURE_VOLUME_SET = 4
 MEDIA_PLAYER_FEATURE_VOLUME_MUTE = 8
@@ -593,7 +602,7 @@ def capabilities(entity: Entity) -> list[dict[str, Any]]:
             result.append(_capability("Alexa.TemperatureSensor", ["temperature"]))
     elif entity.ha_domain == "fan":
         result.append(_capability("Alexa.PercentageController", ["percentage"]))
-    elif entity.ha_domain == "scene":
+    elif entity.ha_domain in {"scene", "button"}:
         result.append(
             {
                 "type": "AlexaInterface",
@@ -669,6 +678,7 @@ def discovery_endpoint(entity: Entity) -> dict[str, Any]:
             "climate": "THERMOSTAT",
             "fan": "FAN",
             "scene": "SCENE_TRIGGER",
+            "button": "SCENE_TRIGGER",
             "media_player": "TV",
         }[entity.ha_domain]
     )
@@ -963,6 +973,10 @@ def _command(
                 return {"operation": "set_hvac_mode", "hvac_mode": "heat"}
             if (namespace, name) == ("Alexa.PowerController", "TurnOff") and "off" in modes:
                 return {"operation": "set_hvac_mode", "hvac_mode": "off"}
+            return None
+        if entity is not None and entity.ha_domain == "button":
+            if (namespace, name) == ("Alexa.SceneController", "Activate"):
+                return {"operation": "press"}
             return None
         return mapping[(namespace, name)]
     if namespace == "Alexa.BrightnessController" and name == "SetBrightness":
