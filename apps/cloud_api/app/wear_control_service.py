@@ -27,7 +27,9 @@ session_dependency = Depends(get_database_session)
 
 
 @router.post("/service/wear/control/{operation}")
-async def control(operation: str, request: Request, session: AsyncSession = session_dependency):
+async def control(
+    operation: str, request: Request, session: AsyncSession = session_dependency
+) -> dict[str, object]:
     settings = get_settings()
     provider = getattr(request.app.state, "wear_bridge_key_provider", None)
     if not (
@@ -159,7 +161,7 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
                 "issued": issued,
                 "expires": issued + 60,
             }
-            export = {"claims": export_claims, "snapshot": snapshot}
+            export: dict[str, object] = {"claims": export_claims, "snapshot": snapshot}
             encoded = json.dumps(
                 export, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
             ).encode()
@@ -252,7 +254,9 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
             .where(WearBridgeAuthority.installation_id == installation)
             .execution_options(populate_existing=True)
         )
-        owner, revision, generation = (
+        if refreshed is None:
+            raise CutoverBlocked("missing_authority")
+        owner, refreshed_revision, generation = (
             refreshed.owner,
             refreshed.import_revision,
             refreshed.generation,
@@ -263,7 +267,7 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
                 "installation": str(installation),
                 "owner": owner,
                 "generation": generation,
-                "revision": revision,
+                "revision": refreshed_revision,
                 "nonce": claims["nonce"],
                 "issued": issued,
                 "expires": issued + 15,
@@ -288,7 +292,7 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
                 "installation": str(installation),
                 "owner": owner,
                 "generation": generation,
-                "revision": revision,
+                "revision": refreshed_revision,
                 "nonce": claims["nonce"],
                 "issued": issued,
                 "expires": issued + 15,
@@ -306,12 +310,12 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
                     key, b"ekonex-wear-current-authority-v1\0" + signed, hashlib.sha256
                 ).hexdigest(),
             }
-        if owner == "econtrol" and revision:
+        if owner == "econtrol" and refreshed_revision:
             material = (
                 b"ekonex-wear-cutover-v1\0"
                 + installation.bytes
                 + generation.to_bytes(8, "big")
-                + revision.encode()
+                + refreshed_revision.encode()
             )
         else:
             material = (
@@ -320,13 +324,13 @@ async def control(operation: str, request: Request, session: AsyncSession = sess
                 + generation.to_bytes(8, "big")
                 + owner.encode()
                 + b"\0"
-                + (revision or "").encode()
+                + (refreshed_revision or "").encode()
             )
         return {
             "installation": str(installation),
             "owner": owner,
             "generation": generation,
-            "revision": revision,
+            "revision": refreshed_revision,
             "receipt": hmac.new(key, material, hashlib.sha256).hexdigest(),
         }
     except CutoverBlocked as exc:

@@ -9,15 +9,16 @@ import hmac
 import json
 import re
 import time
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import BigInteger, ForeignKey, Integer, String, Uuid, delete, inspect, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .config import get_settings
+from .config import Settings, get_settings
 from .database import Base, get_database_session
 from .domain.enums import InstallationStatus
 from .domain.models import Entity, Installation, WearDevice, WearNotification
@@ -64,7 +65,7 @@ class WearBridgeWake(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
 
-def canonical(claims, body):
+def canonical(claims: Mapping[str, object], body: Mapping[str, object]) -> bytes:
     return json.dumps(
         {"claims": claims, "body": body},
         sort_keys=True,
@@ -83,7 +84,7 @@ def derive_installation_key(master: bytes, installation: UUID) -> bytes:
     ).digest()
 
 
-def verify_service_key(provided, supplied, payload):
+def verify_service_key(provided: object, supplied: object, payload: bytes) -> bytes:
     """Accept current and optional previous key during a controlled overlap."""
     keys = (provided,) if isinstance(provided, bytes) else provided
     if (
@@ -103,7 +104,9 @@ def verify_service_key(provided, supplied, payload):
     return keys[matches.index(True)]
 
 
-async def verify_bridge_startup(session_factory, *, fence_enabled: bool) -> None:
+async def verify_bridge_startup(
+    session_factory: async_sessionmaker[AsyncSession], *, fence_enabled: bool
+) -> None:
     """Detect incompatible disabled restart; a missing pre-feature schema stays legacy.
 
     No writes or migrations are performed. Database failures abort startup rather
@@ -132,7 +135,7 @@ async def verify_bridge_startup(session_factory, *, fence_enabled: bool) -> None
             raise RuntimeError("wear_bridge_disable_requires_rollback")
 
 
-def _in_scope(settings, installation: Installation) -> bool:
+def _in_scope(settings: Settings, installation: Installation) -> bool:
     """Explicit tenant?installation allowlist; missing configuration enrolls nobody."""
     scope = getattr(settings, "wear_bridge_scope", {})
     if not isinstance(scope, dict):
@@ -145,7 +148,7 @@ def _in_scope(settings, installation: Installation) -> bool:
 
 async def lock_wear_writer(
     session: AsyncSession, installation: UUID, *, allow_econtrol: bool = False
-):
+) -> WearBridgeAuthority | None:
     """Serialize writers and bootstrap; unscoped installations stay legacy.
 
     Existing authority is enforced even if scope is later removed, so deleting
@@ -195,7 +198,7 @@ async def lock_wear_writer(
 
 async def bootstrap_wear_authority(
     session: AsyncSession, tenant: UUID, installation: UUID, *, qualified: bool = False
-):
+) -> WearBridgeAuthority:
     """Provision legacy authority atomically; unexposed and disabled by default.
 
     All callers must independently authenticate tenant, administrative role and
@@ -238,7 +241,7 @@ async def bootstrap_wear_authority(
 @router.post("/service/wear/notifications")
 async def receive_notification(
     request: Request, session: Annotated[AsyncSession, Depends(get_database_session)]
-):
+) -> dict[str, object]:
     provider = getattr(request.app.state, "wear_bridge_key_provider", None)
     if provider is None or not get_settings().wear_bridge_fence_enabled:
         raise HTTPException(503, "wear_bridge_disabled")
@@ -449,7 +452,7 @@ async def receive_notification(
         )
         title, notification_body = render_wear_rule_message(
             {"title": render["title_template"], "body": render["body_template"]},
-            view,
+            cast(Entity, view),
             render["previous_state"],
         )
     prefs = _preferences(device)

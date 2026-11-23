@@ -75,7 +75,7 @@ async def installation_snapshot(
     }
     if set(map(str, requested)) != set(mapping):
         raise CutoverBlocked("unmapped_entity")
-    snapshot = {"devices": selected, "entity_mapping": mapping}
+    snapshot: dict[str, object] = {"devices": selected, "entity_mapping": mapping}
     raw = json.dumps(
         snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode()
