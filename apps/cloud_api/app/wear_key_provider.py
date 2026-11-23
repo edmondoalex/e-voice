@@ -4,14 +4,18 @@ import base64
 import binascii
 import hashlib
 import hmac
+from collections.abc import Awaitable, Callable, Mapping
 from uuid import UUID
+
+BridgeKey = bytes | tuple[bytes, ...]
+BridgeKeyProvider = Callable[[UUID], Awaitable[BridgeKey | None]]
 
 
 class KeyUnavailable(ValueError):
     pass
 
 
-def _decode(value):
+def _decode(value: object) -> bytes:
     try:
         if not isinstance(value, str):
             raise ValueError()
@@ -23,7 +27,9 @@ def _decode(value):
         raise KeyUnavailable("invalid_bridge_secret") from None
 
 
-def _secrets(config, current_name, previous_name):
+def _secrets(
+    config: Mapping[str, object], current_name: str, previous_name: str
+) -> tuple[bytes, ...]:
     current = _decode(config.get(current_name))
     previous = config.get(previous_name)
     if previous is None:
@@ -34,10 +40,10 @@ def _secrets(config, current_name, previous_name):
     return (current, old)
 
 
-def cloud_provider(secret_config):
+def cloud_provider(secret_config: Mapping[str, object]) -> BridgeKeyProvider:
     masters = _secrets(secret_config, "wear_bridge_master_b64", "wear_bridge_previous_master_b64")
 
-    async def provider(installation):
+    async def provider(installation: UUID) -> BridgeKey | None:
         if not isinstance(installation, UUID):
             return None
         keys = tuple(
@@ -51,16 +57,19 @@ def cloud_provider(secret_config):
     return provider
 
 
-def econtrol_provider(secret_config):
+def econtrol_provider(secret_config: Mapping[str, object]) -> BridgeKeyProvider:
     keys = _secrets(
         secret_config, "wear_bridge_installation_key_b64", "wear_bridge_previous_key_b64"
     )
     try:
-        installation = UUID(secret_config["wear_bridge_installation"])
+        installation_raw = secret_config["wear_bridge_installation"]
+        if not isinstance(installation_raw, str):
+            raise ValueError()
+        installation = UUID(installation_raw)
     except (KeyError, TypeError, ValueError, AttributeError):
         raise KeyUnavailable("invalid_bridge_installation") from None
 
-    async def provider(requested):
+    async def provider(requested: UUID) -> BridgeKey | None:
         return (keys if len(keys) > 1 else keys[0]) if requested == installation else None
 
     return provider
