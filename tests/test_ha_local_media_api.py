@@ -1,10 +1,14 @@
 """Tests for the authenticated local e-Face Media API."""
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from homeassistant.components.media_player import MediaPlayerEntityFeature
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.ekonex_voice.local_media_api import (
+    _exposed_items,
     _media_event_entity_ids,
     _player_payload,
     _siblings,
@@ -107,3 +111,38 @@ def test_media_events_ignore_unrelated_exposed_entities() -> None:
         "notify.echo_sala_speak",
         "switch.echo_sala_do_not_disturb",
     }
+
+
+def test_local_player_uses_only_config_entry_that_exposes_it(hass: HomeAssistant) -> None:
+    registry_entry = er.async_get(hass).async_get_or_create(
+        "media_player", "alexa_devices", "echo-office", suggested_object_id="echo_office"
+    )
+    hass.states.async_set(registry_entry.entity_id, "idle")
+    item = {
+        "registry_id": registry_entry.id,
+        "entity_id": registry_entry.entity_id,
+        "domain": "media_player",
+        "available": True,
+    }
+    production_inventory = MagicMock()
+    production_inventory._serialize.return_value = item
+    production_inventory.is_exposed.return_value = False
+    laboratory_inventory = MagicMock()
+    laboratory_inventory._serialize.return_value = item
+    laboratory_inventory.is_exposed.return_value = True
+    production = SimpleNamespace(
+        runtime_data=SimpleNamespace(inventory=production_inventory), data={}
+    )
+    laboratory = SimpleNamespace(
+        runtime_data=SimpleNamespace(inventory=laboratory_inventory), data={}
+    )
+
+    with patch(
+        "custom_components.ekonex_voice.local_media_api._loaded_entries",
+        return_value=[production, laboratory],
+    ):
+        players, _ = _exposed_items(hass)
+
+    assert players[registry_entry.id][0] is laboratory
+    production_inventory.is_exposed.assert_called_with(registry_entry)
+    laboratory_inventory.is_exposed.assert_called_with(registry_entry)

@@ -59,7 +59,7 @@ def _exposed_items(
             if item is None:
                 continue
             related.setdefault(entry.id, item)
-            if entry.domain == "media_player":
+            if entry.domain == "media_player" and inventory.is_exposed(entry):
                 players.setdefault(entry.id, (config_entry, item))
     return players, list(related.values())
 

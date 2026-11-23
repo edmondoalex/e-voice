@@ -4,6 +4,17 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-23 — 2.0.14 local media owner selection
+
+Status: Production hotfix prepared and validated
+
+### Scope
+
+- Include a local media player only under a loaded eVoice config entry that actually exposes it.
+- Prevent an earlier non-owning production entry from shadowing a later authorized laboratory
+  entry for the same Home Assistant player.
+- Keep related Alexa sibling discovery read-only until the exposed owner is selected.
+
 ## 2026-11-23 — 2.0.13 bounded Alexa media sibling authorization
 
 Status: Production hotfix prepared and validated
