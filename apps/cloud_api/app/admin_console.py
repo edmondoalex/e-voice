@@ -12,7 +12,7 @@ import json
 import math
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Protocol, TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -188,7 +188,11 @@ def _nav_link(href: str, label: str, key: str, active: str) -> str:
     return f'<a href="{href}"{attributes}>{label}</a>'
 
 
-def _layout(title: str, body: str, context: TenantContext, csrf: str, active: str) -> str:
+class LayoutContext(Protocol):
+    tenant_id: UUID
+
+
+def _layout(title: str, body: str, context: LayoutContext, csrf: str, active: str) -> str:
     is_laboratory = get_settings().environment == "laboratory"
     laboratory_banner = (
         '<div class="laboratory-banner">LABORATORIO — NON È PRODUZIONE</div>'
