@@ -176,11 +176,24 @@ class EkonexVoiceConnection:
             "heartbeat_interval_seconds",
             "sync_revision",
         }
-        optional = {"voice_selection_v1", "voice_registry_only_v1", "voice_selection_inventory_fence_v1"}
-        if (not expected_ack.issubset(payload) or set(payload)-expected_ack-optional
-                or any(payload[key] is not True for key in optional if key in payload)
-                or ("voice_registry_only_v1" in payload and payload.get("voice_selection_v1") is not True)
-                or ("voice_selection_inventory_fence_v1" in payload and payload.get("voice_selection_v1") is not True)):
+        optional = {
+            "voice_selection_v1",
+            "voice_registry_only_v1",
+            "voice_selection_inventory_fence_v1",
+        }
+        if (
+            not expected_ack.issubset(payload)
+            or set(payload) - expected_ack - optional
+            or any(payload[key] is not True for key in optional if key in payload)
+            or (
+                "voice_registry_only_v1" in payload
+                and payload.get("voice_selection_v1") is not True
+            )
+            or (
+                "voice_selection_inventory_fence_v1" in payload
+                and payload.get("voice_selection_v1") is not True
+            )
+        ):
             raise EkonexVoiceProtocolError("invalid_hello_ack")
         if payload.get("installation_id") != self._installation_id:
             raise EkonexVoiceProtocolError("installation_identity_mismatch")
@@ -205,8 +218,12 @@ class EkonexVoiceConnection:
         )
         if self._inventory is not None:
             if payload.get("voice_selection_v1") is True:
-                kwargs={'selection_enabled':True,'metadata_enabled':payload.get("voice_registry_only_v1") is True}
-                if payload.get("voice_selection_inventory_fence_v1") is True:kwargs['inventory_fence_enabled']=True
+                kwargs = {
+                    "selection_enabled": True,
+                    "metadata_enabled": payload.get("voice_registry_only_v1") is True,
+                }
+                if payload.get("voice_selection_inventory_fence_v1") is True:
+                    kwargs["inventory_fence_enabled"] = True
                 await self._inventory.async_start(websocket, session_id, sync_revision, **kwargs)
             else:
                 await self._inventory.async_start(websocket, session_id, sync_revision)

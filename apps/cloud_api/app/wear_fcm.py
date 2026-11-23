@@ -22,9 +22,11 @@ class WearFcmSender:
 
     def decrypt(self, encrypted_token: str) -> str:
         try:
-            return Fernet(self.settings.pairing_delivery_key.encode()).decrypt(
-                encrypted_token.encode()
-            ).decode()
+            return (
+                Fernet(self.settings.pairing_delivery_key.encode())
+                .decrypt(encrypted_token.encode())
+                .decode()
+            )
         except (InvalidToken, UnicodeDecodeError) as error:
             raise ValueError("invalid encrypted FCM token") from error
 

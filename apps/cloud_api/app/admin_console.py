@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select, update
-from .voice_scope import voice_visible_clause, selection_current_clause
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -70,6 +69,7 @@ from .maintenance import latest_cleanup, next_cleanup_at
 from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_dependency
 from .portal_auth import PortalIdentity
 from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug, infer_standard_category
+from .voice_scope import selection_current_clause, voice_visible_clause
 
 
 class ActivityRow(TypedDict):
@@ -522,27 +522,54 @@ async def _assign_visible_categories(session, context, entity_ids, target_id):
     # Local experiment only: serialize category updates with selection writes
     # and credential revocation before evaluating the strict selection.
     from .voice_scope import get_settings as selection_settings
+
     selection = selection_settings()
-    if getattr(selection, 'voice_selection_v1_enabled', False) and getattr(selection, 'voice_selection_projection_enabled', False):
+    if getattr(selection, "voice_selection_v1_enabled", False) and getattr(
+        selection, "voice_selection_projection_enabled", False
+    ):
         from .domain.models import ConnectorCredential
-        installation_ids = list((await session.scalars(select(Entity.installation_id).join(
-            Installation, Installation.id == Entity.installation_id).where(
-            Entity.id.in_(entity_ids), Installation.tenant_id == context.tenant_id
-        ).distinct().order_by(Entity.installation_id))).all())
+
+        installation_ids = list(
+            (
+                await session.scalars(
+                    select(Entity.installation_id)
+                    .join(Installation, Installation.id == Entity.installation_id)
+                    .where(Entity.id.in_(entity_ids), Installation.tenant_id == context.tenant_id)
+                    .distinct()
+                    .order_by(Entity.installation_id)
+                )
+            ).all()
+        )
         if installation_ids:
-            await session.execute(select(Installation.id).where(
-                Installation.id.in_(installation_ids), Installation.tenant_id == context.tenant_id
-            ).order_by(Installation.id).with_for_update(key_share=True))
-            await session.execute(select(ConnectorCredential.id).where(
-                ConnectorCredential.installation_id.in_(installation_ids)
-            ).order_by(ConnectorCredential.id).with_for_update())
-    tenant_installations = select(Installation.id).where(Installation.tenant_id == context.tenant_id)
+            await session.execute(
+                select(Installation.id)
+                .where(
+                    Installation.id.in_(installation_ids),
+                    Installation.tenant_id == context.tenant_id,
+                )
+                .order_by(Installation.id)
+                .with_for_update(key_share=True)
+            )
+            await session.execute(
+                select(ConnectorCredential.id)
+                .where(ConnectorCredential.installation_id.in_(installation_ids))
+                .order_by(ConnectorCredential.id)
+                .with_for_update()
+            )
+    tenant_installations = select(Installation.id).where(
+        Installation.tenant_id == context.tenant_id
+    )
     result = await session.execute(
-        update(Entity).where(
-            Entity.id.in_(entity_ids), Entity.installation_id.in_(tenant_installations),
-            Entity.deleted_at.is_(None), Entity.voice_category_id.is_(None),
+        update(Entity)
+        .where(
+            Entity.id.in_(entity_ids),
+            Entity.installation_id.in_(tenant_installations),
+            Entity.deleted_at.is_(None),
+            Entity.voice_category_id.is_(None),
             voice_visible_clause(Entity),
-        ).values(voice_category_id=target_id).execution_options(synchronize_session=False)
+        )
+        .values(voice_category_id=target_id)
+        .execution_options(synchronize_session=False)
     )
     return result.rowcount
 
@@ -583,7 +610,9 @@ async def assign_selected_voice_category(
             )
         ).all()
     )
-    assigned = await _assign_visible_categories(session, context, [entity.id for entity in entities], target_id)
+    assigned = await _assign_visible_categories(
+        session, context, [entity.id for entity in entities], target_id
+    )
     await session.commit()
     return RedirectResponse(
         f"/voice-categories?bulk_assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
@@ -726,7 +755,12 @@ async def auto_assign_voice_categories(
         category = categories.get(slug or "")
         if category is not None:
             pending.setdefault(category.id, []).append(entity.id)
-    assigned = sum([await _assign_visible_categories(session, context, ids, category_id) for category_id, ids in pending.items()])
+    assigned = sum(
+        [
+            await _assign_visible_categories(session, context, ids, category_id)
+            for category_id, ids in pending.items()
+        ]
+    )
     await session.commit()
     return RedirectResponse(
         f"/voice-categories?assigned={assigned}", status_code=status.HTTP_303_SEE_OTHER
@@ -848,7 +882,11 @@ async def dashboard(
         await session.scalar(
             select(func.count(Entity.id))
             .join(Installation)
-            .where(Installation.tenant_id == context.tenant_id, Entity.deleted_at.is_(None), voice_visible_clause(Entity))
+            .where(
+                Installation.tenant_id == context.tenant_id,
+                Entity.deleted_at.is_(None),
+                voice_visible_clause(Entity),
+            )
         )
         or 0
     )
@@ -883,7 +921,9 @@ async def installations_page(
         select(Installation, func.count(Entity.id))
         .outerjoin(
             Entity,
-            (Entity.installation_id == Installation.id) & Entity.deleted_at.is_(None) & voice_visible_clause(Entity),
+            (Entity.installation_id == Installation.id)
+            & Entity.deleted_at.is_(None)
+            & voice_visible_clause(Entity),
         )
         .where(Installation.tenant_id == context.tenant_id)
         .group_by(Installation.id)
@@ -914,11 +954,13 @@ async def installation_detail(
 ) -> HTMLResponse:
     _admin(context)
     item = await _installation(session, context, installation_id)
-    selection_notice=''
-    settings=get_settings()
-    if getattr(settings,'voice_selection_v1_enabled',False) and getattr(settings,'voice_selection_projection_enabled',False):
+    selection_notice = ""
+    settings = get_settings()
+    if getattr(settings, "voice_selection_v1_enabled", False) and getattr(
+        settings, "voice_selection_projection_enabled", False
+    ):
         if not await session.scalar(select(selection_current_clause(item.id))):
-            selection_notice='<p class="bad" role="status">Selezione vocale non verificabile. Le entità non sono state eliminate.</p>'
+            selection_notice = '<p class="bad" role="status">Selezione vocale non verificabile. Le entità non sono state eliminate.</p>'
     overlay_installation(item, await load_live_installation(item.public_id))
     q, domain, area = (request.query_params.get(key, "").strip() for key in ("q", "domain", "area"))
     total_entity_count = int(
@@ -1027,7 +1069,10 @@ async def installation_detail(
         if get_settings().environment == "laboratory"
         else ""
     )
-    entity_content = selection_notice + (entity_groups or ('' if selection_notice else '<div class="card"><p>Nessuna entità</p></div>'))
+    entity_content = selection_notice + (
+        entity_groups
+        or ("" if selection_notice else '<div class="card"><p>Nessuna entità</p></div>')
+    )
     body = f'<div class="cards"><div class="card"><b>{"online" if _online(item) else "offline"}</b><br>Connessione</div><div class="card"><b>{_e(item.sync_revision)}</b><br>Revisione inventario</div><div class="card"><b>{_e(item.inventory_synced_at)}</b><br>Ultima sincronizzazione</div><div class="card"><b>{len(entities)} / {total_entity_count}</b><br>Entità visualizzate / totali</div></div>{_connector_compatibility_card(item)}{inventory_sync_notice}{inventory_sync_form}{resync_notice}{resync_form}{_alexa_discovery_section(discovery, proactive_events, list(current_alexa.values()))}<form method="get"><input name="q" placeholder="Cerca" value="{_e(q)}"><input name="domain" placeholder="Dominio" value="{_e(domain)}"><input name="area" placeholder="Area" value="{_e(area)}"><button>Filtra</button></form><section aria-label="Entità per tipo">{entity_content}</section>'
     response = HTMLResponse(_layout(item.name, body, context, csrf, "installations"))
     response.set_cookie(
@@ -1922,6 +1967,7 @@ async def update_entity_names(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta non valida")
     # Serialize the names included in the experimental Wear snapshot with its cutover.
     from .wear_bridge import lock_wear_writer
+
     await lock_wear_writer(session, installation_id, allow_econtrol=True)
     await session.refresh(entity)
     await _require_voice_selected_entity(session, installation, entity)

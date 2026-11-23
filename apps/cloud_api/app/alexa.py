@@ -1344,6 +1344,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
         )
         from .voice_scope import (
             get_settings as selection_settings,
+        )
+        from .voice_scope import (
             selection_current_clause,
             voice_visible_clause,
         )
@@ -1420,7 +1422,8 @@ async def directive(request: Request, database: AsyncSession = database_dependen
             )
         )
         entity_query = entity_query.where(Entity.id == entity_uuid)
-        from .voice_scope import get_settings as selection_settings, voice_visible_clause
+        from .voice_scope import get_settings as selection_settings
+        from .voice_scope import voice_visible_clause
 
         selection = selection_settings()
         if bool(

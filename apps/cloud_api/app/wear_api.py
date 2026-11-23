@@ -45,7 +45,7 @@ router = APIRouter(tags=["wear"])
 session_dependency = Depends(get_database_session)
 
 
-@router.get('/bounded/wear/devices/export')
+@router.get("/bounded/wear/devices/export")
 async def export_wear_selection(
     response: Response,
     context: Annotated[BoundContext, bound_context_dependency],
@@ -55,36 +55,68 @@ async def export_wear_selection(
 
     An export does not activate e-Control, alter a watch or transfer ownership.
     """
-    context.require('use')
-    response.headers['Cache-Control']='no-store'
-    devices = (await session.scalars(select(WearDevice).where(
-        WearDevice.tenant_id == context.tenant_id,
-        WearDevice.user_id == context.user_id,
-        WearDevice.installation_id == context.effective_installation_id,
-        WearDevice.revoked_at.is_(None),
-    ).order_by(WearDevice.created_at))).all()
-    selected=[]
+    context.require("use")
+    response.headers["Cache-Control"] = "no-store"
+    devices = (
+        await session.scalars(
+            select(WearDevice)
+            .where(
+                WearDevice.tenant_id == context.tenant_id,
+                WearDevice.user_id == context.user_id,
+                WearDevice.installation_id == context.effective_installation_id,
+                WearDevice.revoked_at.is_(None),
+            )
+            .order_by(WearDevice.created_at)
+        )
+    ).all()
+    selected = []
     for device in devices:
-        preferences=device.notification_preferences_json or {}
-        if (not isinstance(preferences,dict) or not isinstance(preferences.get('notification_rules',[]),list)
-                or not isinstance(preferences.get('quick_actions',[]),list)):
-            raise HTTPException(409,'wear_preferences_invalid')
-        selected.append({'device_id':str(device.id),'name':device.display_name,
-            'notification_rules':preferences.get('notification_rules',[]),
-            'quick_actions':preferences.get('quick_actions',[])})
-    requested=set()
+        preferences = device.notification_preferences_json or {}
+        if (
+            not isinstance(preferences, dict)
+            or not isinstance(preferences.get("notification_rules", []), list)
+            or not isinstance(preferences.get("quick_actions", []), list)
+        ):
+            raise HTTPException(409, "wear_preferences_invalid")
+        selected.append(
+            {
+                "device_id": str(device.id),
+                "name": device.display_name,
+                "notification_rules": preferences.get("notification_rules", []),
+                "quick_actions": preferences.get("quick_actions", []),
+            }
+        )
+    requested = set()
     for device in selected:
-        for item in device['notification_rules'] + device['quick_actions']:
-            if isinstance(item,dict) and item.get('entity_id'):
-                try: requested.add(UUID(str(item['entity_id'])))
-                except ValueError: pass
-    entities=(await session.scalars(select(Entity).where(
-        Entity.id.in_(requested), Entity.installation_id==context.effective_installation_id,
-        Entity.deleted_at.is_(None)))).all() if requested else []
-    mapping={str(entity.id):{'registry_id':entity.ha_registry_id,'entity_id':entity.ha_entity_id} for entity in entities}
-    snapshot={'devices':selected,'entity_mapping':mapping}
-    digest=hashlib.sha256(json.dumps(snapshot,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
-    return {'snapshot':snapshot,'revision':digest,'active_owner_unchanged':True}
+        for item in device["notification_rules"] + device["quick_actions"]:
+            if isinstance(item, dict) and item.get("entity_id"):
+                try:
+                    requested.add(UUID(str(item["entity_id"])))
+                except ValueError:
+                    pass
+    entities = (
+        (
+            await session.scalars(
+                select(Entity).where(
+                    Entity.id.in_(requested),
+                    Entity.installation_id == context.effective_installation_id,
+                    Entity.deleted_at.is_(None),
+                )
+            )
+        ).all()
+        if requested
+        else []
+    )
+    mapping = {
+        str(entity.id): {"registry_id": entity.ha_registry_id, "entity_id": entity.ha_entity_id}
+        for entity in entities
+    }
+    snapshot = {"devices": selected, "entity_mapping": mapping}
+    digest = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    return {"snapshot": snapshot, "revision": digest, "active_owner_unchanged": True}
+
 
 _MDI_ASSET_DIR = Path(__file__).with_name("assets") / "wear"
 _MDI_FONT_PATH = _MDI_ASSET_DIR / "mdi_webfont.ttf"
@@ -128,6 +160,7 @@ class ClaimRequest(BaseModel):
 class ClaimResponse(BaseModel):
     device_id: str
     credential: str
+
 
 class PushTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -198,8 +231,7 @@ async def _wear_power_command(session: AsyncSession, context, utterance: str) ->
         entities = [
             entity
             for entity in entities
-            if entity.ha_domain == "cover"
-            or (requested != "stop" and is_gate_override(entity))
+            if entity.ha_domain == "cover" or (requested != "stop" and is_gate_override(entity))
         ]
     device = await session.get(WearDevice, context.device_id)
     quick_labels: dict[UUID, str] = {}
@@ -705,18 +737,22 @@ async def wear_management(
             )
         ).all()
     )
-    automatic_notifications = list(
-        (
-            await session.scalars(
-                select(WearNotification)
-                .where(
-                    WearNotification.device_id.in_([device.id for device in devices]),
-                    WearNotification.event_key.like("wear-rule:%"),
+    automatic_notifications = (
+        list(
+            (
+                await session.scalars(
+                    select(WearNotification)
+                    .where(
+                        WearNotification.device_id.in_([device.id for device in devices]),
+                        WearNotification.event_key.like("wear-rule:%"),
+                    )
+                    .order_by(WearNotification.created_at.desc())
                 )
-                .order_by(WearNotification.created_at.desc())
-            )
-        ).all()
-    ) if devices else []
+            ).all()
+        )
+        if devices
+        else []
+    )
     last_rule_activation: dict[str, datetime] = {}
     for notification in automatic_notifications:
         parts = notification.event_key.split(":", 2)
@@ -837,7 +873,7 @@ async def wear_management(
             action_rows.append(
                 f'<div class=quick-item draggable=true><div class=quick-row data-quick-slot="{slot}"><div class=quick-order title="Trascina per riordinare">'
                 f'<svg class=quick-handle viewBox="0 0 24 24" aria-hidden=true><path fill="currentColor" d="M7 5h2v2H7V5zm8 0h2v2h-2V5zM7 11h2v2H7v-2zm8 0h2v2h-2v-2zM7 17h2v2H7v-2zm8 0h2v2h-2v-2z"></path></svg>'
-                f'<span data-quick-position>{slot}</span></div>'
+                f"<span data-quick-position>{slot}</span></div>"
                 f'<div class=quick-preview title="Anteprima tasto"><span data-quick-preview-icon aria-hidden=true></span></div>'
                 f'<input data-quick-label maxlength=24 placeholder="Etichetta" value="{html.escape(str(action.get("label") or ""))}">'
                 f'<input data-quick-search type=search placeholder="Cerca dispositivo o azione" autocomplete=off>'
@@ -845,9 +881,9 @@ async def wear_management(
                 f'<input type=hidden data-quick-utterance value="{html.escape(legacy_utterance, quote=True)}">'
                 f"<select data-quick-icon-standard>{icon_options}</select>"
                 f'<input data-quick-icon-custom placeholder="mdi:nome-icona" value="{html.escape(icon if standard_icon == "__custom__" else "", quote=True)}" {"" if standard_icon == "__custom__" else "hidden"}>'
-                f"<select data-quick-color title=\"Colore tasto\">{color_options}</select>"
-                f"<select data-quick-border-color title=\"Colore bordo\">{border_color_options}</select>"
-                f"<select data-quick-icon-color title=\"Colore icona\">{icon_color_options}</select></div>"
+                f'<select data-quick-color title="Colore tasto">{color_options}</select>'
+                f'<select data-quick-border-color title="Colore bordo">{border_color_options}</select>'
+                f'<select data-quick-icon-color title="Colore icona">{icon_color_options}</select></div>'
                 f"<div class=quick-confirm><label><input type=checkbox data-quick-confirmation {'checked' if action.get('confirmation', False) else ''}> Conferma sempre</label>"
                 f"<label><input type=checkbox data-quick-confirmation-on-activate {'checked' if action.get('confirmation_on_activate', False) else ''}> Conferma solo per accensione/apertura</label></div></div>"
             )
@@ -880,31 +916,47 @@ async def wear_management(
                 selected_search = selected_entity_item.ha_entity_id
                 selected_option = (
                     f'<option value="{selected_entity}" selected>'
-                    f'{html.escape(selected_label)} · '
-                    f'{html.escape(selected_entity_item.area_name or "Senza area")} · '
-                    f'{html.escape(selected_entity_item.ha_domain)} · '
-                    f'{html.escape(selected_entity_item.ha_entity_id)}</option>'
+                    f"{html.escape(selected_label)} · "
+                    f"{html.escape(selected_entity_item.area_name or 'Senza area')} · "
+                    f"{html.escape(selected_entity_item.ha_domain)} · "
+                    f"{html.escape(selected_entity_item.ha_entity_id)}</option>"
                 )
             trigger = str(rule.get("trigger") or "any_change")
             triggers = "".join(
                 f'<option value="{value}" {"selected" if value == trigger else ""}>{label}</option>'
-                for value, label in (("any_change", "Qualsiasi cambio"), ("becomes", "Diventa stato"), ("unavailable", "Non disponibile"), ("available", "Torna disponibile"))
+                for value, label in (
+                    ("any_change", "Qualsiasi cambio"),
+                    ("becomes", "Diventa stato"),
+                    ("unavailable", "Non disponibile"),
+                    ("available", "Torna disponibile"),
+                )
             )
             category = str(rule.get("category") or "system")
             categories_for_rule = "".join(
                 f'<option value="{value}" {"selected" if value == category else ""}>{label}</option>'
-                for value, label in (("security", "Sicurezza"), ("climate", "Clima"), ("energy", "Energia"), ("routines", "Routine"), ("maintenance", "Manutenzione"), ("system", "Sistema"))
+                for value, label in (
+                    ("security", "Sicurezza"),
+                    ("climate", "Clima"),
+                    ("energy", "Energia"),
+                    ("routines", "Routine"),
+                    ("maintenance", "Manutenzione"),
+                    ("system", "Sistema"),
+                )
             )
             severity_value = str(rule.get("severity") or "info")
             severities = "".join(
                 f'<option value="{value}" {"selected" if value == severity_value else ""}>{label}</option>'
-                for value, label in (("info", "Informazione"), ("warning", "Avviso"), ("critical", "Critica"))
+                for value, label in (
+                    ("info", "Informazione"),
+                    ("warning", "Avviso"),
+                    ("critical", "Critica"),
+                )
             )
             rule_rows.append(
                 f'<div class=notification-rule data-rule-id="{html.escape(rule_id)}"><div class=rule-last-activation>Ultima attivazione: <strong>{activated_label}</strong></div><label><input type=checkbox data-rule-enabled {"checked" if rule.get("enabled", True) else ""}> Attiva</label>'
                 f'<input data-rule-search type=search placeholder="Cerca nome, area, tipo o ID" value="{html.escape(selected_search, quote=True)}" autocomplete=off><select data-rule-entity><option value="">Digita almeno 2 caratteri</option>{selected_option}</select><select data-rule-trigger>{triggers}</select>'
                 f'<input data-rule-state placeholder="Stato, es. open/on" value="{html.escape(str(rule.get("target_state") or ""), quote=True)}">'
-                f'<select data-rule-category>{categories_for_rule}</select><select data-rule-severity>{severities}</select>'
+                f"<select data-rule-category>{categories_for_rule}</select><select data-rule-severity>{severities}</select>"
                 f'<input data-rule-title maxlength=120 placeholder="Titolo automatico" value="{html.escape(str(rule.get("title") or ""), quote=True)}">'
                 f'<input data-rule-body maxlength=500 placeholder="Testo: {{valore}}" value="{html.escape(str(rule.get("body") or ""), quote=True)}"><button type=button data-test-rule>Prova</button><button type=button data-remove-rule>Rimuovi</button></div>'
             )
@@ -995,7 +1047,8 @@ async def revoke_device(
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     from .wear_bridge import lock_wear_writer
-    await lock_wear_writer(session,context.effective_installation_id,allow_econtrol=True)
+
+    await lock_wear_writer(session, context.effective_installation_id, allow_econtrol=True)
     try:
         from uuid import UUID
 
@@ -1030,7 +1083,8 @@ async def update_device_capabilities(
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     from .wear_bridge import lock_wear_writer
-    await lock_wear_writer(session,context.effective_installation_id,allow_econtrol=True)
+
+    await lock_wear_writer(session, context.effective_installation_id, allow_econtrol=True)
     if not payload.capabilities or not payload.capabilities <= CAPABILITIES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_capabilities")
     device = await session.scalar(
@@ -1061,17 +1115,20 @@ async def update_notification_preferences(
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     from .wear_bridge import lock_wear_writer
-    await lock_wear_writer(session,context.effective_installation_id)
+
+    await lock_wear_writer(session, context.effective_installation_id)
     if not payload.categories <= set(NOTIFICATION_CATEGORIES):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
     device = await session.scalar(
-        select(WearDevice).where(
+        select(WearDevice)
+        .where(
             WearDevice.id == device_id,
             WearDevice.tenant_id == context.tenant_id,
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        ).execution_options(populate_existing=True)
+        )
+        .execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1103,15 +1160,18 @@ async def update_quick_actions(
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     from .wear_bridge import lock_wear_writer
-    await lock_wear_writer(session,context.effective_installation_id)
+
+    await lock_wear_writer(session, context.effective_installation_id)
     device = await session.scalar(
-        select(WearDevice).where(
+        select(WearDevice)
+        .where(
             WearDevice.id == device_id,
             WearDevice.tenant_id == context.tenant_id,
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        ).execution_options(populate_existing=True)
+        )
+        .execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1161,17 +1221,20 @@ async def update_notification_rules(
     if x_ekonex_csrf != _ui_csrf(context):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "csrf_denied")
     from .wear_bridge import lock_wear_writer
-    await lock_wear_writer(session,context.effective_installation_id)
+
+    await lock_wear_writer(session, context.effective_installation_id)
     if any(item.category not in NOTIFICATION_CATEGORIES for item in payload.rules):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_categories")
     device = await session.scalar(
-        select(WearDevice).where(
+        select(WearDevice)
+        .where(
             WearDevice.id == device_id,
             WearDevice.tenant_id == context.tenant_id,
             WearDevice.user_id == context.user_id,
             WearDevice.installation_id == context.effective_installation_id,
             WearDevice.revoked_at.is_(None),
-        ).execution_options(populate_existing=True)
+        )
+        .execution_options(populate_existing=True)
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -1188,7 +1251,9 @@ async def update_notification_rules(
         ).all()
     )
     if valid_ids != entity_ids:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "notification_rule_entity_invalid")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "notification_rule_entity_invalid"
+        )
     preferences = dict(device.notification_preferences_json or {})
     preferences["notification_rules"] = [
         {**item.model_dump(mode="json"), "id": str(item.id or uuid4())} for item in payload.rules
@@ -1366,6 +1431,7 @@ async def bootstrap(
         "quick_actions": quick_actions,
     }
 
+
 @router.put(
     "/api/wear/v1/push-token",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -1378,12 +1444,14 @@ async def register_push_token(
 ) -> Response:
     context.require("notification.receive")
     device = await session.scalar(
-        select(WearDevice).where(
+        select(WearDevice)
+        .where(
             WearDevice.id == context.device_id,
             WearDevice.tenant_id == context.tenant_id,
             WearDevice.installation_id == context.installation_id,
             WearDevice.revoked_at.is_(None),
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)

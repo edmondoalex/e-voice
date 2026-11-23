@@ -110,9 +110,7 @@ def test_quick_actions_accept_home_assistant_button_press():
     assert payload.actions[0].operation == "press"
     assert _wear_operations("button") == (("press", "Premi"),)
     assert (
-        _wear_success_speech(
-            SimpleNamespace(ha_domain="button", alexa_device_type=None), "press"
-        )
+        _wear_success_speech(SimpleNamespace(ha_domain="button", alexa_device_type=None), "press")
         == "Ho premuto"
     )
     assert _is_activating("button", "press", "unknown") is True

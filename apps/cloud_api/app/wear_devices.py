@@ -77,7 +77,8 @@ class WearDeviceService:
         if not capabilities or not capabilities <= CAPABILITIES or not 60 <= ttl_seconds <= 600:
             raise WearDenied
         from .wear_bridge import lock_wear_writer
-        await lock_wear_writer(self.session,installation_id)
+
+        await lock_wear_writer(self.session, installation_id)
         grant = await self.session.scalar(
             select(UserInstallationAssignment).where(
                 UserInstallationAssignment.tenant_id == tenant_id,
@@ -138,7 +139,8 @@ class WearDeviceService:
         ):
             raise WearDenied
         from .wear_bridge import lock_wear_writer
-        await lock_wear_writer(self.session,enrollment.installation_id)
+
+        await lock_wear_writer(self.session, enrollment.installation_id)
         credential = secrets.token_urlsafe(32)
         device = WearDevice(
             credential_hash=_digest(credential),
@@ -213,7 +215,8 @@ class WearDeviceService:
         if device is None:
             raise WearDenied
         from .wear_bridge import lock_wear_writer
-        await lock_wear_writer(self.session,device.installation_id,allow_econtrol=True)
+
+        await lock_wear_writer(self.session, device.installation_id, allow_econtrol=True)
         device.revoked_at = datetime.now(UTC)
         device.fcm_token_encrypted = None
         device.fcm_token_updated_at = None

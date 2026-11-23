@@ -46,8 +46,12 @@ def item(registry_id: str = "registry-light-1", state: str = "on") -> dict[str, 
     }
 
 
-@pytest.mark.parametrize('method,revision', [('apply_full', 1), ('apply_delta', 1), ('apply_state', 1)])
-async def test_sync_reloads_revision_after_other_session_commits(session, seeded_domain, method, revision):
+@pytest.mark.parametrize(
+    "method,revision", [("apply_full", 1), ("apply_delta", 1), ("apply_state", 1)]
+)
+async def test_sync_reloads_revision_after_other_session_commits(
+    session, seeded_domain, method, revision
+):
     installation_id = seeded_domain.installation_a_id
     await session.commit()
     factory = async_sessionmaker(session.bind, expire_on_commit=False)

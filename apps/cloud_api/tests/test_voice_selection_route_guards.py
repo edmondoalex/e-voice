@@ -10,8 +10,10 @@ from apps.cloud_api.app.voice_selection_store import (
     persist_selection,
     register_selection_session,
 )
-from apps.cloud_api.tests.test_admin_console import _client as admin_client, _csrf, _login
-from apps.cloud_api.tests.test_alexa import _access, _client as alexa_client, _directive
+from apps.cloud_api.tests.test_admin_console import _client as admin_client
+from apps.cloud_api.tests.test_admin_console import _csrf, _login
+from apps.cloud_api.tests.test_alexa import _access, _directive
+from apps.cloud_api.tests.test_alexa import _client as alexa_client
 
 
 async def _strict_selection(session, seeded_domain, registry_ids):

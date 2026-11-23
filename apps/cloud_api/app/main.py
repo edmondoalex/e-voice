@@ -31,6 +31,8 @@ from .pairing_api import router as pairing_router
 from .schemas import HealthResponse
 from .voice_alerts import run_live_alert_monitor
 from .wear_api import router as wear_router
+from .wear_bridge import router as wear_bridge_router
+from .wear_control_service import router as wear_control_router
 from .wear_devices import WearDenied
 
 try:
@@ -45,24 +47,35 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     wear_worker: asyncio.Task[None] | None = None
     from .database import async_session_factory
     from .wear_bridge import verify_bridge_startup
-    await verify_bridge_startup(async_session_factory, fence_enabled=get_settings().wear_bridge_fence_enabled)
+
+    await verify_bridge_startup(
+        async_session_factory, fence_enabled=get_settings().wear_bridge_fence_enabled
+    )
     # Explicit provisioning only; no key and no feature flags means no provider.
     if get_settings().wear_bridge_fence_enabled:
-        from .wear_key_provider import cloud_provider, KeyUnavailable
-        config={'wear_bridge_master_b64':os.environ.get('EKONEX_WEAR_BRIDGE_MASTER_B64'),
-                'wear_bridge_previous_master_b64':os.environ.get('EKONEX_WEAR_BRIDGE_PREVIOUS_MASTER_B64')}
-        try: application.state.wear_bridge_key_provider=cloud_provider(config)
-        except KeyUnavailable: application.state.wear_bridge_key_provider=None
+        from .wear_key_provider import KeyUnavailable, cloud_provider
+
+        config = {
+            "wear_bridge_master_b64": os.environ.get("EKONEX_WEAR_BRIDGE_MASTER_B64"),
+            "wear_bridge_previous_master_b64": os.environ.get(
+                "EKONEX_WEAR_BRIDGE_PREVIOUS_MASTER_B64"
+            ),
+        }
+        try:
+            application.state.wear_bridge_key_provider = cloud_provider(config)
+        except KeyUnavailable:
+            application.state.wear_bridge_key_provider = None
     if get_settings().environment == "laboratory":
         monitor = asyncio.create_task(run_live_alert_monitor())
     if get_settings().wear_bridge_fence_enabled and get_settings().wear_bridge_wake_worker_enabled:
         from .database import async_session_factory
         from .wear_wake_worker import run_worker
+
         wear_worker = asyncio.create_task(run_worker(async_session_factory))
     try:
         yield
     finally:
-        application.state.wear_bridge_key_provider=None
+        application.state.wear_bridge_key_provider = None
         if monitor is not None:
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
@@ -96,9 +109,7 @@ app.include_router(media_router)
 
 app.include_router(installation_bound_router)
 app.include_router(wear_router)
-from .wear_bridge import router as wear_bridge_router
 app.include_router(wear_bridge_router)
-from .wear_control_service import router as wear_control_router
 app.include_router(wear_control_router)
 
 

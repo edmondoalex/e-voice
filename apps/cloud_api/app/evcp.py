@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import websockets as starlette_websockets
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from .config import get_settings
 from .connector_compatibility import (
     MINIMUM_SUPPORTED_CONNECTOR_VERSION,
     RECOMMENDED_CONNECTOR_VERSION,
@@ -29,11 +30,14 @@ from .connector_compatibility import (
     effective_connector_capabilities,
 )
 from .database import get_database_session
-from .config import get_settings
-from .voice_selection_store import persist_selection, register_selection_session, end_selection_session
 from .domain.models import AuditEvent, ConnectorCredential, Installation, OperationalEvent
 from .entity_sync import EntitySyncService, StaleSyncError
 from .repositories import ConnectorCredentialRepository
+from .voice_selection_store import (
+    end_selection_session,
+    persist_selection,
+    register_selection_session,
+)
 
 _websocket_disconnected = getattr(starlette_websockets, "WebSocketDisconnected", None)
 WEBSOCKET_DISCONNECT_EXCEPTIONS = (
@@ -172,21 +176,23 @@ class StateUpdate(StrictModel):
 
 class VoiceSelectionPayload(StrictModel):
     session_id: UUID
-    revision: int = Field(ge=1, le=2**63-1)
+    revision: int = Field(ge=1, le=2**63 - 1)
     batch_index: int = Field(ge=0, lt=256)
     batch_count: int = Field(ge=1, le=256)
     registry_ids: list[str] = Field(max_length=500)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def valid_selection(self):
-        if self.batch_index>=self.batch_count or any(not x or len(x)>64 for x in self.registry_ids):
-            raise ValueError('invalid selection batch')
+        if self.batch_index >= self.batch_count or any(
+            not x or len(x) > 64 for x in self.registry_ids
+        ):
+            raise ValueError("invalid selection batch")
         return self
 
 
 class VoiceSelection(StrictModel):
     version: Literal[1]
-    type: Literal['voice_selection_v1']
+    type: Literal["voice_selection_v1"]
     id: UUID
     timestamp: datetime
     payload: VoiceSelectionPayload
@@ -225,7 +231,13 @@ class CommandResultMessage(StrictModel):
 
 
 InboundMessage = Annotated[
-    Hello | Heartbeat | InventoryFull | InventoryDelta | StateUpdate | VoiceSelection | CommandResultMessage,
+    Hello
+    | Heartbeat
+    | InventoryFull
+    | InventoryDelta
+    | StateUpdate
+    | VoiceSelection
+    | CommandResultMessage,
     Field(discriminator="type"),
 ]
 inbound_adapter: TypeAdapter[InboundMessage] = TypeAdapter(InboundMessage)
@@ -820,10 +832,14 @@ async def _apply_entity_sync(
     installation: Installation,
     installation_id: UUID,
     message: InventoryFull | InventoryDelta | StateUpdate,
-    *, registry_only_negotiated: bool = False, credential_id: UUID | None = None,
+    *,
+    registry_only_negotiated: bool = False,
+    credential_id: UUID | None = None,
 ) -> None:
     """Accumulate and persist one validated, session-bound EVCP sync message."""
-    if any(item.registry_only for item in message.payload.entities) and (not registry_only_negotiated or isinstance(message, StateUpdate)):
+    if any(item.registry_only for item in message.payload.entities) and (
+        not registry_only_negotiated or isinstance(message, StateUpdate)
+    ):
         raise ValueError("registry_only_not_negotiated")
     items = inventory_batches.add(installation_id, message.payload)
     logger.debug(
@@ -840,18 +856,39 @@ async def _apply_entity_sync(
         # Lock and verify the durable selection fence and the authenticated
         # credential in the same transaction as the inventory mutation.
         from .voice_selection_store import VoiceSelectionFence
-        locked = await database.scalar(select(Installation).where(
-            Installation.id == installation_id).with_for_update(key_share=True).execution_options(populate_existing=True))
+
+        locked = await database.scalar(
+            select(Installation)
+            .where(Installation.id == installation_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
         fence = await database.get(VoiceSelectionFence, installation_id, populate_existing=True)
-        if (locked is None or fence is None or fence.active is not True or
-                fence.tenant_id != locked.tenant_id or fence.session_id != message.payload.session_id or
-                credential_id is None or fence.credential_id != credential_id):
+        if (
+            locked is None
+            or fence is None
+            or fence.active is not True
+            or fence.tenant_id != locked.tenant_id
+            or fence.session_id != message.payload.session_id
+            or credential_id is None
+            or fence.credential_id != credential_id
+        ):
             raise ValueError("registry_session_replaced")
-        credential = await database.scalar(select(ConnectorCredential).where(
-            ConnectorCredential.id == credential_id).with_for_update().execution_options(populate_existing=True))
-        if credential is None or credential.installation_id != installation_id or credential.revoked_at is not None:
+        credential = await database.scalar(
+            select(ConnectorCredential)
+            .where(ConnectorCredential.id == credential_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            credential is None
+            or credential.installation_id != installation_id
+            or credential.revoked_at is not None
+        ):
             raise ValueError("registry_credential_revoked")
-    service = EntitySyncService(database, installation, registry_only_negotiated=registry_only_negotiated)
+    service = EntitySyncService(
+        database, installation, registry_only_negotiated=registry_only_negotiated
+    )
     if isinstance(message, InventoryFull):
         await service.apply_full(message.payload.revision, items)
     elif isinstance(message, StateUpdate):
@@ -885,7 +922,7 @@ async def connector_websocket(
     registered = False
     session_handle: SessionHandle | None = None
     selection_parts: list[list[str]] = []
-    selection_key: tuple[int,int] | None = None
+    selection_key: tuple[int, int] | None = None
     selection_negotiated = False
     registry_only_negotiated = False
     selection_fence_active = False
@@ -896,11 +933,21 @@ async def connector_websocket(
         if not isinstance(hello, Hello) or hello.payload.installation_id != installation_id:
             await _safe_close(websocket, 4004, "INSTALLATION_MISMATCH")
             return
-        selection_negotiated = (get_settings().voice_selection_v1_enabled is True and
-                                hello.payload.capabilities.get('supports_voice_selection_v1') is True)
-        inventory_fence_negotiated = (selection_negotiated and getattr(get_settings(),'voice_selection_inventory_fence_enabled',False) is True and hello.payload.capabilities.get('supports_voice_selection_inventory_fence_v1') is True)
-        registry_only_negotiated = (REGISTRY_ONLY_NEGOTIATION_ENABLED and selection_negotiated and
-                                    hello.payload.capabilities.get("supports_voice_registry_only_v1") is True)
+        selection_negotiated = (
+            get_settings().voice_selection_v1_enabled is True
+            and hello.payload.capabilities.get("supports_voice_selection_v1") is True
+        )
+        inventory_fence_negotiated = (
+            selection_negotiated
+            and getattr(get_settings(), "voice_selection_inventory_fence_enabled", False) is True
+            and hello.payload.capabilities.get("supports_voice_selection_inventory_fence_v1")
+            is True
+        )
+        registry_only_negotiated = (
+            REGISTRY_ONLY_NEGOTIATION_ENABLED
+            and selection_negotiated
+            and hello.payload.capabilities.get("supports_voice_registry_only_v1") is True
+        )
         installation.connector_version = hello.payload.connector_version
         installation.ha_version = hello.payload.ha_version
         installation.last_seen_at = datetime.now(UTC)
@@ -963,9 +1010,12 @@ async def connector_websocket(
         if get_settings().voice_selection_v1_enabled is True:
             # Hold the installation lock across local replacement and commit:
             # the durable fence is the cross-process selection authority.
-            await register_selection_session(database,installation_id,tenant_id,session_id,credential.id)
+            await register_selection_session(
+                database, installation_id, tenant_id, session_id, credential.id
+            )
             selection_fence_active = True
-        if selection_fence_active:registered = True
+        if selection_fence_active:
+            registered = True
         registration_diagnostic = await sessions.replace(installation_id, session_handle)
         registered = True
         _add_session_activity(
@@ -995,9 +1045,13 @@ async def connector_websocket(
                     "session_id": str(session_id),
                     "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
                     "sync_revision": installation.sync_revision,
-                    **({'voice_selection_v1': True} if selection_negotiated else {}),
-                    **({'voice_selection_inventory_fence_v1': True} if inventory_fence_negotiated else {}),
-                    **({'voice_registry_only_v1': True} if registry_only_negotiated else {}),
+                    **({"voice_selection_v1": True} if selection_negotiated else {}),
+                    **(
+                        {"voice_selection_inventory_fence_v1": True}
+                        if inventory_fence_negotiated
+                        else {}
+                    ),
+                    **({"voice_registry_only_v1": True} if registry_only_negotiated else {}),
                 },
             )
         )
@@ -1008,20 +1062,37 @@ async def connector_websocket(
                 await _safe_close(websocket, 4008, "SESSION_REPLACED")
                 return
             if isinstance(message, VoiceSelection):
-                part=message.payload
+                part = message.payload
                 if inventory_fence_negotiated and not selection_full_complete:
-                    await _safe_close(websocket,4002,'INVALID_MESSAGE');return
-                if not selection_negotiated or get_settings().voice_selection_v1_enabled is not True or part.session_id!=session_id:
-                    await _safe_close(websocket,4002,'INVALID_MESSAGE');return
-                key=(part.revision,part.batch_count)
-                if selection_key is None:selection_key=key
-                if selection_key!=key or part.batch_index!=len(selection_parts):
-                    await _safe_close(websocket,4002,'INVALID_MESSAGE');return
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
+                if (
+                    not selection_negotiated
+                    or get_settings().voice_selection_v1_enabled is not True
+                    or part.session_id != session_id
+                ):
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
+                key = (part.revision, part.batch_count)
+                if selection_key is None:
+                    selection_key = key
+                if selection_key != key or part.batch_index != len(selection_parts):
+                    await _safe_close(websocket, 4002, "INVALID_MESSAGE")
+                    return
                 selection_parts.append(part.registry_ids)
-                if len(selection_parts)==part.batch_count:
-                    await persist_selection(database,installation_id,tenant_id,session_id,part.revision,
-                                            [identity for batch in selection_parts for identity in batch], require_inventory_revision=inventory_fence_negotiated)
-                    await database.commit();selection_parts=[];selection_key=None
+                if len(selection_parts) == part.batch_count:
+                    await persist_selection(
+                        database,
+                        installation_id,
+                        tenant_id,
+                        session_id,
+                        part.revision,
+                        [identity for batch in selection_parts for identity in batch],
+                        require_inventory_revision=inventory_fence_negotiated,
+                    )
+                    await database.commit()
+                    selection_parts = []
+                    selection_key = None
                 continue
             if isinstance(message, Heartbeat):
                 if message.payload.session_id != session_id:
@@ -1102,8 +1173,16 @@ async def connector_websocket(
                 await _safe_close(websocket, 4002, "INVALID_MESSAGE")
                 return
             try:
-                completed = await _apply_entity_sync(database, installation, installation_id, message, registry_only_negotiated=registry_only_negotiated, credential_id=credential.id)
-                if completed and isinstance(message, InventoryFull):selection_full_complete = True
+                completed = await _apply_entity_sync(
+                    database,
+                    installation,
+                    installation_id,
+                    message,
+                    registry_only_negotiated=registry_only_negotiated,
+                    credential_id=credential.id,
+                )
+                if completed and isinstance(message, InventoryFull):
+                    selection_full_complete = True
             except ValueError:
                 await database.rollback()
                 await _safe_close(websocket, 4002, "INVALID_MESSAGE")
@@ -1135,17 +1214,21 @@ async def connector_websocket(
             await database.commit()
         await _safe_close(websocket, 4005 if not registered else 4006, "TIMEOUT")
     except (ValidationError, ValueError):
-        if selection_fence_active:await database.rollback()
+        if selection_fence_active:
+            await database.rollback()
         logger.warning("Connector EVCP message rejected: invalid schema or batch sequence")
         await _safe_close(websocket, 4002, "INVALID_MESSAGE")
     except WEBSOCKET_DISCONNECT_EXCEPTIONS:
-        if selection_fence_active:await database.rollback()
+        if selection_fence_active:
+            await database.rollback()
         pass
     except asyncio.CancelledError:
-        if selection_fence_active:await database.rollback()
+        if selection_fence_active:
+            await database.rollback()
         raise
     except Exception as error:
-        if selection_fence_active:await database.rollback()
+        if selection_fence_active:
+            await database.rollback()
         logger.error(
             "connector_session_exception installation_id=%s session_id=%s type=%s error=%r",
             installation_id,
@@ -1165,7 +1248,7 @@ async def connector_websocket(
             inventory_batches.clear_session(installation_id, session_id)
             removal_diagnostic = await sessions.remove(installation_id, session_id)
             if selection_fence_active:
-                await end_selection_session(database,installation_id,session_id)
+                await end_selection_session(database, installation_id, session_id)
             _add_session_activity(
                 database,
                 tenant_id=tenant_id,

@@ -246,6 +246,8 @@ class AlexaEventGateway:
         from .entity_names import unambiguous_voice_entities
         from .voice_scope import (
             get_settings as selection_settings,
+        )
+        from .voice_scope import (
             selection_current_clause,
             voice_visible_clause,
         )
@@ -640,9 +642,7 @@ async def _report_state_safely(installation_id: UUID, entity_ids: list[UUID]) ->
                     await gateway.report_entity(entity)
         except Exception:
             await session.rollback()
-            logger.exception(
-                "Alexa proactive reporting failed installation_id=%s", installation_id
-            )
+            logger.exception("Alexa proactive reporting failed installation_id=%s", installation_id)
         finally:
             await gateway.close()
 

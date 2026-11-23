@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import async_session_factory
 from .domain.models import Entity, WearDevice
 from .wear_notifications import WearNotificationService
-from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +61,17 @@ async def evaluate_wear_notification_rules(
     installation_id: UUID,
     changes: list[tuple[UUID, str | None, bool]],
 ) -> int:
-    from .wear_bridge import lock_wear_writer
     from fastapi import HTTPException
+
+    from .wear_bridge import lock_wear_writer
+
     try:
-        authority=await lock_wear_writer(session,installation_id,allow_econtrol=True)
+        authority = await lock_wear_writer(session, installation_id, allow_econtrol=True)
     except HTTPException:
         await session.rollback()
         raise
-    fenced=authority is not None
-    if authority is not None and authority.owner != 'legacy':
+    fenced = authority is not None
+    if authority is not None and authority.owner != "legacy":
         await session.rollback()
         return 0
     previous = {entity_id: (state, available) for entity_id, state, available in changes}
@@ -115,16 +116,17 @@ async def evaluate_wear_notification_rules(
             trigger = str(rule.get("trigger") or "any_change")
             target = str(rule.get("target_state") or "").casefold()
             matched = (
-                trigger == "any_change"
-                and (old_state != new_state or old_available != entity.available)
-            ) or (
-                trigger == "becomes"
-                and old_state != new_state
-                and (new_state or "").casefold() == target
-            ) or (
-                trigger == "unavailable" and old_available and not entity.available
-            ) or (
-                trigger == "available" and not old_available and entity.available
+                (
+                    trigger == "any_change"
+                    and (old_state != new_state or old_available != entity.available)
+                )
+                or (
+                    trigger == "becomes"
+                    and old_state != new_state
+                    and (new_state or "").casefold() == target
+                )
+                or (trigger == "unavailable" and old_available and not entity.available)
+                or (trigger == "available" and not old_available and entity.available)
             )
             if not matched:
                 continue
@@ -132,7 +134,7 @@ async def evaluate_wear_notification_rules(
             observed_at = entity.updated_at or entity.last_changed_at
             event_stamp = observed_at.isoformat() if observed_at else state_text
             title, body = render_wear_rule_message(rule, entity, old_state)
-            event_key=f"wear-rule:{str(rule.get('id'))[:36]}:{event_stamp}"[:120]
+            event_key = f"wear-rule:{str(rule.get('id'))[:36]}:{event_stamp}"[:120]
             added = await service.enqueue_for_device(
                 device=device,
                 event_key=event_key,
@@ -145,6 +147,7 @@ async def evaluate_wear_notification_rules(
             created += added
             if fenced and added and device.fcm_token_encrypted:
                 from .wear_bridge import WearBridgeWake
-                session.add(WearBridgeWake(device_id=device.id,event_key=event_key,attempts=0))
+
+                session.add(WearBridgeWake(device_id=device.id, event_key=event_key, attempts=0))
     await session.commit()
     return created
