@@ -4,6 +4,26 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-23 — 2.0.12 Home Assistant notify target compatibility
+
+Status: Production hotfix prepared and validated
+
+### Scope
+
+- Send Alexa Devices `notify.send_message` calls with the entity in Home Assistant's dedicated
+  `target` argument instead of the service data payload.
+- Apply the same target contract to direct Ekonex Voice announcements and e-Control media TTS.
+- Preserve the existing Alexa-only allowlist, text bounds, redaction, and every non-notify command
+  mapping.
+- Update regression tests to assert that `entity_id` never leaks into notify service data.
+
+### Runtime evidence
+
+- Home Assistant returned HTTP 422 for each affected media command while inventory snapshots
+  remained HTTP 200.
+- The installed Core service schema exposes only `message`, `title`, and `data` as fields and
+  requires notify entities through `target.entity`.
+
 ## 2026-09-09 — Per-device Media Player sources (laboratory only)
 
 Status: Local implementation under validation; production untouched
