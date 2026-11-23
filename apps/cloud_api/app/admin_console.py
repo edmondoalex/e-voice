@@ -189,7 +189,8 @@ def _nav_link(href: str, label: str, key: str, active: str) -> str:
 
 
 class LayoutContext(Protocol):
-    tenant_id: UUID
+    @property
+    def tenant_id(self) -> UUID: ...
 
 
 def _layout(title: str, body: str, context: LayoutContext, csrf: str, active: str) -> str:
