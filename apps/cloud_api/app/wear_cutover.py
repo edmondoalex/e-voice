@@ -16,7 +16,9 @@ class CutoverBlocked(ValueError):
     pass
 
 
-async def installation_snapshot(session: AsyncSession, installation: UUID) -> tuple[dict, str]:
+async def installation_snapshot(
+    session: AsyncSession, installation: UUID
+) -> tuple[dict[str, object], str]:
     """Full installation snapshot; caller must hold the authority row lock."""
     devices = (
         await session.scalars(
@@ -26,8 +28,8 @@ async def installation_snapshot(session: AsyncSession, installation: UUID) -> tu
             .execution_options(populate_existing=True)
         )
     ).all()
-    selected = []
-    requested = set()
+    selected: list[dict[str, object]] = []
+    requested: set[UUID] = set()
     for device in devices:
         prefs = device.notification_preferences_json or {}
         rules, actions = prefs.get("notification_rules", []), prefs.get("quick_actions", [])

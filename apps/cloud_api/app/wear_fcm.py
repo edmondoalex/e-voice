@@ -37,7 +37,7 @@ class WearFcmSender:
             return None
         try:
             token = self.decrypt(encrypted_token)
-            credentials = service_account.Credentials.from_service_account_file(
+            credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
                 credentials_path, scopes=[FCM_SCOPE]
             )
             await asyncio.to_thread(credentials.refresh, Request())

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TypedDict
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -17,20 +18,38 @@ SEVERITIES = frozenset({"info", "warning", "critical"})
 SEVERITY_LEVEL = {"info": 0, "warning": 1, "critical": 2}
 
 
-def _preferences(device: WearDevice) -> dict[str, object]:
+class WearPreferences(TypedDict):
+    enabled: bool
+    categories: set[str]
+    minimum_severity: str
+    vibration: bool
+    quiet_start: str | None
+    quiet_end: str | None
+    timezone: str
+
+
+def _preferences(device: WearDevice) -> WearPreferences:
     value = device.notification_preferences_json or {}
+    categories = value.get("categories")
+    normalized_categories = (
+        {item for item in categories if isinstance(item, str)}
+        if isinstance(categories, list)
+        else set()
+    )
+    quiet_start = value.get("quiet_start")
+    quiet_end = value.get("quiet_end")
     return {
         "enabled": value.get("enabled", True) is True,
-        "categories": set(value.get("categories") or []),
+        "categories": normalized_categories,
         "minimum_severity": str(value.get("minimum_severity") or "info"),
         "vibration": value.get("vibration", True) is True,
-        "quiet_start": value.get("quiet_start"),
-        "quiet_end": value.get("quiet_end"),
+        "quiet_start": quiet_start if isinstance(quiet_start, str) else None,
+        "quiet_end": quiet_end if isinstance(quiet_end, str) else None,
         "timezone": str(value.get("timezone") or "Europe/Rome"),
     }
 
 
-def _quiet_now(preferences: dict[str, object], now: datetime) -> bool:
+def _quiet_now(preferences: WearPreferences, now: datetime) -> bool:
     start, end = preferences["quiet_start"], preferences["quiet_end"]
     if not isinstance(start, str) or not isinstance(end, str):
         return False

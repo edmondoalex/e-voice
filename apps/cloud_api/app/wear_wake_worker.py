@@ -7,7 +7,7 @@ import asyncio
 import logging
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .domain.models import WearDevice
 from .wear_bridge import WearBridgeWake
@@ -16,7 +16,7 @@ from .wear_fcm import WearFcmSender
 logger = logging.getLogger(__name__)
 
 
-async def dispatch_one(session: AsyncSession, sender=None) -> bool:
+async def dispatch_one(session: AsyncSession, sender: WearFcmSender | None = None) -> bool:
     wake = await session.scalar(
         select(WearBridgeWake)
         .order_by(WearBridgeWake.event_key)
@@ -76,7 +76,9 @@ async def dispatch_one(session: AsyncSession, sender=None) -> bool:
     return True
 
 
-async def run_worker(session_factory, *, idle_seconds: float = 5.0) -> None:
+async def run_worker(
+    session_factory: async_sessionmaker[AsyncSession], *, idle_seconds: float = 5.0
+) -> None:
     while True:
         try:
             async with session_factory() as session:
