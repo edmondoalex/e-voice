@@ -69,10 +69,11 @@ class ConversationEntityService:
             tenant_id=tenant_id, installation_id=installation_id
         )
         settings = get_settings()
-        live_states = await load_live_states(
-            live_installation_public_id
-            or getattr(settings, "alexa_laboratory_installation_public_id", "")
+        configured_installation = getattr(settings, "alexa_laboratory_installation_public_id", "")
+        fallback_installation = (
+            configured_installation if isinstance(configured_installation, str) else ""
         )
+        live_states = await load_live_states(live_installation_public_id or fallback_installation)
         overlay_entities(entities, live_states)
         snapshots = tuple(
             self._snapshot(entity)
