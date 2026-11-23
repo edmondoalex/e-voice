@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -269,7 +270,9 @@ class EntitySyncService:
             previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
             attributes = item.get("attributes", {})
             entity.attributes_json = (
-                _sanitize_json(attributes) if isinstance(attributes, dict) else {}
+                cast(dict[str, object], _sanitize_json(attributes))
+                if isinstance(attributes, dict)
+                else {}
             )
             entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
             selected = selection_from_item(item, previous_selection)
@@ -338,7 +341,9 @@ class EntitySyncService:
                 ).all()
             )
         group_by_member = {
-            member: group for group in current_groups for member in group["member_registry_ids"]
+            member: group
+            for group in current_groups
+            for member in cast(list[str], group["member_registry_ids"])
         }
         group_changed = False
         for entity in changed_entities:
@@ -448,7 +453,7 @@ class EntitySyncService:
             ):
                 raise ValueError("registry_only_not_negotiated_or_invalid")
             is_new = entity is None
-            if is_new:
+            if entity is None:
                 entity = Entity(
                     installation_id=self._installation.id,
                     ha_registry_id=str(item["registry_id"]),
@@ -511,7 +516,11 @@ class EntitySyncService:
             entity.control_exposed = incoming_exposed
         previous_selection = (entity.attributes_json or {}).get(VOICE_SELECTION_KEY)
         attributes = item.get("attributes", {})
-        entity.attributes_json = _sanitize_json(attributes) if isinstance(attributes, dict) else {}
+        entity.attributes_json = (
+            cast(dict[str, object], _sanitize_json(attributes))
+            if isinstance(attributes, dict)
+            else {}
+        )
         entity.attributes_json.pop(VOICE_SELECTION_KEY, None)
         selected = selection_from_item(item, previous_selection)
         if selected is not None:
