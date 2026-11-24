@@ -1,0 +1,20 @@
+[Unit]
+Description=Ekonex e-Voice VPS read-only telemetry collector
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ekonex/e-voice
+Environment=EKONEX_VPS_MONITOR_DATA_PATH=/var/lib/ekonex-voice/vps-monitor
+Environment=EKONEX_VPS_MONITOR_COMPOSE_FILE=/opt/ekonex/e-voice/docker-compose.yml
+ExecStart=/usr/bin/python3 /opt/ekonex/e-voice/apps/cloud_api/app/vps_monitor.py
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ekonex-voice/vps-monitor
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
