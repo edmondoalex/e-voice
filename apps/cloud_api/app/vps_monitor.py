@@ -209,7 +209,10 @@ def _certificate(domain: str) -> dict[str, Any]:
         context = ssl.create_default_context()
         with socket.create_connection((domain, 443), timeout=5) as raw:
             with context.wrap_socket(raw, server_hostname=domain) as secured:
-                expires_raw = secured.getpeercert().get("notAfter")
+                certificate = secured.getpeercert()
+                if certificate is None:
+                    raise ValueError("certificate missing")
+                expires_raw = certificate.get("notAfter")
                 if not isinstance(expires_raw, str):
                     raise ValueError("certificate expiration missing")
         expires = datetime.strptime(expires_raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
