@@ -38,7 +38,7 @@ def _entry(hass: HomeAssistant, entry_id: str | None) -> ConfigEntry:
     else:
         matches = entries
         if len(matches) > 1:
-            media_entries = [item for item in matches if item.options.get(CONF_MEDIA_EXPERIENCES)]
+            media_entries = [item for item in matches if CONF_MEDIA_EXPERIENCES in item.options]
             if len(media_entries) == 1:
                 matches = media_entries
     if len(matches) != 1:
