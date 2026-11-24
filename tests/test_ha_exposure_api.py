@@ -20,7 +20,7 @@ async def test_default_entry_uses_only_media_configured_instance(
 ) -> None:
     primary = MockConfigEntry(
         domain=DOMAIN,
-        options={CONF_MEDIA_EXPERIENCES: {"player": ["listen"]}},
+        options={CONF_MEDIA_EXPERIENCES: {}},
     )
     laboratory = MockConfigEntry(domain=DOMAIN, options={})
     primary.add_to_hass(hass)

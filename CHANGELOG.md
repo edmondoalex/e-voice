@@ -4,6 +4,13 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-24 - 2.0.17 empty media owner support
+
+Status: Production hotfix validated
+
+- Treat the presence of the media ownership option as authoritative even when its current mapping
+  is empty; multiple owners still fail closed.
+
 ## 2026-11-24 - 2.0.16 deterministic multi-entry exposure
 
 Status: Production hotfix validated
