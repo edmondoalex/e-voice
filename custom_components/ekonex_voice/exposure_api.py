@@ -37,6 +37,12 @@ def _entry(hass: HomeAssistant, entry_id: str | None) -> ConfigEntry:
         matches = [item for item in entries if item.entry_id == entry_id]
     else:
         matches = entries
+        if len(matches) > 1:
+            media_entries = [
+                item for item in matches if item.options.get(CONF_MEDIA_EXPERIENCES)
+            ]
+            if len(media_entries) == 1:
+                matches = media_entries
     if len(matches) != 1:
         raise ValueError("entry_not_unique")
     return matches[0]
