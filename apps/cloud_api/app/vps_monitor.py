@@ -116,17 +116,23 @@ def _service(unit: str, label: str) -> dict[str, Any]:
             "show",
             unit,
             "--property=MainPID,MemoryCurrent,ActiveEnterTimestampMonotonic,NRestarts",
-            "--value",
         ]
     )
-    lines = properties.splitlines() if code == 0 else []
+    values = (
+        dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
+        if code == 0
+        else {}
+    )
+    pid = values.get("MainPID", "")
+    memory = values.get("MemoryCurrent", "")
+    restarts = values.get("NRestarts", "")
     return {
         "id": unit,
         "name": label,
         "state": state if state else "unknown",
-        "pid": int(lines[0]) if lines and lines[0].isdigit() else None,
-        "memory_bytes": int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else None,
-        "restarts": int(lines[3]) if len(lines) > 3 and lines[3].isdigit() else None,
+        "pid": int(pid) if pid.isdigit() else None,
+        "memory_bytes": int(memory) if memory.isdigit() else None,
+        "restarts": int(restarts) if restarts.isdigit() else None,
     }
 
 
