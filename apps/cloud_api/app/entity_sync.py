@@ -249,13 +249,42 @@ class EntitySyncService:
             raise StaleSyncError(
                 f"state_revision_gap:{revision}!={self._installation.sync_revision + 1}"
             )
+        registry_ids = {str(item["registry_id"]) for item in items}
+        entity_ids = {str(item["entity_id"]) for item in items}
+        known_entities = list(
+            (
+                await self._session.scalars(
+                    select(Entity).where(
+                        Entity.installation_id == self._installation.id,
+                        (
+                            Entity.ha_registry_id.in_(registry_ids)
+                            | Entity.ha_entity_id.in_(entity_ids)
+                        ),
+                    )
+                )
+            ).all()
+        )
+        entities_by_registry = {
+            entity.ha_registry_id: entity
+            for entity in known_entities
+            if entity.ha_registry_id is not None
+        }
+        entities_by_entity_id = {entity.ha_entity_id: entity for entity in known_entities}
         changed_entities: list[Entity] = []
         previous_values: list[tuple[UUID, str | None, bool]] = []
         for item in items:
-            entity = await self._by_registry(str(item["registry_id"]))
+            registry_id = str(item["registry_id"])
+            entity_id = str(item["entity_id"])
+            entity = entities_by_registry.get(registry_id) or entities_by_entity_id.get(entity_id)
             is_new_or_reappeared = entity is None or entity.deleted_at is not None
             if is_new_or_reappeared:
-                entity = await self._upsert(item)
+                entity = await self._upsert(
+                    item,
+                    known_entity=entity,
+                    lookup_complete=True,
+                )
+                entities_by_registry[registry_id] = entity
+                entities_by_entity_id[entity_id] = entity
             if entity is None or entity.deleted_at is not None:
                 logger.warning(
                     "Ignoring state update for entity absent from inventory: registry_id=%s",

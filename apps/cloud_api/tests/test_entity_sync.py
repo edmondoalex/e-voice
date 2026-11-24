@@ -2,7 +2,7 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -305,6 +305,32 @@ async def test_stale_snapshot_is_rejected_and_new_state_entity_is_accepted(
     }
     await service.apply_state(2, [created])
     assert await service._by_registry("not-in-snapshot") is not None
+
+
+async def test_state_batch_reuses_bulk_loaded_entities_without_per_item_lookup(
+    session: AsyncSession, seeded_domain: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = await session.get(Installation, seeded_domain.installation_a_id)  # type: ignore[attr-defined]
+    assert installation is not None
+    service = EntitySyncService(session, installation)
+    snapshot = [
+        {
+            **item(f"registry-light-{index}"),
+            "entity_id": f"light.kitchen_{index}",
+        }
+        for index in range(25)
+    ]
+    await service.apply_full(1, snapshot)
+    lookup = AsyncMock(side_effect=AssertionError("per-item registry lookup"))
+    monkeypatch.setattr(service, "_by_registry", lookup)
+
+    await service.apply_state(
+        2,
+        [{**payload, "state": "off"} for payload in snapshot],
+    )
+
+    lookup.assert_not_awaited()
+    assert installation.sync_revision == 2
 
 
 async def test_same_registry_id_is_isolated_by_installation(
