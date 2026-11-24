@@ -6,6 +6,13 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components import websocket_api
+from homeassistant.components.websocket_api import (
+    ActiveConnection,
+    async_response,
+    require_admin,
+    websocket_command,
+)
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -24,7 +31,7 @@ SET_COMMAND = "ekonex_voice/exposure/set"
 MAX_EXPOSED_ENTITIES = 10_000
 
 
-def _entry(hass: HomeAssistant, entry_id: str | None):
+def _entry(hass: HomeAssistant, entry_id: str | None) -> ConfigEntry:
     entries = hass.config_entries.async_entries(DOMAIN)
     if entry_id:
         matches = [item for item in entries if item.entry_id == entry_id]
@@ -114,10 +121,12 @@ def _updated_options(entry: Any, requested: list[str]) -> dict[str, object]:
     return options
 
 
-@websocket_api.websocket_command({vol.Required("type"): GET_COMMAND, vol.Optional("entry_id"): str})
-@websocket_api.require_admin
-@websocket_api.async_response
-async def websocket_get_exposure(hass, connection, msg) -> None:
+@websocket_command({vol.Required("type"): GET_COMMAND, vol.Optional("entry_id"): str})
+@require_admin
+@async_response
+async def websocket_get_exposure(
+    hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
+) -> None:
     """Return the complete HA registry plus the effective current selection."""
     try:
         entry = _entry(hass, msg.get("entry_id"))
@@ -127,16 +136,18 @@ async def websocket_get_exposure(hass, connection, msg) -> None:
     connection.send_result(msg["id"], _catalog(hass, entry))
 
 
-@websocket_api.websocket_command(
+@websocket_command(
     {
         vol.Required("type"): SET_COMMAND,
         vol.Optional("entry_id"): str,
         vol.Required("registry_ids"): [str],
     }
 )
-@websocket_api.require_admin
-@websocket_api.async_response
-async def websocket_set_exposure(hass, connection, msg) -> None:
+@require_admin
+@async_response
+async def websocket_set_exposure(
+    hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
+) -> None:
     """Replace the selection atomically and preserve compatible media metadata."""
     requested = msg["registry_ids"]
     if len(requested) > MAX_EXPOSED_ENTITIES or len(requested) != len(set(requested)):
