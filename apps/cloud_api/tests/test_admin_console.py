@@ -93,7 +93,10 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     await _login(client, "owner@example.test", "owner-password-123")
     page = await client.get("/dashboard")
     assert page.status_code == 200
-    assert "Home A" in page.text
+    assert "Stato VPS" in page.text
+    assert "Storico prestazioni" in page.text
+    assert "Mappa mondiale connessioni" in page.text
+    assert "Home A" not in page.text
     assert "Home B" not in page.text
     assert '<img class="brand-logo" src="/static/ekonex-cloud-voice.png"' in page.text
     assert 'alt="Ekonex Cloud Voice"' in page.text
@@ -110,6 +113,59 @@ async def test_dashboard_is_tenant_scoped_and_requires_admin(
     readonly = await _client(session)
     await _login(readonly, "readonly@example.test", "readonly-password-123")
     assert (await readonly.get("/dashboard")).status_code == 403
+    await readonly.aclose()
+
+
+async def test_vps_monitoring_endpoints_require_admin_and_return_sanitized_data(
+    session: AsyncSession, seeded_domain: SeededDomain, monkeypatch
+) -> None:
+    from apps.cloud_api.app import admin_console
+
+    snapshot = {
+        "generated_at": "2026-11-24T18:00:00+00:00",
+        "health": "healthy",
+        "host": {"name": "voice-vps", "os": "Linux", "release": "test", "uptime_seconds": 10},
+        "resources": {
+            "cpu": {"percent": 1.0, "cores": 2, "load_average": [0.1, 0.1, 0.1]},
+            "memory": {"percent": 2.0, "used_bytes": 2, "total_bytes": 100},
+            "disk": {"percent": 3.0, "used_bytes": 3, "total_bytes": 100},
+            "network": {"sent_bytes": 4, "received_bytes": 5},
+        },
+        "services": [],
+        "alerts": [],
+        "endpoints": [],
+        "certificates": [],
+        "security": {"ufw_active": True, "fail2ban": "active", "ssh_failures_24h": 0},
+        "inventory": {},
+    }
+    monkeypatch.setattr(admin_console, "vps_snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        admin_console,
+        "vps_history",
+        lambda _hours: [{"at": snapshot["generated_at"], "cpu": 1, "memory": 2, "disk": 3}],
+    )
+    monkeypatch.setattr(
+        admin_console,
+        "vps_security_events",
+        lambda _hours: {"sources": [], "total_attempts": 0, "status_counts": {}},
+    )
+    monkeypatch.setattr(admin_console, "vps_incidents", lambda _limit: [])
+
+    client = await _client(session)
+    anonymous = await client.get("/admin/api/vps/overview", follow_redirects=False)
+    assert anonymous.status_code == 303
+    await _login(client, "owner@example.test", "owner-password-123")
+    response = await client.get("/admin/api/vps/overview")
+    assert response.status_code == 200
+    assert response.json()["host"]["name"] == "voice-vps"
+    assert (await client.get("/admin/api/vps/history?hours=24")).status_code == 200
+    assert (await client.get("/admin/api/vps/security/events?hours=24")).status_code == 200
+    assert (await client.get("/admin/api/vps/incidents?limit=12")).status_code == 200
+    await client.aclose()
+
+    readonly = await _client(session)
+    await _login(readonly, "readonly@example.test", "readonly-password-123")
+    assert (await readonly.get("/admin/api/vps/overview")).status_code == 403
     await readonly.aclose()
 
 

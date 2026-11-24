@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import html
 import io
@@ -15,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Protocol, TypedDict
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select, update
@@ -70,6 +71,11 @@ from .pairing_api import CSRF_COOKIE, _csrf, _form, _valid_csrf, identity_depend
 from .portal_auth import PortalIdentity
 from .voice_categories import STANDARD_VOICE_CATEGORIES, category_slug, infer_standard_category
 from .voice_scope import selection_current_clause, voice_visible_clause
+from .vps_dashboard_ui import dashboard_panel
+from .vps_monitor import history as vps_history
+from .vps_monitor import incidents as vps_incidents
+from .vps_monitor import security_events as vps_security_events
+from .vps_monitor import snapshot as vps_snapshot
 
 
 class ActivityRow(TypedDict):
@@ -900,25 +906,56 @@ async def dashboard(
         )
         or 0
     )
-    rows = "".join(
-        f'<tr><td><a href="/installations/{item.id}">{_e(item.name)}</a></td><td class="{"ok" if _online(item) else "bad"}">{"online" if _online(item) else "offline"}</td><td>{_e(item.ha_version)}</td><td>{_e(item.connector_version)}</td><td>{_compatibility_badge(item)}</td><td>{_e(item.last_seen_at)}</td></tr>'
-        for item in items
-    )
     incompatible_count = sum(
         _compatibility_status(item) is ConnectorCompatibilityStatus.INCOMPATIBLE for item in items
     )
     global_warning = (
-        f'<div class="card global-warning"><b>Attenzione: {incompatible_count} Connector incompatibile/i</b><p>I comandi possono non funzionare. Apri Impianti o Sistema per i dettagli.</p></div>'
+        f'<div class="card global-warning"><b>Attenzione: {incompatible_count} Connector incompatibile/i</b><p>Stato: <span class="compat-badge compat-bad">INCOMPATIBLE</span></p><p>I comandi possono non funzionare. Apri Impianti o Sistema per i dettagli.</p></div>'
         if incompatible_count
         else ""
     )
     csrf = _csrf(context)
-    body = f'{global_warning}<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div><table><thead><tr><th>Installazione</th><th>Stato</th><th>e-Control</th><th>Connector</th><th>Compatibilità</th><th>Ultimo contatto</th></tr></thead><tbody>{rows or "<tr><td colspan=6>Nessuna installazione</td></tr>"}</tbody></table>'
+    body = f'{global_warning}<div class="cards"><div class="card"><b>{len(items)}</b><br>Installazioni</div><div class="card"><b>{entity_count}</b><br>Entità esposte</div><div class="card"><b>{sum(_online(i) for i in items)}</b><br>Connesse</div></div>{dashboard_panel()}'
     response = HTMLResponse(_layout("Dashboard", body, context, csrf, "dashboard"))
     response.set_cookie(
         CSRF_COOKIE, csrf, secure=True, httponly=True, samesite="lax", path="/", max_age=1800
     )
     return response
+
+
+@router.get("/admin/api/vps/overview", response_class=JSONResponse)
+async def vps_overview_api(
+    context: Annotated[TenantContext, console_context_dependency],
+) -> JSONResponse:
+    _admin(context)
+    return JSONResponse(await asyncio.to_thread(vps_snapshot))
+
+
+@router.get("/admin/api/vps/history", response_class=JSONResponse)
+async def vps_history_api(
+    context: Annotated[TenantContext, console_context_dependency],
+    hours: int = Query(24, ge=1, le=24 * 30),
+) -> JSONResponse:
+    _admin(context)
+    return JSONResponse({"samples": await asyncio.to_thread(vps_history, hours)})
+
+
+@router.get("/admin/api/vps/security/events", response_class=JSONResponse)
+async def vps_security_api(
+    context: Annotated[TenantContext, console_context_dependency],
+    hours: int = Query(24, ge=1, le=24 * 30),
+) -> JSONResponse:
+    _admin(context)
+    return JSONResponse(await asyncio.to_thread(vps_security_events, hours))
+
+
+@router.get("/admin/api/vps/incidents", response_class=JSONResponse)
+async def vps_incidents_api(
+    context: Annotated[TenantContext, console_context_dependency],
+    limit: int = Query(12, ge=1, le=100),
+) -> JSONResponse:
+    _admin(context)
+    return JSONResponse({"incidents": await asyncio.to_thread(vps_incidents, limit)})
 
 
 @router.get("/installations", response_class=HTMLResponse)
