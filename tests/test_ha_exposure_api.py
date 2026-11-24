@@ -29,7 +29,9 @@ async def test_catalog_projects_existing_component_selection(hass: HomeAssistant
     entity = er.async_get(hass).async_get_or_create(
         "light", "test", "office-light", device_id=device.id
     )
-    component.options = {CONF_EXPOSED_DEVICE_IDS: [device.id]}
+    hass.config_entries.async_update_entry(
+        component, options={CONF_EXPOSED_DEVICE_IDS: [device.id]}
+    )
     hass.states.async_set(entity.entity_id, "on", {"friendly_name": "Luce ufficio"})
 
     catalog = _catalog(hass, component)
