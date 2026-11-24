@@ -12,7 +12,21 @@ from custom_components.ekonex_voice.const import (
     CONF_MEDIA_EXPERIENCES,
     DOMAIN,
 )
-from custom_components.ekonex_voice.exposure_api import _catalog, _updated_options
+from custom_components.ekonex_voice.exposure_api import _catalog, _entry, _updated_options
+
+
+async def test_default_entry_uses_only_media_configured_instance(
+    hass: HomeAssistant,
+) -> None:
+    primary = MockConfigEntry(
+        domain=DOMAIN,
+        options={CONF_MEDIA_EXPERIENCES: {"player": ["listen"]}},
+    )
+    laboratory = MockConfigEntry(domain=DOMAIN, options={})
+    primary.add_to_hass(hass)
+    laboratory.add_to_hass(hass)
+
+    assert _entry(hass, None) is primary
 
 
 async def test_catalog_projects_existing_component_selection(hass: HomeAssistant) -> None:

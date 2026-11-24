@@ -4,6 +4,14 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-24 - 2.0.16 deterministic multi-entry exposure
+
+Status: Production hotfix validated
+
+- When multiple eVoice entries exist, the e-Control exposure API selects the unique entry that
+  owns media experiences. Ambiguous installations remain fail-closed and explicit entry IDs are
+  still supported.
+
 ## 2026-11-24 — 2.0.15 single e-Control exposure owner
 
 Status: Local coordinated implementation validated; publication pending
