@@ -38,6 +38,7 @@ from .domain.models import Entity, Installation, WearDevice, WearEnrollment, Wea
 from .evcp import LIVENESS_TIMEOUT_SECONDS, sessions
 from .installation_bound import BoundContext
 from .installation_bound_api import UI_OPERATIONS, _frame_policy, _ui_csrf, bound_context_dependency
+from .voice_scope import voice_visible_clause
 from .wear_devices import CAPABILITIES, WearClaimLimiter, WearContext, WearDenied, WearDeviceService
 from .wear_notification_rules import render_wear_rule_message
 from .wear_notifications import WearNotificationService
@@ -226,7 +227,7 @@ async def _wear_power_command(
                     Entity.installation_id == context.installation_id,
                     Entity.deleted_at.is_(None),
                     Entity.available.is_(True),
-                    Entity.control_exposed.is_(True),
+                    voice_visible_clause(Entity),
                     Entity.ha_domain.in_(domains),
                 )
             )
@@ -712,7 +713,7 @@ async def wear_management(
                 Entity.installation_id == context.effective_installation_id,
                 Entity.deleted_at.is_(None),
                 Entity.available.is_(True),
-                Entity.control_exposed.is_(True),
+                voice_visible_clause(Entity),
                 Entity.ha_registry_id.is_not(None),
                 Entity.ha_domain.in_(tuple(set(UI_OPERATIONS) | set(WEAR_EXTRA_OPERATIONS))),
             )
@@ -742,6 +743,8 @@ async def wear_management(
                 .where(
                     Entity.installation_id == context.effective_installation_id,
                     Entity.deleted_at.is_(None),
+                    Entity.ha_registry_id.is_not(None),
+                    voice_visible_clause(Entity),
                 )
                 .order_by(Entity.ha_domain, Entity.voice_name, Entity.display_name)
             )

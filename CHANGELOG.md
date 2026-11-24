@@ -4,6 +4,20 @@ This file tracks completed project milestones and repository-level changes.
 Add new entries in reverse chronological order and include scope, validation,
 commit references, and deviations from `docs/SPEC_V1.md`.
 
+## 2026-11-24 — 2.0.15 single e-Control exposure owner
+
+Status: Local coordinated implementation validated; publication pending
+
+### Scope
+
+- Add an administrator-only Home Assistant WebSocket contract that lets e-Control read and replace
+  the effective eVoice exposure set without creating a second catalog.
+- Preserve the existing Component selection on first load, including device and label based
+  exposure; the first explicit save collapses it into one auditable registry-ID selection.
+- Make Wear commands, quick actions and notification rules consume the same authorized voice scope
+  already used by Alexa and the installation-bound portal.
+- Keep entity execution in Home Assistant/e-Control and the Component as the technical connector.
+
 ## 2026-11-23 — 2.0.14 local media owner selection
 
 Status: Production hotfix prepared and validated
