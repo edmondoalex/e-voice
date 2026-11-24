@@ -6,6 +6,29 @@ from datetime import UTC, datetime
 from apps.cloud_api.app import vps_monitor
 
 
+def test_systemd_service_properties_are_parsed_by_name(monkeypatch) -> None:
+    responses = iter(
+        [
+            (0, "active"),
+            (
+                0,
+                "NRestarts=0\nMemoryCurrent=13574144\nMainPID=3129817\n"
+                "ActiveEnterTimestampMonotonic=2213880801624\n",
+            ),
+        ]
+    )
+    monkeypatch.setattr(vps_monitor, "_run", lambda *_args, **_kwargs: next(responses))
+
+    assert vps_monitor._service("caddy.service", "Caddy") == {
+        "id": "caddy.service",
+        "name": "Caddy",
+        "state": "active",
+        "pid": 3129817,
+        "memory_bytes": 13574144,
+        "restarts": 0,
+    }
+
+
 def test_snapshot_prefers_sanitized_host_file(tmp_path, monkeypatch) -> None:
     snapshot_path = tmp_path / "host-snapshot.json"
     snapshot_path.write_text(
