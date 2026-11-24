@@ -65,6 +65,7 @@ ATTRIBUTE_ALLOWLIST = {
 }
 CHUNK_TARGET_BYTES = 48_000
 COALESCE_SECONDS = 0.25
+STATE_COALESCE_SECONDS = 1.0
 SELECTION_REFRESH_SECONDS = 120
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,7 +235,7 @@ class EntityInventorySynchronizer:
             await self._send_full()
 
     async def _flush_states(self) -> None:
-        await asyncio.sleep(COALESCE_SECONDS)
+        await asyncio.sleep(STATE_COALESCE_SECONDS)
         entity_ids, self._pending = sorted(self._pending), set()
         registry = er.async_get(self._hass)
         items = [
