@@ -44,3 +44,37 @@ def test_nginx_connections_are_classified_as_successful_or_rejected(tmp_path, mo
 
     statuses = {row["status"] for row in result["sources"]}
     assert statuses == {"autorizzato", "rifiutato"}
+
+
+def test_reverse_proxy_prefers_active_caddy(monkeypatch) -> None:
+    def fake_service(unit: str, label: str) -> dict[str, object]:
+        return {
+            "id": unit,
+            "name": label,
+            "state": "active" if unit == "caddy.service" else "inactive",
+        }
+
+    monkeypatch.setattr(vps_monitor, "_service", fake_service)
+
+    assert vps_monitor._reverse_proxy_service() == {
+        "id": "caddy.service",
+        "name": "Caddy",
+        "state": "active",
+    }
+
+
+def test_reverse_proxy_falls_back_to_active_nginx(monkeypatch) -> None:
+    def fake_service(unit: str, label: str) -> dict[str, object]:
+        return {
+            "id": unit,
+            "name": label,
+            "state": "active" if unit == "nginx.service" else "inactive",
+        }
+
+    monkeypatch.setattr(vps_monitor, "_service", fake_service)
+
+    assert vps_monitor._reverse_proxy_service() == {
+        "id": "nginx.service",
+        "name": "Nginx",
+        "state": "active",
+    }

@@ -173,7 +173,7 @@ def _compose_services() -> list[dict[str, Any]]:
     if services:
         return services
     return [
-        _service("nginx.service", "Nginx"),
+        _reverse_proxy_service(),
         {
             "id": "compose",
             "name": "Container e-Voice",
@@ -183,6 +183,19 @@ def _compose_services() -> list[dict[str, Any]]:
             "restarts": None,
         },
     ]
+
+
+def _reverse_proxy_service() -> dict[str, Any]:
+    """Report the installed reverse proxy without raising false Nginx alarms."""
+    caddy = _service("caddy.service", "Caddy")
+    if caddy["state"] == "active":
+        return caddy
+    nginx = _service("nginx.service", "Nginx")
+    if nginx["state"] == "active":
+        return nginx
+    if caddy["state"] != "unknown":
+        return caddy
+    return nginx
 
 
 def _endpoint(url: str) -> dict[str, Any]:
@@ -274,7 +287,7 @@ def _live_snapshot() -> dict[str, Any]:
         "percent": _percent(disk.used, disk.total),
     }
     services = _compose_services()
-    services.append(_service("nginx.service", "Nginx"))
+    services.append(_reverse_proxy_service())
     alerts: list[dict[str, str]] = []
     for label, value, threshold in (
         ("CPU", float(cpu["percent"]), 85),
