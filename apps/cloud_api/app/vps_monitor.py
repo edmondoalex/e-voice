@@ -209,7 +209,9 @@ def _certificate(domain: str) -> dict[str, Any]:
         context = ssl.create_default_context()
         with socket.create_connection((domain, 443), timeout=5) as raw:
             with context.wrap_socket(raw, server_hostname=domain) as secured:
-                expires_raw = secured.getpeercert()["notAfter"]
+                expires_raw = secured.getpeercert().get("notAfter")
+                if not isinstance(expires_raw, str):
+                    raise ValueError("certificate expiration missing")
         expires = datetime.strptime(expires_raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
         return {
             "domain": domain,
@@ -519,9 +521,9 @@ def _collect_security_events(hours: int) -> dict[str, Any]:
             for address, location in executor.map(lookup, missing):
                 geo_cache[address] = location
     for row in rows:
-        location = geo_cache.get(row["ip"])
-        if location:
-            row.update(location)
+        cached_location = geo_cache.get(row["ip"])
+        if cached_location:
+            row.update(cached_location)
     if changed:
         try:
             DATA_ROOT.mkdir(parents=True, exist_ok=True)
