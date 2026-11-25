@@ -519,9 +519,7 @@ def _collect_security_events(hours: int) -> dict[str, Any]:
     caddy_root = Path(os.getenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", "/var/log/caddy"))
     try:
         caddy_logs = [
-            item
-            for item in caddy_root.glob("access*.log")
-            if item.is_file() and item.suffix != ".gz"
+            item for item in caddy_root.glob("*.log*") if item.is_file() and item.suffix != ".gz"
         ]
     except OSError:
         caddy_logs = []

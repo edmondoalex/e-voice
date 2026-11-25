@@ -88,7 +88,7 @@ def test_caddy_json_connections_use_cloudflare_client_ip(tmp_path, monkeypatch) 
             "status": 403,
         },
     ]
-    (caddy / "access.log").write_text(
+    (caddy / "voice-access.log").write_text(
         "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
     )
     monkeypatch.setenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", str(caddy))
@@ -110,7 +110,7 @@ def test_security_sources_keep_each_event_category(tmp_path, monkeypatch) -> Non
     caddy = tmp_path / "caddy"
     caddy.mkdir()
     now = datetime.now(UTC).timestamp()
-    (caddy / "access.log").write_text(
+    (caddy / "voice-access.log").write_text(
         json.dumps(
             {
                 "ts": now,
