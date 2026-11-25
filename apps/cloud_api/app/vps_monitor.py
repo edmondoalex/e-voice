@@ -421,7 +421,19 @@ def incidents(limit: int = 12) -> list[dict[str, Any]]:
 def _collect_security_events(hours: int) -> dict[str, Any]:
     since = f"{hours} hours ago"
     _, output = _run(
-        ["journalctl", "--since", since, "-u", "ssh", "--no-pager", "-o", "short-iso"], timeout=12
+        [
+            "journalctl",
+            "--since",
+            since,
+            "-u",
+            "ssh",
+            "-n",
+            "20000",
+            "--no-pager",
+            "-o",
+            "short-iso",
+        ],
+        timeout=20,
     )
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for line in output.splitlines():
@@ -489,6 +501,58 @@ def _collect_security_events(hours: int) -> dict[str, Any]:
                 key,
                 {
                     "ip": key[0],
+                    "event": event,
+                    "status": connection_status,
+                    "attempts": 0,
+                    "last_seen": observed_at.isoformat(),
+                    "city": None,
+                    "region": None,
+                    "country": None,
+                    "provider": None,
+                    "latitude": None,
+                    "longitude": None,
+                },
+            )
+            row["attempts"] += 1
+            if observed_at.isoformat() > row["last_seen"]:
+                row["last_seen"] = observed_at.isoformat()
+    caddy_root = Path(os.getenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", "/var/log/caddy"))
+    try:
+        caddy_logs = [
+            item
+            for item in caddy_root.glob("access*.log")
+            if item.is_file() and item.suffix != ".gz"
+        ]
+    except OSError:
+        caddy_logs = []
+    for log_path in caddy_logs:
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20000:]
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                payload = json.loads(line)
+                request = payload.get("request") or {}
+                headers = request.get("headers") or {}
+                forwarded = headers.get("Cf-Connecting-Ip") or headers.get("CF-Connecting-IP") or []
+                address = str(forwarded[0] if forwarded else request.get("remote_ip") or "")
+                status_code = int(payload.get("status"))
+                observed_at = datetime.fromtimestamp(float(payload.get("ts")), tz=UTC)
+            except (TypeError, ValueError, IndexError, json.JSONDecodeError):
+                continue
+            try:
+                if observed_at < cutoff or not ipaddress.ip_address(address).is_global:
+                    continue
+            except ValueError:
+                continue
+            event = "HTTP riuscito" if status_code < 400 else "HTTP rifiutato"
+            connection_status = "autorizzato" if status_code < 400 else "rifiutato"
+            key = (address, event)
+            row = grouped.setdefault(
+                key,
+                {
+                    "ip": address,
                     "event": event,
                     "status": connection_status,
                     "attempts": 0,

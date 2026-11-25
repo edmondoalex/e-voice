@@ -69,6 +69,41 @@ def test_nginx_connections_are_classified_as_successful_or_rejected(tmp_path, mo
     assert statuses == {"autorizzato", "rifiutato"}
 
 
+def test_caddy_json_connections_use_cloudflare_client_ip(tmp_path, monkeypatch) -> None:
+    caddy = tmp_path / "caddy"
+    caddy.mkdir()
+    now = datetime.now(UTC).timestamp()
+    rows = [
+        {
+            "ts": now,
+            "request": {
+                "remote_ip": "172.69.1.2",
+                "headers": {"Cf-Connecting-Ip": ["93.69.88.181"]},
+            },
+            "status": 200,
+        },
+        {
+            "ts": now,
+            "request": {"remote_ip": "8.8.8.8", "headers": {}},
+            "status": 403,
+        },
+    ]
+    (caddy / "access.log").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", str(caddy))
+    monkeypatch.setenv("EKONEX_VPS_MONITOR_NGINX_LOG_PATH", str(tmp_path / "missing"))
+    monkeypatch.setattr(vps_monitor, "_run", lambda *_args, **_kwargs: (0, ""))
+    monkeypatch.setattr(vps_monitor, "GEO_PATH", tmp_path / "geo-cache.json")
+    monkeypatch.setattr(vps_monitor, "DATA_ROOT", tmp_path)
+
+    result = vps_monitor._collect_security_events(1)
+
+    by_ip = {row["ip"]: row for row in result["sources"]}
+    assert by_ip["93.69.88.181"]["status"] == "autorizzato"
+    assert by_ip["8.8.8.8"]["status"] == "rifiutato"
+
+
 def test_reverse_proxy_prefers_active_caddy(monkeypatch) -> None:
     def fake_service(unit: str, label: str) -> dict[str, object]:
         return {
