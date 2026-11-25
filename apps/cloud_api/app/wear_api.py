@@ -188,6 +188,8 @@ def _voice_tokens(value: str) -> set[str]:
 
 
 def _wear_entity_command(entity: Entity, requested: str) -> tuple[CommandSpec, str]:
+    if entity.ha_domain == "button" and requested == "power_on":
+        return PressCommand(operation="press"), "press"
     if requested in {"open", "close"} and is_gate_override(entity):
         operation = "power_on" if requested == "open" else "power_off"
         return PowerCommand(operation=cast(Literal["power_on", "power_off"], operation)), operation
@@ -219,7 +221,13 @@ async def _wear_power_command(
     target = words - {"accendi", "spegni", "apri", "chiudi", "ferma", "fermo", "stop", "luce"}
     if not target:
         return "Dimmi quale dispositivo vuoi comandare."
-    domains = ("light", "switch") if requested in {"power_on", "power_off"} else ("cover", "switch")
+    domains = (
+        ("light", "switch", "button")
+        if requested == "power_on"
+        else ("light", "switch")
+        if requested == "power_off"
+        else ("cover", "switch")
+    )
     entities = list(
         (
             await session.scalars(
@@ -292,6 +300,7 @@ async def _wear_power_command(
         "open": "aperto",
         "close": "chiuso",
         "stop": "fermato",
+        "press": "attivato",
     }[operation]
     if is_gate_override(entity) and operation in {"power_on", "power_off"}:
         action = "aperto" if operation == "power_on" else "chiuso"
