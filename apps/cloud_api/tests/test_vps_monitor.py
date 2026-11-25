@@ -94,7 +94,9 @@ def test_caddy_json_connections_use_cloudflare_client_ip(tmp_path, monkeypatch) 
     monkeypatch.setenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", str(caddy))
     monkeypatch.setenv("EKONEX_VPS_MONITOR_NGINX_LOG_PATH", str(tmp_path / "missing"))
     monkeypatch.setattr(vps_monitor, "_run", lambda *_args, **_kwargs: (0, ""))
-    monkeypatch.setattr(vps_monitor, "GEO_PATH", tmp_path / "geo-cache.json")
+    geo_path = tmp_path / "geo-cache.json"
+    geo_path.write_text(json.dumps({"93.69.88.181": {}, "8.8.8.8": {}}), encoding="utf-8")
+    monkeypatch.setattr(vps_monitor, "GEO_PATH", geo_path)
     monkeypatch.setattr(vps_monitor, "DATA_ROOT", tmp_path)
 
     result = vps_monitor._collect_security_events(1)
