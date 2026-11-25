@@ -49,13 +49,75 @@ router = APIRouter(prefix="/bounded", tags=["econtrol-installation-bound"])
 
 
 def _frame_policy() -> tuple[str, Literal["strict", "none"]]:
-    raw = get_settings().econtrol_bounded_frame_ancestors
-    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    origins = _bounded_parent_origins()
     if not origins:
         return "'none'", "strict"
-    if any(not re.fullmatch(r"https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", item) for item in origins):
-        return "'none'", "strict"
     return " ".join(origins), "none"
+
+
+def _bounded_parent_origins() -> list[str]:
+    raw = get_settings().econtrol_bounded_frame_ancestors
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    if any(not re.fullmatch(r"https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", item) for item in origins):
+        return []
+    return origins
+
+
+def _native_bridge_page(page: str, parent_origin: str) -> HTMLResponse:
+    """Expose the bounded view as inert markup for native e-Control rendering."""
+    if parent_origin not in _bounded_parent_origins():
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "parent_origin_denied")
+    style_match = re.search(r"<style>(.*?)</style>", page, flags=re.DOTALL)
+    main_match = re.search(r"<main[^>]*>(.*?)</main><script>", page, flags=re.DOTALL)
+    if style_match is None or main_match is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bounded_view_invalid")
+    payload = json.dumps(
+        {
+            "type": "ekonex.evoice.native.ready.v1",
+            "html": main_match.group(1),
+            "css": style_match.group(1),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).replace("<", "\\u003c")
+    origin = json.dumps(parent_origin)
+    bridge = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>e-Voice</title></head>
+<body><script>
+const parentOrigin={origin};
+const ready={payload};
+window.parent.postMessage(ready,parentOrigin);
+window.addEventListener('message',async(event)=>{{
+  if(event.origin!==parentOrigin||event.source!==window.parent)return;
+  const message=event.data;
+  if(!message||message.type!=='ekonex.evoice.native.command.v1'||
+     typeof message.request_id!=='string'||!message.fields)return;
+  const body=new URLSearchParams();
+  for(const [key,value] of Object.entries(message.fields)){{
+    if(typeof value==='string')body.set(key,value);
+  }}
+  try{{
+    const response=await fetch('/bounded/ui/commands',{{
+      method:'POST',body,headers:{{Accept:'application/json'}},credentials:'same-origin'
+    }});
+    const result=await response.json().catch(()=>({{message:'Comando non eseguito'}}));
+    window.parent.postMessage({{type:'ekonex.evoice.native.command-result.v1',request_id:message.request_id,ok:response.ok&&result.ok===true,result}},parentOrigin);
+  }}catch(_error){{
+    window.parent.postMessage({{
+      type:'ekonex.evoice.native.command-result.v1',request_id:message.request_id,
+      ok:false,result:{{message:'Collegamento e-Voice non disponibile'}}
+    }},parentOrigin);
+  }}
+}});
+</script></body></html>"""
+    response = HTMLResponse(bridge)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    frame_ancestors, _same_site = _frame_policy()
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; "
+        f"base-uri 'none'; frame-ancestors {frame_ancestors}"
+    )
+    return response
 
 
 BOUND_COOKIE = "ekonex_installation_bound"
@@ -199,6 +261,7 @@ async def open_bounded_session(
     code: str,
     session: Annotated[AsyncSession, Depends(get_database_session)],
     next: str = "app",
+    parent_origin: str | None = None,
 ) -> HTMLResponse:
     try:
         raw = await _service(session).open_prepared(code)
@@ -206,7 +269,14 @@ async def open_bounded_session(
     except BoundLaunchDenied as error:
         await session.rollback()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "launch_denied") from error
-    destination = "/bounded/wear" if next == "wear" else "/bounded/app"
+    if next == "wear":
+        destination = "/bounded/wear"
+    elif next == "native" and parent_origin in _bounded_parent_origins():
+        destination = "/bounded/app?" + urlencode(
+            {"embed": "native", "parent_origin": parent_origin}
+        )
+    else:
+        destination = "/bounded/app"
     response = HTMLResponse(
         "<!doctype html><html><head><meta charset=utf-8>"
         f'<meta http-equiv="refresh" content="0;url={destination}">'
@@ -236,6 +306,8 @@ async def bounded_app(
     context: Annotated[BoundContext, bound_context_dependency],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     result: str | None = None,
+    embed: str | None = None,
+    parent_origin: str | None = None,
 ) -> HTMLResponse:
     resources = BoundedResourceService(session, context)
     installation = await resources.installation(context.effective_installation_id)
@@ -308,6 +380,10 @@ async def bounded_app(
         ("Umidit�", "Umidità"),
     ):
         page = page.replace(damaged, corrected)
+    if embed == "native":
+        if parent_origin is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "parent_origin_required")
+        return _native_bridge_page(page, parent_origin)
     response = HTMLResponse(page)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"

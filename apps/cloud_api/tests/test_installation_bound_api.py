@@ -125,6 +125,43 @@ async def test_prepare_and_open_use_opaque_single_use_code(session, seeded_domai
     app.dependency_overrides.clear()
 
 
+async def test_native_bridge_returns_inert_bounded_markup_for_allowed_parent(
+    session, seeded_domain, monkeypatch
+):
+    from apps.cloud_api.app import installation_bound_api
+
+    parent_origin = "http://192.168.3.24:8125"
+    settings = get_settings().model_copy(update={"econtrol_bounded_frame_ancestors": parent_origin})
+    monkeypatch.setattr(installation_bound_api, "get_settings", lambda: settings)
+    launch = await _setup(session, seeded_domain)
+    client = await _client(session)
+    prepared = await client.post("/bounded/prepare", json={"launch": launch})
+    path = prepared.json()["launch_url"].removeprefix("https://voice.e-control.tech")
+    opened = await client.get(
+        path + "&next=native&parent_origin=http%3A%2F%2F192.168.3.24%3A8125",
+        follow_redirects=False,
+    )
+    assert opened.status_code == 200
+    assert "embed=native" in opened.text
+    assert "parent_origin=http%3A%2F%2F192.168.3.24%3A8125" in opened.text
+    bridge = await client.get(
+        "/bounded/app", params={"embed": "native", "parent_origin": parent_origin}
+    )
+    assert bridge.status_code == 200
+    assert "ekonex.evoice.native.ready.v1" in bridge.text
+    assert "window.parent.postMessage" in bridge.text
+    assert "Aspirapolvere" in bridge.text
+    assert str(seeded_domain.installation_b_id) not in bridge.text
+    assert "<iframe" not in bridge.text
+    denied = await client.get(
+        "/bounded/app",
+        params={"embed": "native", "parent_origin": "https://untrusted.example"},
+    )
+    assert denied.status_code == 403
+    await client.aclose()
+    app.dependency_overrides.clear()
+
+
 async def test_bounded_app_reports_unverified_selection_without_deletion(
     session, seeded_domain, monkeypatch
 ):
