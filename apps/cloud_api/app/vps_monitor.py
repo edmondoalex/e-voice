@@ -568,7 +568,13 @@ def _collect_security_events(hours: int) -> dict[str, Any]:
             row["attempts"] += 1
             if observed_at.isoformat() > row["last_seen"]:
                 row["last_seen"] = observed_at.isoformat()
-    rows = sorted(grouped.values(), key=lambda value: value["attempts"], reverse=True)[:250]
+    rows: list[dict[str, Any]] = []
+    by_event: dict[str, list[dict[str, Any]]] = {}
+    for row in grouped.values():
+        by_event.setdefault(str(row["event"]), []).append(row)
+    for event_rows in by_event.values():
+        rows.extend(sorted(event_rows, key=lambda value: value["attempts"], reverse=True)[:100])
+    rows.sort(key=lambda value: value["attempts"], reverse=True)
     geo_cache: dict[str, dict[str, Any]] = {}
     try:
         loaded = json.loads(GEO_PATH.read_text(encoding="utf-8"))

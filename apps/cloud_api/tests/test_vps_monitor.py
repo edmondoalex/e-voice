@@ -106,6 +106,41 @@ def test_caddy_json_connections_use_cloudflare_client_ip(tmp_path, monkeypatch) 
     assert by_ip["8.8.8.8"]["status"] == "rifiutato"
 
 
+def test_security_sources_keep_each_event_category(tmp_path, monkeypatch) -> None:
+    caddy = tmp_path / "caddy"
+    caddy.mkdir()
+    now = datetime.now(UTC).timestamp()
+    (caddy / "access.log").write_text(
+        json.dumps(
+            {
+                "ts": now,
+                "request": {"remote_ip": "8.8.8.8", "headers": {}},
+                "status": 200,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ssh_lines = "\n".join(
+        (
+            "2026-11-25T07:00:00+01:00 host sshd: Failed password from "
+            f"10.0.{index // 255}.{index % 255}"
+        )
+        for index in range(300)
+    )
+    monkeypatch.setenv("EKONEX_VPS_MONITOR_CADDY_LOG_PATH", str(caddy))
+    monkeypatch.setenv("EKONEX_VPS_MONITOR_NGINX_LOG_PATH", str(tmp_path / "missing"))
+    monkeypatch.setattr(vps_monitor, "_run", lambda *_args, **_kwargs: (0, ssh_lines))
+    geo_path = tmp_path / "geo-cache.json"
+    geo_path.write_text(json.dumps({"8.8.8.8": {}}), encoding="utf-8")
+    monkeypatch.setattr(vps_monitor, "GEO_PATH", geo_path)
+    monkeypatch.setattr(vps_monitor, "DATA_ROOT", tmp_path)
+
+    result = vps_monitor._collect_security_events(1)
+
+    assert "HTTP riuscito" in {row["event"] for row in result["sources"]}
+
+
 def test_reverse_proxy_prefers_active_caddy(monkeypatch) -> None:
     def fake_service(unit: str, label: str) -> dict[str, object]:
         return {
