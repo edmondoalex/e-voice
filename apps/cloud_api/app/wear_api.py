@@ -811,6 +811,15 @@ async def wear_management(
         "unlock": "Sblocca",
         "press": "Premi",
     }
+    quick_action_domain_order = (
+        "button",
+        "light",
+        "switch",
+        "lock",
+        "cover",
+        "scene",
+        "script",
+    )
 
     def device_card(item: WearDevice) -> str:
         preferences = item.notification_preferences_json or {}
@@ -883,21 +892,30 @@ async def wear_management(
                 else ""
             )
             command_options = ['<option value="">Scegli dispositivo e azione</option>']
-            for entity in command_entities:
-                name = (
-                    entity.voice_name
-                    or entity.display_name
-                    or entity.friendly_name
-                    or entity.ha_entity_id
-                )
-                for operation, operation_label in _wear_operations_for_entity(entity):
-                    target = f"{entity.id}|{operation}"
-                    utterance = f"{spoken_operations[operation]} {name}"
+            for domain in quick_action_domain_order:
+                grouped_options = []
+                for entity in command_entities:
+                    if entity.ha_domain != domain:
+                        continue
+                    name = (
+                        entity.voice_name
+                        or entity.display_name
+                        or entity.friendly_name
+                        or entity.ha_entity_id
+                    )
+                    for operation, operation_label in _wear_operations_for_entity(entity):
+                        target = f"{entity.id}|{operation}"
+                        utterance = f"{spoken_operations[operation]} {name}"
+                        grouped_options.append(
+                            f'<option value="{target}" data-label="{html.escape(operation_label + " " + name, quote=True)}" '
+                            f'data-icon="{domain_icons[entity.ha_domain]}" data-utterance="{html.escape(utterance, quote=True)}" '
+                            f"{'selected' if target == selected_target else ''}>"
+                            f"{html.escape(name)} — {html.escape(operation_label)}</option>"
+                        )
+                if grouped_options:
                     command_options.append(
-                        f'<option value="{target}" data-label="{html.escape(operation_label + " " + name, quote=True)}" '
-                        f'data-icon="{domain_icons[entity.ha_domain]}" data-utterance="{html.escape(utterance, quote=True)}" '
-                        f"{'selected' if target == selected_target else ''}>"
-                        f"{html.escape(domain_labels[entity.ha_domain])} — {html.escape(name)} — {html.escape(operation_label)}</option>"
+                        f'<optgroup label="{html.escape(domain_labels[domain], quote=True)}">'
+                        f"{''.join(grouped_options)}</optgroup>"
                     )
             legacy_utterance = str(action.get("utterance") or "")
             if legacy_utterance and not selected_target:
@@ -1040,7 +1058,7 @@ try{{const csrf=await csrfToken(),response=await fetch('/bounded/wear/enrollment
 function setQuickIcon(row,value){{const standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),known=[...standard.options].some(option=>option.value===value&&value!=='__custom__');standard.value=known?value:'__custom__';custom.hidden=known;if(!known)custom.value=value||''}}
 const quickColors={{red:'#be2323',green:'#007d4b',orange:'#be5f00',purple:'#6937a0',cyan:'#007891',yellow:'#f5cd2d',pink:'#cd377d',white:'#e1e6eb',gray:'#555c62',teal:'#00877d',lime:'#9bcd37',amber:'#f5a523',blue:'#195fbe',state:'#d3d3d3'}};
 async function updateQuickPreview(row){{const preview=row.querySelector('.quick-preview'),glyph=preview.querySelector('[data-quick-preview-icon]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),icon=standard.value==='__custom__'?custom.value.trim():standard.value;preview.style.background=quickColors[row.querySelector('[data-quick-color]').value]||quickColors.blue;preview.style.borderColor=quickColors[row.querySelector('[data-quick-border-color]').value]||quickColors.white;glyph.style.color=quickColors[row.querySelector('[data-quick-icon-color]').value]||quickColors.state;if(!icon){{glyph.textContent='';return}}try{{const response=await fetch('/bounded/wear/mdi-glyph/'+encodeURIComponent(icon),{{cache:'no-store'}}),value=await response.json();if(response.ok&&value.glyph)glyph.textContent=value.glyph}}catch(error){{glyph.textContent='?'}}}}
-function initQuickRow(row){{const select=row.querySelector('[data-quick-command]'),search=row.querySelector('[data-quick-search]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),allOptions=[...select.options].map(option=>option.cloneNode(true));standard.onchange=()=>{{custom.hidden=standard.value!=='__custom__';if(!custom.hidden)custom.focus();updateQuickPreview(row)}};custom.oninput=()=>updateQuickPreview(row);row.querySelector('[data-quick-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-border-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-icon-color]').onchange=()=>updateQuickPreview(row);select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)setQuickIcon(row,option.dataset.icon);utterance.value=option.dataset.utterance||'';updateQuickPreview(row)}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value;select.replaceChildren(...allOptions.filter((option,index)=>index===0||!query||option.textContent.toLocaleLowerCase('it').includes(query)).map(option=>option.cloneNode(true)));if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}};updateQuickPreview(row)}}
+function initQuickRow(row){{const select=row.querySelector('[data-quick-command]'),search=row.querySelector('[data-quick-search]'),standard=row.querySelector('[data-quick-icon-standard]'),custom=row.querySelector('[data-quick-icon-custom]'),allChildren=[...select.children].map(child=>child.cloneNode(true));standard.onchange=()=>{{custom.hidden=standard.value!=='__custom__';if(!custom.hidden)custom.focus();updateQuickPreview(row)}};custom.oninput=()=>updateQuickPreview(row);row.querySelector('[data-quick-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-border-color]').onchange=()=>updateQuickPreview(row);row.querySelector('[data-quick-icon-color]').onchange=()=>updateQuickPreview(row);select.onchange=()=>{{const option=select.selectedOptions[0],label=row.querySelector('[data-quick-label]'),utterance=row.querySelector('[data-quick-utterance]');if(!select.value)return;if(!label.value.trim())label.value=(option.dataset.label||'').slice(0,24);if(option.dataset.icon)setQuickIcon(row,option.dataset.icon);utterance.value=option.dataset.utterance||'';updateQuickPreview(row)}};search.oninput=()=>{{const query=search.value.trim().toLocaleLowerCase('it'),current=select.value,children=[allChildren[0].cloneNode(true)];for(const sourceGroup of allChildren.slice(1)){{const group=sourceGroup.cloneNode(false),options=[...sourceGroup.querySelectorAll('option')].filter(option=>!query||(sourceGroup.label+' '+option.textContent).toLocaleLowerCase('it').includes(query));if(options.length){{group.append(...options.map(option=>option.cloneNode(true)));children.push(group)}}}}select.replaceChildren(...children);if([...select.options].some(option=>option.value===current))select.value=current;else select.selectedIndex=0}};updateQuickPreview(row)}}
 function renumberQuickRows(rows){{[...rows.querySelectorAll('.quick-item')].forEach((item,index)=>{{const row=item.querySelector('[data-quick-slot]'),slot=index+1;row.dataset.quickSlot=slot;row.querySelector('[data-quick-position]').textContent=slot}})}}
 let draggedQuickItem=null;
 function initQuickItem(item){{item.ondragstart=event=>{{draggedQuickItem=item;item.classList.add('dragging');event.dataTransfer.effectAllowed='move'}};item.ondragend=()=>{{item.classList.remove('dragging');draggedQuickItem=null}};item.ondragover=event=>{{event.preventDefault();event.dataTransfer.dropEffect='move'}};item.ondrop=event=>{{event.preventDefault();if(!draggedQuickItem||draggedQuickItem===item)return;const rows=item.parentElement,items=[...rows.querySelectorAll('.quick-item')],from=items.indexOf(draggedQuickItem),to=items.indexOf(item);rows.insertBefore(draggedQuickItem,from<to?item.nextSibling:item);renumberQuickRows(rows)}}}}

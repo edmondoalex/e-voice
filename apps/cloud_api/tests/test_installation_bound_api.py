@@ -395,16 +395,32 @@ async def test_revocation_while_stream_is_open_stops_before_next_item(session, s
 
 async def test_wear_page_documents_private_installer_flow(session, seeded_domain):
     launch = await _setup(session, seeded_domain)
-    session.add(
-        WearDevice(
-            credential_hash="f" * 64,
-            tenant_id=seeded_domain.tenant_a_id,
-            user_id=seeded_domain.user_a_id,
-            installation_id=seeded_domain.installation_a_id,
-            display_name="Synthetic Watch",
-            capabilities_json=["notification.receive"],
-            notification_preferences_json={},
-        )
+    exposed_light = await session.get(Entity, seeded_domain.entity_a_id)
+    exposed_light.available = True
+    exposed_light.control_exposed = True
+    exposed_light.ha_registry_id = "registry-light-kitchen"
+    session.add_all(
+        [
+            Entity(
+                installation_id=seeded_domain.installation_a_id,
+                ha_entity_id="button.tp_all_down",
+                ha_domain="button",
+                friendly_name="TP ALL DOWN",
+                voice_name="TP ALL DOWN",
+                available=True,
+                control_exposed=True,
+                ha_registry_id="registry-button-tp-all-down",
+            ),
+            WearDevice(
+                credential_hash="f" * 64,
+                tenant_id=seeded_domain.tenant_a_id,
+                user_id=seeded_domain.user_a_id,
+                installation_id=seeded_domain.installation_a_id,
+                display_name="Synthetic Watch",
+                capabilities_json=["notification.receive"],
+                notification_preferences_json={},
+            ),
+        ]
     )
     await session.commit()
     client = await _client(session)
@@ -428,6 +444,13 @@ async def test_wear_page_documents_private_installer_flow(session, seeded_domain
     assert "â€”" not in response.text
     assert 'data-quick-search type=search placeholder="Cerca dispositivo o azione"' in response.text
     assert "toLocaleLowerCase('it').includes(query)" in response.text
+    assert '<optgroup label="Luce">' in response.text
+    assert '<optgroup label="Pulsante">' in response.text
+    assert response.text.index('<optgroup label="Pulsante">') < response.text.index(
+        '<optgroup label="Luce">'
+    )
+    assert "TP ALL DOWN — Premi" in response.text
+    assert "sourceGroup.label+' '+option.textContent" in response.text
     assert "Aggiorna elenco dispositivi" in response.text
     assert "data-refresh-catalog" in response.text
     assert "location.reload()" in response.text
