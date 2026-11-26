@@ -428,6 +428,9 @@ async def test_wear_page_documents_private_installer_flow(session, seeded_domain
     assert "â€”" not in response.text
     assert 'data-quick-search type=search placeholder="Cerca dispositivo o azione"' in response.text
     assert "toLocaleLowerCase('it').includes(query)" in response.text
+    assert "Aggiorna elenco dispositivi" in response.text
+    assert "data-refresh-catalog" in response.text
+    assert "location.reload()" in response.text
     assert "Regole notifiche automatiche" in response.text
     assert "/notification-rules" in response.text
     assert "Qualsiasi cambio" in response.text
